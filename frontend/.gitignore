@@ -5,8 +5,8 @@ package-lock.json
 package.json
 
 # Node
-frontend/node_modules/
-frontend/dist/
+node_modules/
+dist/
 
 # Python
 __pycache__/
@@ -17,3 +17,20 @@ venv/
 # IDE
 .vscode/
 .idea/
+
+
+# # Python-generated files
+# __pycache__/
+# *.py[oc]
+# build/
+# dist/
+# wheels/
+# *.egg-info
+# uv.lock
+
+# # Virtual environments
+# .venv
+# .env
+
+
+# Agent01.ipynb
