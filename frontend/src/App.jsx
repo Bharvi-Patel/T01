@@ -125,7 +125,7 @@ export default function App() {
     setError("");
     try {
       const res = await reviewDraft({ token, draftId, decision: "approve", live, platforms });
-      setResult(res.result);
+      setResult(res.results);
       setStep("done");
     } catch (e) {
       if (String(e.message).includes("401")) return handleLogout();

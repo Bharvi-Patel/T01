@@ -121,7 +121,7 @@ class User(Base):
     # email (e.g. X/Twitter). Required and validated at the /signup endpoint
     # for password-based accounts — see SignupRequest in main.py.
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     platform_connections: Mapped[list["PlatformConnection"]] = relationship(

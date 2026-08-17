@@ -45,6 +45,7 @@ from db import (
     AsyncSessionLocal,
     Draft,
     DraftStatus,
+    OAuthIdentity,
     Platform,
     PlatformConnection,
     PublishResult,
@@ -345,12 +346,12 @@ async def connect_linkedin(req: ConnectLinkedInRequest, db: AsyncSession = Depen
 
 @app.post("/connect/facebook")
 async def connect_facebook(req: ConnectFacebookRequest, db: AsyncSession = Depends(get_db),  user_id: uuid.UUID = Depends(require_auth)):
-    await _upsert_connection(db, user_id, Platform.META_FACEBOOK, {"page_access_token": encrypt_secret(req.page_access_token), "page_id": req.page_id})
+    await _upsert_connection(db, user_id, Platform.FACEBOOK, {"page_access_token": encrypt_secret(req.page_access_token), "page_id": req.page_id})
     return {"success": True}
 
 @app.post("/connect/instagram")
 async def connect_instagram(req: ConnectInstagramRequest, db: AsyncSession = Depends(get_db),  user_id: uuid.UUID = Depends(require_auth)):
-    await _upsert_connection(db, user_id, Platform.META_INSTAGRAM, {"page_access_token": encrypt_secret(req.page_access_token), "ig_page_id": req.ig_page_id})
+    await _upsert_connection(db, user_id, Platform.sINSTAGRAM, {"page_access_token": encrypt_secret(req.page_access_token), "ig_page_id": req.ig_page_id})
     return {"success": True}
 
 @app.post("/connect/threads")
