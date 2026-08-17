@@ -128,16 +128,9 @@ def instagram_credentials_from_page(page: dict) -> dict:
         raise ValueError(f"The Page '{page.get('name', page['id'])}' has no linked Instagram Business account.")
     return {"page_access_token": page["access_token"], "ig_page_id": ig_account["id"]}
 def facebook_finish(code: str) -> dict:
-    resp = requests.get(
-        "https://graph.facebook.com/v21.0/oauth/access_token",
-        params={"client_id": META_APP_ID, "redirect_uri": _redirect_uri("facebook"),
-                "client_secret": META_APP_SECRET, "code": code},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    long_token = _meta_exchange_long_lived(resp.json()["access_token"])
-    page = _first_page(long_token)
-    return {"page_access_token": page["access_token"], "page_id": page["id"]}
+    long_token = facebook_exchange(code)
+    pages = list_pages(long_token)
+    return facebook_credentials_from_page(pages[0])
 
 
 # Instagram 
@@ -151,33 +144,22 @@ def instagram_authorize_url(state: str) -> str:
 
 
 def instagram_finish(code: str) -> dict:
-    resp = requests.get(
-        "https://graph.facebook.com/v21.0/oauth/access_token",
-        params={"client_id": META_APP_ID, "redirect_uri": _redirect_uri("instagram"),
-                "client_secret": META_APP_SECRET, "code": code},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    long_token = _meta_exchange_long_lived(resp.json()["access_token"])
-    page = list_pages(long_token)
-
-    ig_resp = requests.get(
-        f"https://graph.facebook.com/v21.0/{page['id']}",
-        params={"fields": "instagram_business_account", "access_token": page["access_token"]},
-        timeout=15,
-    )
-    ig_resp.raise_for_status()
-    ig_account = ig_resp.json().get("instagram_business_account")
-    if not ig_account:
-        raise ValueError("That Facebook Page has no linked Instagram Business account.")
-    return {"page_access_token": page["access_token"], "ig_page_id": ig_account["id"]}
+    long_token = instagram_exchange(code)
+    pages = list_pages(long_token)
+    return instagram_credentials_from_page(pages[0])
 
 
 # Threads 
 
 def threads_authorize_url(state: str) -> str:
+    # Meta made the threads.net -> threads.com migration permanent and
+    # directional (.net now always bounces to .com). That's a bare
+    # domain-level redirect, and it drops the query string (client_id,
+    # redirect_uri, scope, state) along the way — landing on .com with no
+    # params, which Threads reports as a generic "unknown error". Point
+    # straight at threads.com so nothing gets lost in the hop.
     return (
-        "https://threads.net/oauth/authorize"
+        "https://www.threads.com/oauth/authorize"
         f"?client_id={THREADS_CLIENT_ID}&redirect_uri={_redirect_uri('threads')}"
         f"&scope=threads_basic,threads_content_publish&response_type=code&state={state}"
     )

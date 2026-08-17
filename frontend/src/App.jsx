@@ -46,7 +46,7 @@ export default function App() {
     }
   }, []);
   
-  useEffect(() => {
+  function refreshConnections() {
     if (!token) return;
     getConnections({ token })
       .then((res) => {
@@ -55,7 +55,9 @@ export default function App() {
         setConnections(next);
       })
       .catch(() => {});
-  }, [token, step]);
+  }
+
+  useEffect(refreshConnections, [token, step]);
 
 
   useEffect(() => {
@@ -201,9 +203,13 @@ export default function App() {
           {step === "settings" && (
             <Settings
               token={token}
+              connections={connections}
+              connectStatus={connectStatus}
+              onDismissStatus={() => setConnectStatus(null)}
+              onAuthError={handleLogout}
               pagePicker={pagePicker}
               onDone={() => { setPagePicker(null); setStep("generate"); }}
-              onPagePickerDone={() => { setPagePicker(null); }}
+              onPagePickerDone={() => { setPagePicker(null); refreshConnections(); }}
             />
           )}
         </div>

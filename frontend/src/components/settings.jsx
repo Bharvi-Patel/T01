@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { connectFinto, getAuthorizeUrl, getPendingPages, selectPage } from "../api";
 
-export default function Settings({ token, onDone, pagePicker, onPagePickerDone }) {
+const PLATFORM_LABELS = { linkedin: "LinkedIn", facebook: "Facebook", instagram: "Instagram", threads: "Threads" };
+
+export default function Settings({ token, connections = {}, connectStatus, onDismissStatus, onDone, onAuthError, pagePicker, onPagePickerDone }) {
   const [fintoEmail, setFintoEmail] = useState("");
   const [fintoPassword, setFintoPassword] = useState("");
   const [fintoStatus, setFintoStatus] = useState("");
@@ -68,13 +70,47 @@ export default function Settings({ token, onDone, pagePicker, onPagePickerDone }
     }
   }
 
+  const [oauthError, setOauthError] = useState("");
+
   async function handleOAuthConnect(platform) {
-    const { authorize_url } = await getAuthorizeUrl({ token, platform });
-    window.location.href = authorize_url;
+    setOauthError("");
+    try {
+      const { authorize_url } = await getAuthorizeUrl({ token, platform });
+      window.location.href = authorize_url;
+    } catch (err) {
+      if (String(err.message).includes("Not authenticated")) return onAuthError?.();
+      setOauthError(err.message || `Failed to start ${platform} connect.`);
+    }
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+      {oauthError && (
+        <p style={{ fontSize: 13, color: "var(--danger)", background: "var(--danger-bg)", borderRadius: "var(--radius)", padding: "8px 12px", margin: 0 }}>
+          {oauthError}
+        </p>
+      )}
+      {connectStatus && (
+        <div
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+            fontSize: 13, borderRadius: "var(--radius)", padding: "10px 14px",
+            color: connectStatus.type === "success" ? "var(--ink)" : "var(--danger)",
+            background: connectStatus.type === "success" ? "var(--surface-2)" : "var(--danger-bg)",
+            border: "0.5px solid var(--border)",
+          }}
+        >
+          <span>
+            {connectStatus.type === "success"
+              ? `${PLATFORM_LABELS[connectStatus.platform] || connectStatus.platform} connected.`
+              : `Couldn't connect: ${(connectStatus.detail || "oauth_failed").replace(/_/g, " ")}`}
+          </span>
+          <button onClick={onDismissStatus} style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer" }}>
+            ✕
+          </button>
+        </div>
+      )}
+
       <div style={{ background: "var(--surface-2)", borderRadius: 12, border: "0.5px solid var(--border)", padding: "1.5rem" }}>
         <p style={{ fontWeight: 500, fontSize: 15, margin: "0 0 1rem" }}>Connect finto.day</p>
         <form onSubmit={handleFintoSubmit}>
@@ -93,14 +129,28 @@ export default function Settings({ token, onDone, pagePicker, onPagePickerDone }
         </form>
       </div>
 
-      {["linkedin", "facebook", "instagram", "threads"].map((platform) => (
-        <div key={platform} style={{ background: "var(--surface-2)", borderRadius: 12, border: "0.5px solid var(--border)", padding: "1.5rem" }}>
-          <p style={{ fontWeight: 500, fontSize: 15, margin: "0 0 1rem", textTransform: "capitalize" }}>Connect {platform}</p>
-          <button className="primary" style={{ width: "100%" }} onClick={() => handleOAuthConnect(platform)}>
-            Connect via {platform}
-          </button>
-        </div>
-      ))}
+      {["linkedin", "facebook", "instagram", "threads"].map((platform) => {
+        const connected = Boolean(connections?.[platform]);
+        return (
+          <div key={platform} style={{ background: "var(--surface-2)", borderRadius: 12, border: "0.5px solid var(--border)", padding: "1.5rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 1rem" }}>
+              <span
+                style={{
+                  width: 8, height: 8, borderRadius: "50%",
+                  background: connected ? "var(--ink)" : "transparent",
+                  border: connected ? "none" : "1.5px solid var(--border)",
+                }}
+              />
+              <p style={{ fontWeight: 500, fontSize: 15, margin: 0, textTransform: "capitalize" }}>
+                {PLATFORM_LABELS[platform] || platform}{connected ? " — connected" : ""}
+              </p>
+            </div>
+            <button className="primary" style={{ width: "100%" }} onClick={() => handleOAuthConnect(platform)}>
+              {connected ? `Reconnect ${PLATFORM_LABELS[platform] || platform}` : `Connect via ${PLATFORM_LABELS[platform] || platform}`}
+            </button>
+          </div>
+        );
+      })}
 
       {onDone && (
         <button style={{ width: "100%" }} onClick={onDone}>

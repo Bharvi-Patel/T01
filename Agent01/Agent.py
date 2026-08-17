@@ -25,6 +25,11 @@ FINTO_BASE = "https://finto.day"
 finto_email = os.environ.get("FINTO_EMAIL")
 finto_password = os.environ.get("FINTO_PASSWORD")
 
+# LinkedIn's versioned REST API requires this header on every call. LinkedIn
+# ships a new version monthly and supports each for ~12 months before sunset —
+# override via env if this drifts stale rather than editing code.
+LINKEDIN_API_VERSION = os.environ.get("LINKEDIN_API_VERSION", "202607")
+
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 gemini = OpenAI(api_key=google_api_key, base_url=GEMINI_BASE_URL)
 
@@ -569,14 +574,20 @@ def publish_linkedin_carousel(payload, access_token, member_id, carousel_images)
             return {"success": False, "error": "No carousel images provided."}
 
         image_ids = []
+        image_errors = []
         for img in carousel_images[:9]:  # LinkedIn allows up to 9 images per post
             try:
                 image_ids.append(upload_image_to_linkedin(img["url"], member_id, access_token))
-            except Exception:
+            except Exception as e:
+                # Keep the real reason instead of throwing it away — a bare
+                # "no images uploaded" gives no way to tell a dead image URL
+                # apart from an expired LinkedIn token or a 403 from scope.
+                image_errors.append(f"{img.get('url', '?')}: {e}")
                 continue  # skip any image that fails to upload, keep going
 
         if not image_ids:
-            return {"success": False, "error": "No images could be uploaded to LinkedIn."}
+            detail = "; ".join(image_errors) if image_errors else "unknown reason"
+            return {"success": False, "error": f"No images could be uploaded to LinkedIn ({detail})."}
 
         body = {
             "author": f"urn:li:person:{member_id}",
@@ -998,16 +1009,19 @@ def publish_twitter_carousel(payload, credentials, carousel_images):
             return {"success": False, "error": "No carousel images provided."}
  
         media_ids = []
+        media_errors = []
         for img in image_urls[:TWITTER_MAX_IMAGES]:
             try:
                 img_bytes = download_image(img["url"])
                 media_id = upload_media_to_twitter(img_bytes, credentials)
                 media_ids.append(media_id)
-            except Exception:
+            except Exception as e:
+                media_errors.append(f"{img.get('url', '?')}: {e}")
                 continue  # skip any image that fails to upload, keep going
  
         if not media_ids:
-            return {"success": False, "error": "No images could be uploaded to X."}
+            detail = "; ".join(media_errors) if media_errors else "unknown reason"
+            return {"success": False, "error": f"No images could be uploaded to X ({detail})."}
  
         body = {"text": text, "media": {"media_ids": media_ids}}
  
@@ -1128,7 +1142,11 @@ def agent01(category, subtopic, word_count):
 
     while response.choices[0].finish_reason == "tool_calls":
         message = response.choices[0].message
-        messages.append(message)
+        # .model_dump() so this is a plain JSON-serializable dict, not the SDK's
+        # ChatCompletionMessage object — the DB's messages column is JSON, and
+        # the raw object crashes json.dumps. exclude_none keeps the payload the
+        # API expects on the next call (it's still valid as message history).
+        messages.append(message.model_dump(exclude_none=True))
         for tool_call in message.tool_calls:
             function_name = tool_call.function.name
             args = json.loads(tool_call.function.arguments)
@@ -1148,7 +1166,7 @@ def revise_draft(messages, feedback):
 
     while response.choices[0].finish_reason == "tool_calls":
         message = response.choices[0].message
-        messages.append(message)
+        messages.append(message.model_dump(exclude_none=True))
         for tool_call in message.tool_calls:
             fn_name = tool_call.function.name
             args = json.loads(tool_call.function.arguments)
