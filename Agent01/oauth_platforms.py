@@ -15,9 +15,19 @@ THREADS_CLIENT_ID = os.environ.get("THREADS_APP_ID")
 THREADS_CLIENT_SECRET = os.environ.get("THREADS_APP_SECRET")
 BACKEND_BASE_URL = os.environ.get("BACKEND_BASE_URL", "http://localhost:8000")
 
+# Threads rejects non-HTTPS redirect_uris outright, even for localhost -
+# unlike LinkedIn/Facebook/Instagram, which tolerate plain http://localhost
+# for local dev. Rather than force every platform onto an HTTPS ngrok
+# tunnel (and having to re-register 4 dashboards every time ngrok restarts
+# with a new URL), Threads gets its own overridable base. Point
+# THREADS_BACKEND_BASE_URL at your current ngrok HTTPS URL and leave
+# BACKEND_BASE_URL alone for everything else.
+THREADS_BACKEND_BASE_URL = os.environ.get("THREADS_BACKEND_BASE_URL", BACKEND_BASE_URL)
+
 
 def _redirect_uri(platform: str) -> str:
-    return f"{BACKEND_BASE_URL}/connect/{platform}/callback"
+    base = THREADS_BACKEND_BASE_URL if platform == "threads" else BACKEND_BASE_URL
+    return f"{base}/connect/{platform}/callback"
 
 
 # LinkedIn 
