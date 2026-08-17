@@ -1,10 +1,16 @@
 import os
 import requests
+from dotenv import load_dotenv
+
+# Defensive: guarantees .env is loaded even if this module gets imported
+# before main.py's load_dotenv() call (that ordering bug is exactly what
+# caused every OAuth provider to read client_id as None).
+load_dotenv(override=False)
 
 LINKEDIN_CLIENT_ID = os.environ.get("LINKEDIN_CLIENT_ID")
 LINKEDIN_CLIENT_SECRET = os.environ.get("LINKEDIN_CLIENT_SECRET")
-META_APP_ID = os.environ.get("APP_ID")
-META_APP_SECRET = os.environ.get("APP_SECRET")
+META_APP_ID = os.environ.get("APP_ID") or os.environ.get("META_APP_ID")
+META_APP_SECRET = os.environ.get("APP_SECRET") or os.environ.get("META_APP_SECRET")
 THREADS_CLIENT_ID = os.environ.get("THREADS_APP_ID")
 THREADS_CLIENT_SECRET = os.environ.get("THREADS_APP_SECRET")
 BACKEND_BASE_URL = os.environ.get("BACKEND_BASE_URL", "http://localhost:8000")

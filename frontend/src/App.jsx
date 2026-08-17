@@ -1,12 +1,12 @@
 // App.jsx
 import { useState, useEffect } from "react";
 import Login from "./components/Login";
-import ConnectorsPanel from "./components/ConnectorsPanel";
 import Form from "./components/Form";
 import DraftReview from "./components/DraftReview";
 import Done from "./components/Done";
 import Landing from "./components/Landing";
 import Sidebar from "./components/Sidebar";
+import Settings from "./components/settings";
 import { login as apiLogin, signup as apiSignup, generateDraft, reviewDraft, getConnections } from "./api";
 
 export default function App() {
@@ -69,11 +69,11 @@ export default function App() {
   }, []);
 
   
-  async function handleSignup({ username, password }) {
+  async function handleSignup({ username, email, password }) {
     setAuthLoading(true);
     setAuthError("");
     try {
-      const res = await apiSignup({ username, password });
+      const res = await apiSignup({ username, email, password });
       localStorage.setItem("auth_token", res.token);
       setToken(res.token);
     } catch (e) {
@@ -103,13 +103,6 @@ export default function App() {
     setToken(null);
     handleRestart();
   }
-
-  <Sidebar
-    activeStep={step === "generate" || step === "draft" || step === "done" ? "generate" : step}
-    onNavigate={(key) => setStep(key)}
-    onNewPost={handleRestart}
-    onLogout={handleLogout}
-  />
 
   async function handleGenerate({ category, subtopic, wordCount }) {
     setLoading(true);
@@ -158,29 +151,12 @@ export default function App() {
 
 
 
-  fetch("http://localhost:8000/auth/google/authorize-url", { method: "POST" })
-  .then(r => r.json())
-  .then(console.log)
-  .catch(console.error)
-
-
-
-
-  
-
   function handleRestart() {
     setStep("generate");
     setDraftId(null);
     setDraft(null);
     setResult(null);
     setError("");
-  }
-
-  function handleConnect(platformKey) {
-    // Opens the connect flow for that platform — wired up once the
-    // connect-platform screen exists. For now just a placeholder toggle
-    // so the rail reflects state during layout/preview work.
-    setConnections((prev) => ({ ...prev, [platformKey]: !prev[platformKey] }));
   }
 
   if (!token) {
@@ -196,7 +172,12 @@ export default function App() {
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", width: "100%" }}>
-      <ConnectorsPanel connections={connections} onConnect={handleConnect} onLogout={handleLogout} />
+      <Sidebar
+        activeStep={step === "generate" || step === "draft" || step === "done" ? "generate" : step}
+        onNavigate={(key) => setStep(key)}
+        onNewPost={handleRestart}
+        onLogout={handleLogout}
+      />
 
       <div style={{ flex: 1, padding: "3rem 3.5rem", display: "flex", justifyContent: "center" }}>
         <div style={{ width: "100%", maxWidth: 700 }}>
@@ -216,6 +197,15 @@ export default function App() {
             />
           )}
           {step === "done" && <Done result={result} onRestart={handleRestart} />}
+
+          {step === "settings" && (
+            <Settings
+              token={token}
+              pagePicker={pagePicker}
+              onDone={() => { setPagePicker(null); setStep("generate"); }}
+              onPagePickerDone={() => { setPagePicker(null); }}
+            />
+          )}
         </div>
       </div>
     </div>

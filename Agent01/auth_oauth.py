@@ -7,6 +7,12 @@ import hashlib
 import os
 import secrets
 import requests
+from dotenv import load_dotenv
+
+# Defensive: guarantees .env is loaded even if this module gets imported
+# before main.py's load_dotenv() call (that ordering bug is exactly what
+# caused every OAuth provider to read client_id as None).
+load_dotenv(override=False)
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")

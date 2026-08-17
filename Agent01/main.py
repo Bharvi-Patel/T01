@@ -6,6 +6,15 @@ import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+# Must run before importing auth_oauth / oauth_platforms — both read their
+# client IDs and secrets from os.environ at MODULE IMPORT TIME. If .env
+# hasn't been loaded yet, every provider silently locks in None for its
+# client_id, which is why OAuth login/connect fails identically across
+# every platform with "invalid_client" rather than just one misconfigured
+# provider.
+load_dotenv(override=True)
+
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -48,7 +57,17 @@ from db import (
     init_db,
 )
 
-load_dotenv(override=True)
+# Which credential fields must be Fernet-encrypted before hitting the DB,
+# per platform. Mirrors the plaintext/secret split used by the manual
+# /connect/{platform} endpoints below (e.g. finto's "email" stays plaintext,
+# "password" gets encrypted).
+SECRET_CREDENTIAL_FIELDS: dict[Platform, list[str]] = {
+    Platform.FINTO: ["password"],
+    Platform.LINKEDIN: ["access_token"],
+    Platform.FACEBOOK: ["page_access_token"],
+    Platform.INSTAGRAM: ["page_access_token"],
+    Platform.THREADS: ["access_token"],
+}
 
 LOGIN_OAUTH_STATES: dict[str, dict] = {} 
 
@@ -168,6 +187,7 @@ class LoginRequest(BaseModel):
 
 class SignupRequest(BaseModel):
     username: str
+    email: str
     password: str
 
 
@@ -259,14 +279,21 @@ async def _get_or_create_admin_user(session: AsyncSession):
 async def signup(req: SignupRequest, db: AsyncSession = Depends(get_db)):
     if len(req.username.strip()) < 3:
         raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+    email = req.email.strip().lower()
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
     if len(req.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
-    existing = await db.execute(select(User).where(User.username == req.username))
-    if existing.scalar_one_or_none() is not None:
+    existing_username = await db.execute(select(User).where(User.username == req.username))
+    if existing_username.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="Username already taken")
 
-    user = User(username=req.username, password_hash=hash_password(req.password))
+    existing_email = await db.execute(select(User).where(User.email == email))
+    if existing_email.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="An account with that email already exists")
+
+    user = User(username=req.username, email=email, password_hash=hash_password(req.password))
     db.add(user)
     await db.commit()
     await db.refresh(user)

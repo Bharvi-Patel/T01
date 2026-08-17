@@ -10,9 +10,10 @@ const OAUTH_PROVIDERS = [
 ];
 
 
-export default function Login({ onLogin, onSignup, loading, error }) {
+export default function Login({ onLogin, onSignUp, loading, error }) {
   const [mode, setMode] = useState("login"); // "login" | "signup"
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [mismatchError, setMismatchError] = useState("");
@@ -36,7 +37,7 @@ export default function Login({ onLogin, onSignup, loading, error }) {
       return;
     }
     setMismatchError("");
-    mode === "login" ? onLogin({ username, password }) : onSignup({ username, password });
+    mode === "login" ? onLogin({ username, password }) : onSignUp({ username, email, password });
   }
 
   const displayError = mismatchError || error;
@@ -57,6 +58,13 @@ export default function Login({ onLogin, onSignup, loading, error }) {
           <label htmlFor="username">Username</label>
           <input id="username" type="text" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required />
         </div>
+
+        {mode === "signup" && (
+          <div style={{ marginBottom: "1rem" }}>
+            <label htmlFor="email">Email</label>
+            <input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          </div>
+        )}
 
         <div style={{ marginBottom: mode === "signup" ? "1rem" : "1.5rem" }}>
           <label htmlFor="password">Password</label>

@@ -14,11 +14,11 @@ function authHeaders(token) {
 }
 
 // create a new account
-export async function signup({ username, password }) {
+export async function signup({ username, email, password }) {
   const res = await fetch(`${API_BASE}/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, email, password }),
   });
   return handle(res);
 }
@@ -64,11 +64,11 @@ export async function generateDraft({ token, category, subtopic, wordCount }) {
 /*
   Approve or reject an existing draft.
   Expected backend response for reject: { draft_id, draft: {...revised draft...} }
-  Expected backend response for approve: { draft_id, result: { success, url|error } }
- 
-  `platform` is required when decision === "approve" ("finto" | "linkedin").
+  Expected backend response for approve: { draft_id, results: { <platform>: {...} } }
+
+  `platforms` is required when decision === "approve" — array of platform keys.
  */
-export async function reviewDraft({ token, draftId, decision, feedback, live, platform }) {
+export async function reviewDraft({ token, draftId, decision, feedback, live, platforms }) {
   const res = await fetch(`${API_BASE}/review`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(token) },

@@ -117,6 +117,10 @@ class User(Base):
 
     id: Mapped[uuid.UUID] = _uuid_col()
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    # Nullable at the DB level because OAuth-login users may not expose an
+    # email (e.g. X/Twitter). Required and validated at the /signup endpoint
+    # for password-based accounts — see SignupRequest in main.py.
+    email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

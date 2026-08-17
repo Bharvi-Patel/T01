@@ -13,9 +13,6 @@ export default function Landing({ onGetStarted }) {
   return (
     <div style={{ width: "100%", maxWidth: 720 }}>
         <NavBar />
-        <h1 className="masthead" style={{ fontSize: 56 }}>
-        Write once. Publish everywhere. Approve every word.
-        </h1>
 
       <p className="eyebrow" style={{ margin: "0 0 6px" }}>startTrack</p>
       <h1 className="masthead" style={{ fontSize: 56 }}>
