@@ -2,6 +2,21 @@
 import { useState, useEffect, useRef } from "react";
 import { getDrafts } from "../api";
 
+// Same feather-style stroke icon pattern used in Sidebar.jsx
+const MENU_ICON_PATHS = {
+  image: "M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zM8.5 10a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM3 16l5-5 4 4 3-3 6 6",
+  video: "M4 6h11a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1zM16 10l5-3v10l-5-3",
+  text: "M4 6h16M4 12h16M4 18h10",
+};
+
+function MenuIcon({ name, size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d={MENU_ICON_PATHS[name]} />
+    </svg>
+  );
+}
+
 const TABS = [
   { key: "new", label: "New Post" },
   { key: "drafts", label: "Drafts" },
@@ -125,27 +140,30 @@ function MediaTab() {
       {menuOpen && (
         <div
           style={{
-            position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 10, minWidth: 170,
-            background: "var(--surface-2)", border: "0.5px solid var(--border)", borderRadius: 10,
-            padding: 6, boxShadow: "0 8px 20px rgba(0,0,0,0.12)",
+            position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 50, minWidth: 170,
+            background: "var(--paper-raised)", opacity: 1, border: "1px solid var(--border-strong)", borderRadius: 10,
+            padding: 6, boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
           }}
         >
           <button
-            style={{ width: "100%", justifyContent: "flex-start", background: "transparent", border: "none", height: 36, fontSize: 13.5 }}
+            style={{ width: "100%", justifyContent: "flex-start", background: "transparent", border: "none", height: 36, fontSize: 13.5, color: "var(--ink)", display: "flex", alignItems: "center", gap: 10 }}
             onClick={() => { setMenuOpen(false); photoRef.current?.click(); }}
           >
+            <MenuIcon name="image" />
             Upload photos
           </button>
           <button
-            style={{ width: "100%", justifyContent: "flex-start", background: "transparent", border: "none", height: 36, fontSize: 13.5 }}
+            style={{ width: "100%", justifyContent: "flex-start", background: "transparent", border: "none", height: 36, fontSize: 13.5, color: "var(--ink)", display: "flex", alignItems: "center", gap: 10 }}
             onClick={() => { setMenuOpen(false); videoRef.current?.click(); }}
           >
+            <MenuIcon name="video" />
             Upload videos
           </button>
           <button
-            style={{ width: "100%", justifyContent: "flex-start", background: "transparent", border: "none", height: 36, fontSize: 13.5 }}
+            style={{ width: "100%", justifyContent: "flex-start", background: "transparent", border: "none", height: 36, fontSize: 13.5, color: "var(--ink)", display: "flex", alignItems: "center", gap: 10 }}
             onClick={() => { setMenuOpen(false); setTextDraftOpen(true); }}
           >
+            <MenuIcon name="text" />
             Upload text
           </button>
         </div>
@@ -184,7 +202,7 @@ function MediaTab() {
       {assets.length === 0 ? (
         <div style={{ textAlign: "center", padding: "3.5rem 0" }}>
           <p style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
-            No Assets Found
+            No Media Found
           </p>
           {AddNewButton}
         </div>
@@ -203,6 +221,7 @@ function MediaTab() {
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                  <MenuIcon name={a.type === "photo" ? "image" : a.type} size={14} />
                   <span style={{ fontSize: 11, textTransform: "uppercase", fontFamily: "var(--font-mono)", color: "var(--text-muted)", flexShrink: 0 }}>
                     {a.type}
                   </span>
