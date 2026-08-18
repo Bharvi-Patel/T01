@@ -142,11 +142,33 @@ body::before {
   overflow-x: hidden;
 }
 .sidebar.collapsed {
-  width: 76px;
-  padding: 1.5rem 0.65rem;
+  width: 72px;
+  padding: 1.25rem 0.5rem;
 }
 .mobile-menu-button { display: none; }
 .sidebar-backdrop { display: none; }
+
+/* --- main content canvas: bright/light regardless of app theme, for
+   contrast against the dark sidebar rail. Overriding the CSS vars here
+   (not just background) means every child component's ink/border/paper
+   colors automatically follow suit. --- */
+.main-panel {
+  background: #F4F6F2;
+  min-height: 100vh;
+  --ink: #1F2933;
+  --paper: #F4F6F2;
+  --paper-raised: #FFFFFF;
+  --primary: #172A3A;
+  --secondary: #344E41;
+  --accent: #588157;
+  --accent-ink: #FFFFFF;
+  --border: #D8DDD4;
+  --border-strong: #B7BFB0;
+  --text-secondary: #4E5A52;
+  --text-muted: #838F84;
+  --danger: #A32D2D;
+  --danger-bg: #FCEBEB;
+}
 
 @media (max-width: 768px) {
   .sidebar {
@@ -226,8 +248,21 @@ body::before {
   justify-content: center;
 }
 .sidebar-collapse-btn:hover { border-color: var(--accent); color: var(--ink); }
-.sidebar.collapsed .sidebar-header { justify-content: center; }
-.sidebar.collapsed .sidebar-collapse-btn { margin-top: 10px; }
+.sidebar.collapsed .sidebar-brand {
+  flex-direction: column;
+  gap: 4px;
+}
+.sidebar.collapsed .sidebar-workspace-name {
+  font-size: 9px;
+  text-align: center;
+  white-space: normal;
+  line-height: 1.15;
+  max-width: 56px;
+  overflow: visible;
+  text-overflow: unset;
+}
+.sidebar.collapsed .sidebar-header { flex-direction: column; justify-content: flex-start; gap: 10px; }
+.sidebar.collapsed .sidebar-collapse-btn { margin-top: 0; }
 
 /* --- + New button --- */
 .sidebar-new-btn {
@@ -294,7 +329,21 @@ body::before {
   color: var(--text-muted);
   flex-shrink: 0;
 }
-.sidebar.collapsed .sidebar-nav-item { justify-content: center; padding: 0; }
+.sidebar-nav { transition: gap 0.18s ease; }
+.sidebar.collapsed .sidebar-nav { gap: 6px; }
+.sidebar.collapsed .sidebar-nav-item {
+  justify-content: center;
+  padding: 0;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto;
+  border-radius: 10px;
+}
+.sidebar.collapsed .sidebar-nav-item.active {
+  background: var(--paper);
+  border-color: transparent;
+}
+.sidebar.collapsed .sidebar-nav-item:not(.disabled):hover { border-color: transparent; }
 
 /* --- bottom: help + account --- */
 .sidebar-bottom {
@@ -319,6 +368,7 @@ body::before {
   font-weight: 400;
 }
 .sidebar-help-btn:hover { background: var(--paper); border-color: transparent; }
+.sidebar-help-btn.active { background: var(--paper); color: var(--ink); }
 .sidebar-help-mark {
   flex-shrink: 0;
   width: 18px;
@@ -349,6 +399,7 @@ body::before {
 }
 .sidebar-account-btn:hover { background: var(--paper); border-color: transparent; }
 .sidebar-account-avatar {
+  position: relative;
   flex-shrink: 0;
   width: 26px;
   height: 26px;
@@ -358,6 +409,17 @@ body::before {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.sidebar-account-avatar::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--paper-raised);
 }
 .sidebar.collapsed .sidebar-account-btn { justify-content: center; padding: 0; }
 
@@ -392,6 +454,47 @@ body::before {
   justify-content: flex-start;
 }
 .sidebar-account-menu-item:hover { background: var(--paper); }
+
+/* --- collapsed-sidebar hover tooltips (name pops up beside the icon) --- */
+.sidebar.collapsed [data-tooltip] { position: relative; }
+.sidebar.collapsed [data-tooltip]:hover::after,
+.sidebar.collapsed [data-tooltip]:focus-visible::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  padding: 6px 10px;
+  border-radius: 6px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.22);
+  z-index: 70;
+  pointer-events: none;
+}
+.sidebar.collapsed [data-tooltip]:hover::before,
+.sidebar.collapsed [data-tooltip]:focus-visible::before {
+  content: "";
+  position: absolute;
+  left: calc(100% + 5px);
+  top: 50%;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-right-color: var(--ink);
+  z-index: 70;
+  pointer-events: none;
+}
+/* account menu, when open, sits to the right of the button already — don't
+   also stack a tooltip on top of it while it's open */
+.sidebar-account-wrap:has(.sidebar-account-menu) [data-tooltip]:hover::after,
+.sidebar-account-wrap:has(.sidebar-account-menu) [data-tooltip]:hover::before {
+  display: none;
+}
 
 .masthead {
   font-family: var(--font-display);

@@ -2,19 +2,17 @@
 import { useState, useRef, useEffect } from "react";
 
 // "generate" and "settings" are real, wired-up screens (the create/review/
-// publish flow, and the social accounts connector page). Everything else is
-// a placeholder until that part of the product actually exists.
+// publish flow, and the social accounts connector page). Everything else
+// still navigates, but shows a "coming soon" placeholder for now.
 const NAV_ITEMS = [
-  { key: "generate", label: "Dashboard", icon: "dashboard" },
+  { key: "dashboard", label: "Dashboard", icon: "dashboard" },
   { key: "inbox", label: "Social Inbox", icon: "inbox" },
   { key: "settings", label: "Social Accounts", icon: "link" },
   { key: "publish", label: "Publish", icon: "send" },
+  { key: "calendar", label: "Calendar", icon: "calendar" },
   { key: "analytics", label: "Analytics", icon: "chart" },
   { key: "billing", label: "Billing", icon: "card" },
-  { key: "notifications", label: "Notifications", icon: "bell" },
 ];
-
-const WIRED_KEYS = new Set(["generate", "settings"]);
 
 const ICON_PATHS = {
   dashboard: "M3 11l9-8 9 8M5 10v10h14V10",
@@ -23,6 +21,7 @@ const ICON_PATHS = {
   send: "M22 2L11 13M22 2l-7 20-4-9-9-4z",
   chart: "M4 20V10M12 20V4M20 20v-7",
   card: "M2 7a2 2 0 012-2h16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7zM2 10h20M6 15h4",
+  calendar: "M8 2v4M16 2v4M3 9h18M4 5h16a1 1 0 011 1v13a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1z",
   bell: "M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0",
   help: "M12 2a10 10 0 100 20 10 10 0 000-20zM9.5 9a2.5 2.5 0 015 0c0 1.5-2 2-2 3.5M12 17h.01",
   user: "M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z",
@@ -70,7 +69,7 @@ export default function Sidebar({
         <div className="sidebar-header">
           <div className="sidebar-brand">
             <span className="sidebar-logo-mark" aria-hidden="true">◆</span>
-            {!collapsed && <span className="sidebar-workspace-name">{workspaceName}</span>}
+            <span className="sidebar-workspace-name">{workspaceName}</span>
           </div>
           <button
             className="sidebar-collapse-btn"
@@ -86,7 +85,8 @@ export default function Sidebar({
         <button
           className="primary sidebar-new-btn"
           onClick={onNewPost}
-          title="New post"
+          data-tooltip="New post"
+          aria-label="New post"
         >
           <Icon name="plus" size={16} />
           {!collapsed && <span>New</span>}
@@ -95,31 +95,39 @@ export default function Sidebar({
         {/* Nav */}
         <div className="sidebar-nav">
           {NAV_ITEMS.map((item) => {
-            const wired = WIRED_KEYS.has(item.key);
             const active = activeStep === item.key;
             return (
               <button
                 key={item.key}
-                className={`sidebar-nav-item${active ? " active" : ""}${!wired ? " disabled" : ""}`}
-                onClick={() => wired && onNavigate(item.key)}
-                disabled={!wired}
-                title={collapsed ? item.label + (wired ? "" : " (soon)") : undefined}
+                className={`sidebar-nav-item${active ? " active" : ""}`}
+                onClick={() => onNavigate(item.key)}
+                data-tooltip={item.label}
+                aria-label={item.label}
               >
                 <span className="sidebar-nav-item-main">
                   <Icon name={item.icon} />
                   {!collapsed && <span className="sidebar-nav-item-label">{item.label}</span>}
                 </span>
-                {!collapsed && !wired && <span className="sidebar-soon-badge">soon</span>}
               </button>
             );
           })}
         </div>
 
-        {/* Bottom: help + account */}
+        {/* Bottom: notifications + help + account */}
         <div className="sidebar-bottom">
           <button
+            className={`sidebar-help-btn${activeStep === "notifications" ? " active" : ""}`}
+            onClick={() => onNavigate("notifications")}
+            data-tooltip="Notifications"
+            aria-label="Notifications"
+          >
+            <Icon name="bell" size={16} />
+            {!collapsed && <span>Notifications</span>}
+          </button>
+
+          <button
             className="sidebar-help-btn"
-            title="Help center"
+            data-tooltip="Help center"
             aria-label="Help center"
           >
             <span className="sidebar-help-mark">?</span>
@@ -130,7 +138,8 @@ export default function Sidebar({
             <button
               className="sidebar-account-btn"
               onClick={() => setAccountOpen((o) => !o)}
-              title="Account"
+              data-tooltip="Account"
+              aria-label="Account"
             >
               <span className="sidebar-account-avatar">
                 <Icon name="user" size={14} />

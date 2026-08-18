@@ -7,7 +7,8 @@ import Done from "./components/Done";
 import Landing from "./components/Landing";
 import Sidebar from "./components/Sidebar";
 import Settings from "./components/settings";
-import { login as apiLogin, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, reviewDraft, getConnections } from "./api";
+import Publish from "./components/Publish";
+import { login as apiLogin, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, reviewDraft, getConnections, getDraft } from "./api";
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem("auth_token"));
@@ -25,7 +26,7 @@ export default function App() {
 
   const [showAuth, setShowAuth] = useState(false);
   
-  const [step, setStep] = useState("generate"); // generate | draft | done
+  const [step, setStep] = useState("dashboard"); // dashboard | generate | draft | done | settings | ...
   const [connectStatus, setConnectStatus] = useState(null); // { type: "success"|"error", platform }
   const [draftId, setDraftId] = useState(null);
   const [draft, setDraft] = useState(null);
@@ -34,7 +35,10 @@ export default function App() {
   const [error, setError] = useState("");
   const [pagePicker, setPagePicker] = useState(null); // { platform, pendingId }
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("sidebar_collapsed") === "1");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    const saved = localStorage.getItem("sidebar_collapsed");
+    return saved === null ? true : saved === "1"; // narrow icon rail by default
+  });
 
   function toggleSidebarCollapsed() {
     setSidebarCollapsed((prev) => {
@@ -197,6 +201,22 @@ export default function App() {
 
 
 
+  async function handleOpenDraft(id) {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await getDraft({ token, draftId: id });
+      setDraftId(res.draft_id);
+      setDraft(res.draft);
+      setStep("draft");
+    } catch (e) {
+      if (String(e.message).includes("401")) return handleLogout();
+      setError(e.message || "Could not load that draft.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function handleRestart() {
     setStep("generate");
     setDraftId(null);
@@ -232,7 +252,7 @@ export default function App() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", width: "100%" }}>
       <Sidebar
-        activeStep={step === "generate" || step === "draft" || step === "done" ? "generate" : step}
+        activeStep={step === "generate" || step === "draft" || step === "done" ? null : step}
         onNavigate={(key) => { setStep(key); setMobileMenuOpen(false); }}
         onNewPost={() => { handleRestart(); setMobileMenuOpen(false); }}
         onLogout={handleLogout}
@@ -242,7 +262,7 @@ export default function App() {
         onToggleCollapsed={toggleSidebarCollapsed}
       />
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div className="main-panel" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <button
           className="mobile-menu-button"
           onClick={() => setMobileMenuOpen(true)}
@@ -253,6 +273,20 @@ export default function App() {
         </button>
 
         <div className="page-container">
+          {step === "dashboard" && (
+            <div style={{ padding: "2rem 0" }}>
+              <p style={{ fontFamily: "var(--font-display)", fontSize: "clamp(24px, 4vw, 32px)", color: "var(--ink)", marginBottom: 8 }}>
+                Welcome back
+              </p>
+              <p style={{ color: "var(--text-secondary)", marginBottom: 28 }}>
+                Start a new draft, or check in on your connected accounts.
+              </p>
+              <button className="primary" onClick={handleRestart} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                <span>+ New</span>
+              </button>
+            </div>
+          )}
+
           {step === "generate" && (
               <Form onSubmit={handleGenerate} loading={loading} error={error} />
 
@@ -281,6 +315,19 @@ export default function App() {
               onDone={() => { setPagePicker(null); setStep("generate"); }}
               onPagePickerDone={() => { setPagePicker(null); refreshConnections(); }}
             />
+          )}
+
+          {step === "publish" && (
+            <Publish token={token} onNewPost={handleRestart} onOpenDraft={handleOpenDraft} />
+          )}
+
+          {["inbox", "calendar", "analytics", "billing", "notifications"].includes(step) && (
+            <div style={{ padding: "3rem 0", textAlign: "center", color: "var(--text-secondary)" }}>
+              <p style={{ fontFamily: "var(--font-display)", fontSize: "22px", color: "var(--ink)", marginBottom: 8 }}>
+                {{ inbox: "Social Inbox", calendar: "Calendar", analytics: "Analytics", billing: "Billing", notifications: "Notifications" }[step]}
+              </p>
+              <p>This section is coming soon.</p>
+            </div>
           )}
         </div>
       </div>

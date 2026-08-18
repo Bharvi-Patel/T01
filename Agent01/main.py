@@ -386,7 +386,7 @@ async def generate(req: GenerateRequest, db: AsyncSession = Depends(get_db), use
     draft_content = _parse_draft(content)
 
     draft = Draft(
-        user_id=ADMIN_USER_ID,
+        user_id=user_id,
         category=req.category,
         subtopic=req.subtopic,
         word_count=req.word_count,
@@ -399,6 +399,42 @@ async def generate(req: GenerateRequest, db: AsyncSession = Depends(get_db), use
     await db.refresh(draft)
 
     return {"draft_id": str(draft.id), "draft": draft.content}
+
+
+@app.get("/drafts")
+async def list_drafts(status: str | None = None, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    query = select(Draft).where(Draft.user_id == user_id).order_by(Draft.created_at.desc())
+    if status:
+        try:
+            query = query.where(Draft.status == DraftStatus(status))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(s.value for s in DraftStatus)}")
+    result = await db.execute(query)
+    drafts = result.scalars().all()
+    return {
+        "drafts": [
+            {
+                "draft_id": str(d.id),
+                "category": d.category,
+                "subtopic": d.subtopic,
+                "title": (d.content or {}).get("title"),
+                "status": d.status.value,
+                "created_at": d.created_at.isoformat(),
+                "updated_at": d.updated_at.isoformat(),
+            }
+            for d in drafts
+        ]
+    }
+
+
+@app.get("/drafts/{draft_id}")
+async def get_draft(draft_id: uuid.UUID, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.user_id == user_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Unknown draft_id")
+    return {"draft_id": str(draft.id), "draft": draft.content, "status": draft.status.value}
+
 
 @app.post("/connect/finto")
 async def connect_finto(req: ConnectFintoRequest, db: AsyncSession = Depends(get_db),  user_id: uuid.UUID = Depends(require_auth)):

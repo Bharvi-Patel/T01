@@ -178,6 +178,27 @@ export async function getAuthorizeUrl({ token, platform }) {
   return handle(res);
 }
 
+/*
+  List the current user's drafts, optionally filtered by status
+  ("pending_review" | "published" | "publish_failed" | "rejected").
+  Expected backend response: { drafts: [{ draft_id, category, subtopic, title, status, created_at, updated_at }] }
+ */
+export async function getDrafts({ token, status }) {
+  const url = new URL(`${API_BASE}/drafts`);
+  if (status) url.searchParams.set("status", status);
+  const res = await fetch(url, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+/*
+  Fetch a single draft by id (e.g. to resume review from the Drafts list).
+  Expected backend response: { draft_id, draft: {...}, status }
+ */
+export async function getDraft({ token, draftId }) {
+  const res = await fetch(`${API_BASE}/drafts/${draftId}`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
 export async function getConnections({ token }) {
   const res = await fetch(`${API_BASE}/connections`, { headers: authHeaders(token) });
   return handle(res);
