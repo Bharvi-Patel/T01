@@ -34,6 +34,15 @@ export default function App() {
   const [error, setError] = useState("");
   const [pagePicker, setPagePicker] = useState(null); // { platform, pendingId }
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("sidebar_collapsed") === "1");
+
+  function toggleSidebarCollapsed() {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("sidebar_collapsed", next ? "1" : "0");
+      return next;
+    });
+  }
 
 
   useEffect(() => {
@@ -197,27 +206,27 @@ export default function App() {
   }
 
   if (!token) {
-    return (
-      <div className="center-viewport">
-        <div style={{ width: "100%", maxWidth: showAuth ? 400 : 720 }}>
-          {showAuth
-            ? <Login
-                onLogin={handleLogin}
-                onSignUp={handleSignup}
-                loading={authLoading}
-                error={authError}
-                verifyMessage={verifyMessage}
-                pendingVerificationEmail={pendingVerificationEmail}
-                onResendVerification={handleResendVerification}
-                resendLoading={resendLoading}
-                resendMessage={resendMessage}
-                onBackToSignIn={handleBackToSignIn}
-              />
-            : <Landing onGetStarted={() => setShowAuth(true)} />
-          }
+    if (showAuth) {
+      return (
+        <div className="center-viewport">
+          <div style={{ width: "100%", maxWidth: 400 }}>
+            <Login
+              onLogin={handleLogin}
+              onSignUp={handleSignup}
+              loading={authLoading}
+              error={authError}
+              verifyMessage={verifyMessage}
+              pendingVerificationEmail={pendingVerificationEmail}
+              onResendVerification={handleResendVerification}
+              resendLoading={resendLoading}
+              resendMessage={resendMessage}
+              onBackToSignIn={handleBackToSignIn}
+            />
+          </div>
         </div>
-      </div>
-    );
+      );
+    }
+    return <Landing onGetStarted={() => setShowAuth(true)} />;
   }
 
   return (
@@ -229,6 +238,8 @@ export default function App() {
         onLogout={handleLogout}
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={toggleSidebarCollapsed}
       />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>

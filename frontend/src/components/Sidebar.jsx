@@ -1,91 +1,153 @@
 // Sidebar.jsx
+import { useState, useRef, useEffect } from "react";
+
+// "generate" and "settings" are real, wired-up screens (the create/review/
+// publish flow, and the social accounts connector page). Everything else is
+// a placeholder until that part of the product actually exists.
 const NAV_ITEMS = [
-  { key: "generate", label: "Home", icon: "home" },
-  { key: "explore", label: "Explore", icon: "compass" },
-  { key: "posts", label: "Posts", icon: "grid" },
+  { key: "generate", label: "Dashboard", icon: "dashboard" },
+  { key: "inbox", label: "Social Inbox", icon: "inbox" },
+  { key: "settings", label: "Social Accounts", icon: "link" },
+  { key: "publish", label: "Publish", icon: "send" },
   { key: "analytics", label: "Analytics", icon: "chart" },
-  { key: "settings", label: "Social accounts", icon: "link" },
-  { key: "workspace", label: "Workspace settings", icon: "gear" },
-  { key: "help", label: "Help center", icon: "help" },
+  { key: "billing", label: "Billing", icon: "card" },
+  { key: "notifications", label: "Notifications", icon: "bell" },
 ];
 
-// Only these two map to real screens right now — everything else is a
-// placeholder until that part of the app actually exists.
 const WIRED_KEYS = new Set(["generate", "settings"]);
 
 const ICON_PATHS = {
-  home: "M3 11l9-8 9 8M5 10v10h14V10",
-  compass: "M12 2a10 10 0 100 20 10 10 0 000-20zM15 9l-2 6-6 2 2-6z",
-  grid: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z",
-  chart: "M4 20V10M12 20V4M20 20v-7",
+  dashboard: "M3 11l9-8 9 8M5 10v10h14V10",
+  inbox: "M3 8l9 6 9-6M5 6h14a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z",
   link: "M9 15l6-6M8 12a4 4 0 010-5.66l2-2a4 4 0 015.66 5.66M16 12a4 4 0 010 5.66l-2 2a4 4 0 01-5.66-5.66",
-  gear: "M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z",
+  send: "M22 2L11 13M22 2l-7 20-4-9-9-4z",
+  chart: "M4 20V10M12 20V4M20 20v-7",
+  card: "M2 7a2 2 0 012-2h16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7zM2 10h20M6 15h4",
+  bell: "M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0",
   help: "M12 2a10 10 0 100 20 10 10 0 000-20zM9.5 9a2.5 2.5 0 015 0c0 1.5-2 2-2 3.5M12 17h.01",
+  user: "M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z",
+  plus: "M12 5v14M5 12h14",
+  chevronLeft: "M15 18l-6-6 6-6",
+  chevronRight: "M9 18l6-6-6-6",
+  logout: "M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9",
 };
 
-function Icon({ name }) {
+function Icon({ name, size = 16 }) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d={ICON_PATHS[name]} />
     </svg>
   );
 }
 
-export default function Sidebar({ activeStep, onNavigate, onNewPost, onLogout, mobileOpen, onCloseMobile }) {
+export default function Sidebar({
+  activeStep,
+  onNavigate,
+  onNewPost,
+  onLogout,
+  mobileOpen,
+  onCloseMobile,
+  collapsed,
+  onToggleCollapsed,
+  workspaceName = "startTrack",
+}) {
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (accountRef.current && !accountRef.current.contains(e.target)) setAccountOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   return (
     <>
       <div className={`sidebar-backdrop${mobileOpen ? " open" : ""}`} onClick={onCloseMobile} />
-      <div className={`sidebar${mobileOpen ? " open" : ""}`}>
-        <p style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase", margin: "0 0 24px" }}>
-          startTrack
-        </p>
+      <div className={`sidebar${mobileOpen ? " open" : ""}${collapsed ? " collapsed" : ""}`}>
+        {/* Header: logo + workspace name + collapse toggle */}
+        <div className="sidebar-header">
+          <div className="sidebar-brand">
+            <span className="sidebar-logo-mark" aria-hidden="true">◆</span>
+            {!collapsed && <span className="sidebar-workspace-name">{workspaceName}</span>}
+          </div>
+          <button
+            className="sidebar-collapse-btn"
+            onClick={onToggleCollapsed}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            <Icon name={collapsed ? "chevronRight" : "chevronLeft"} size={14} />
+          </button>
+        </div>
 
+        {/* + New */}
         <button
-          className="primary"
-          style={{ width: "100%", marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+          className="primary sidebar-new-btn"
           onClick={onNewPost}
+          title="New post"
         >
-          <Icon name="grid" /> New post
+          <Icon name="plus" size={16} />
+          {!collapsed && <span>New</span>}
         </button>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
+        {/* Nav */}
+        <div className="sidebar-nav">
           {NAV_ITEMS.map((item) => {
             const wired = WIRED_KEYS.has(item.key);
             const active = activeStep === item.key;
             return (
               <button
                 key={item.key}
+                className={`sidebar-nav-item${active ? " active" : ""}${!wired ? " disabled" : ""}`}
                 onClick={() => wired && onNavigate(item.key)}
                 disabled={!wired}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  background: active ? "var(--paper)" : "transparent",
-                  border: active ? "1px solid var(--accent)" : "1px solid transparent",
-                  borderRadius: "var(--radius)",
-                  color: wired ? "var(--ink)" : "var(--text-muted)",
-                  height: 40, padding: "0 10px", fontWeight: 400,
-                  cursor: wired ? "pointer" : "default",
-                }}
-                onMouseEnter={(e) => wired && !active && (e.currentTarget.style.background = "var(--paper)")}
-                onMouseLeave={(e) => wired && !active && (e.currentTarget.style.background = "transparent")}
+                title={collapsed ? item.label + (wired ? "" : " (soon)") : undefined}
               >
-                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span className="sidebar-nav-item-main">
                   <Icon name={item.icon} />
-                  <span style={{ fontSize: 14 }}>{item.label}</span>
+                  {!collapsed && <span className="sidebar-nav-item-label">{item.label}</span>}
                 </span>
-                {!wired && (
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--text-muted)" }}>
-                    soon
-                  </span>
-                )}
+                {!collapsed && !wired && <span className="sidebar-soon-badge">soon</span>}
               </button>
             );
           })}
         </div>
 
-        <button onClick={onLogout} style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--ink)", marginTop: 20 }}>
-          Log out
-        </button>
+        {/* Bottom: help + account */}
+        <div className="sidebar-bottom">
+          <button
+            className="sidebar-help-btn"
+            title="Help center"
+            aria-label="Help center"
+          >
+            <span className="sidebar-help-mark">?</span>
+            {!collapsed && <span>Help center</span>}
+          </button>
+
+          <div ref={accountRef} className="sidebar-account-wrap">
+            <button
+              className="sidebar-account-btn"
+              onClick={() => setAccountOpen((o) => !o)}
+              title="Account"
+            >
+              <span className="sidebar-account-avatar">
+                <Icon name="user" size={14} />
+              </span>
+              {!collapsed && <span>Account</span>}
+            </button>
+
+            {accountOpen && (
+              <div className={`sidebar-account-menu${collapsed ? " sidebar-account-menu--collapsed" : ""}`}>
+                <button className="sidebar-account-menu-item" onClick={onLogout}>
+                  <Icon name="logout" size={15} />
+                  Log out
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </>
   );

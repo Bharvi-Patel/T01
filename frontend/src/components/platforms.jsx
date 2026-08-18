@@ -1,6 +1,6 @@
 // platforms.jsx — shared between ConnectorsPanel, DraftReview, and Landing
 export const PLATFORMS = [
-  { key: "finto", label: "finto.day", color: "#0F6E56" },
+  // { key: "finto", label: "finto.day", color: "#0F6E56" },
   { key: "linkedin", label: "LinkedIn", color: "#0A66C2" },
   { key: "facebook", label: "Facebook", color: "#1877F2" },
   { key: "instagram", label: "Instagram", color: "#C13584" },
@@ -10,7 +10,7 @@ export const PLATFORMS = [
 // Logo glyphs, keyed the same as PLATFORMS. finto.day isn't a public brand,
 // so it gets a simple monogram instead of a scraped logo.
 const LOGO_PATHS = {
-finto: null, // rendered as a monogram below, not a path
+// finto: null, // rendered as a monogram below, not a path
 linkedin:
   "M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z",
 facebook:
@@ -24,21 +24,21 @@ threads:
 // Renders a platform's logo mark. finto.day (no public brand) falls back to
 // a monogram in its own brand color; everything else renders its real glyph.
 export function PlatformLogo({ platform, size = 16 }) {
-if (platform.key === "finto" || !LOGO_PATHS[platform.key]) {
-  return (
-    <span
-      style={{
-        width: size, height: size, borderRadius: "50%",
-        background: platform.color, color: "#fff",
-        display: "inline-flex", alignItems: "center", justifyContent: "center",
-        fontSize: size * 0.6, fontWeight: 600, fontFamily: "var(--font-mono)",
-        flexShrink: 0,
-      }}
-    >
-      f
-    </span>
-  );
-}
+// if (platform.key === "finto" || !LOGO_PATHS[platform.key]) {
+//   return (
+//     <span
+//       style={{
+//         width: size, height: size, borderRadius: "50%",
+//         background: platform.color, color: "#fff",
+//         display: "inline-flex", alignItems: "center", justifyContent: "center",
+//         fontSize: size * 0.6, fontWeight: 600, fontFamily: "var(--font-mono)",
+//         flexShrink: 0,
+//       }}
+//     >
+//       f
+//     </span>
+  // );
+// }
 
 return (
   <svg

@@ -37,7 +37,7 @@ export default function Login({ onLogin, onSignUp, loading, error }) {
       return;
     }
     setMismatchError("");
-    mode === "login" ? onLogin({ username, password }) : onSignUp({ username, email, password });
+    mode === "login" ? onLogin({ identifier: username, password }) : onSignUp({ username, email, password });
   }
 
   const displayError = mismatchError || error;
