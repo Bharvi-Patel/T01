@@ -92,10 +92,18 @@ def linkedin_finish(code: str, **_) -> dict:
 # ---------- Facebook (login) ----------
 
 def facebook_authorize_url(state: str, **_) -> str:
+    # This Meta app is configured for Business Login (it also requests
+    # pages_manage_posts / business_management etc. for the publish-connect
+    # flow in oauth_platforms.py). That Login variant only supports a
+    # narrow set of permissions and rejects the standard "email" scope
+    # outright with "Invalid Scopes: email" — so we don't request it here.
+    # facebook_finish() still asks the Graph API for email and just gets
+    # None back; _get_or_create_oauth_user() already falls back to a
+    # provider-id-based username when there's no email.
     return (
         "https://www.facebook.com/v21.0/dialog/oauth"
         f"?client_id={META_APP_ID}&redirect_uri={_redirect_uri('facebook')}"
-        f"&scope=public_profile,email&state={state}"
+        f"&scope=public_profile&state={state}"
     )
 
 

@@ -1,5 +1,5 @@
 // Landing.jsx
-import { PLATFORMS } from "./platforms";
+import { PLATFORMS, PlatformLogo } from "./platforms";
 import NavBar from "./NavBar";
 
 const STEPS = [
@@ -14,7 +14,6 @@ export default function Landing({ onGetStarted }) {
     <div style={{ width: "100%" }}>
         <NavBar />
 
-      <p className="eyebrow" style={{ margin: "0 0 6px" }}>startTrack</p>
       <h1 className="masthead masthead-hero">
         Write once. Publish everywhere. Approve every word.
       </h1>
@@ -55,7 +54,7 @@ export default function Landing({ onGetStarted }) {
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
           {PLATFORMS.map((p) => (
             <span key={p.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-              <span style={{ width: 7, height: 7, borderRadius: "50%", background: p.color }} />
+              <PlatformLogo platform={p} size={16} />
               {p.label}
             </span>
           ))}

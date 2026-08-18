@@ -7,7 +7,7 @@ import Done from "./components/Done";
 import Landing from "./components/Landing";
 import Sidebar from "./components/Sidebar";
 import Settings from "./components/settings";
-import { login as apiLogin, signup as apiSignup, generateDraft, reviewDraft, getConnections } from "./api";
+import { login as apiLogin, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, reviewDraft, getConnections } from "./api";
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem("auth_token"));
@@ -16,6 +16,10 @@ export default function App() {
   // );
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState(null);
+  const [verifyMessage, setVerifyMessage] = useState(null); // { type, text } from a clicked email link
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendMessage, setResendMessage] = useState("");
 
   const [connections, setConnections] = useState({}); // { finto: true, linkedin: false, ... }
 
@@ -63,6 +67,18 @@ export default function App() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const verifyToken = params.get("verify_token");
+    if (verifyToken) {
+      window.history.replaceState({}, "", window.location.pathname);
+      setShowAuth(true);
+      apiVerifyEmail({ token: verifyToken })
+        .then(() => setVerifyMessage({ type: "success", text: "Email verified — you can sign in now." }))
+        .catch((e) => setVerifyMessage({ type: "error", text: e.message || "That verification link is invalid or expired." }));
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
     const loginToken = params.get("login_token");
     if (loginToken) {
       localStorage.setItem("auth_token", loginToken);
@@ -77,25 +93,43 @@ export default function App() {
     setAuthError("");
     try {
       const res = await apiSignup({ username, email, password });
-      localStorage.setItem("auth_token", res.token);
-      setToken(res.token);
+      setPendingVerificationEmail(res.email || email);
     } catch (e) {
       setAuthError(e.message || "Could not create account.");
     } finally {
       setAuthLoading(false);
     }
   }
+
+  async function handleResendVerification() {
+    if (!pendingVerificationEmail) return;
+    setResendLoading(true);
+    setResendMessage("");
+    try {
+      await apiResendVerification({ email: pendingVerificationEmail });
+      setResendMessage("Verification email sent — check your inbox.");
+    } catch (e) {
+      setResendMessage(e.message || "Could not resend the email. Try again in a moment.");
+    } finally {
+      setResendLoading(false);
+    }
+  }
+
+  function handleBackToSignIn() {
+    setPendingVerificationEmail(null);
+    setResendMessage("");
+  }
   
 
-  async function handleLogin({ username, password }) {
+  async function handleLogin({ identifier, password }) {
     setAuthLoading(true);
     setAuthError("");
     try {
-      const res = await apiLogin({ username, password });
+      const res = await apiLogin({ identifier, password });
       localStorage.setItem("auth_token", res.token);
       setToken(res.token);
     } catch (e) {
-      setAuthError(e.message || "Invalid username or password.");
+      setAuthError(e.message || "Invalid username/email or password.");
     } finally {
       setAuthLoading(false);
     }
@@ -167,7 +201,18 @@ export default function App() {
       <div className="center-viewport">
         <div style={{ width: "100%", maxWidth: showAuth ? 400 : 720 }}>
           {showAuth
-            ? <Login onLogin={handleLogin} onSignUp={handleSignup} loading={authLoading} error={authError} />
+            ? <Login
+                onLogin={handleLogin}
+                onSignUp={handleSignup}
+                loading={authLoading}
+                error={authError}
+                verifyMessage={verifyMessage}
+                pendingVerificationEmail={pendingVerificationEmail}
+                onResendVerification={handleResendVerification}
+                resendLoading={resendLoading}
+                resendMessage={resendMessage}
+                onBackToSignIn={handleBackToSignIn}
+              />
             : <Landing onGetStarted={() => setShowAuth(true)} />
           }
         </div>

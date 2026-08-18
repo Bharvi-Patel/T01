@@ -3,6 +3,7 @@ import os
 import secrets
 import sys
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -19,10 +20,11 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 from auth_oauth import LOGIN_PROVIDERS, x_start, x_finish
+from emailer import send_verification_email
 
 import time
 from fastapi.responses import RedirectResponse
@@ -35,6 +37,7 @@ PENDING_PAGE_SELECTIONS: dict[str, dict] = {} # pending_id -> {"user_id","platfo
 
 FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "http://localhost:5173")
 OAUTH_STATES: dict[str, dict] = {} 
+EMAIL_VERIFICATION_TOKEN_TTL_HOURS = int(os.environ.get("EMAIL_VERIFICATION_TOKEN_TTL_HOURS", "24"))
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "Agent01"))
@@ -135,7 +138,7 @@ async def _get_or_create_oauth_user(db: AsyncSession, provider: str, identity: d
         suffix += 1
         username = f"{base_username}{suffix}"
 
-    user = User(username=username, password_hash=None)
+    user = User(username=username, password_hash=None, is_verified=True)
     db.add(user)
     await db.flush()  # get user.id without a full commit yet
     db.add(OAuthIdentity(user_id=user.id, provider=provider, provider_user_id=identity["provider_user_id"], email=identity.get("email")))
@@ -183,13 +186,19 @@ async def on_startup():
 
 
 class LoginRequest(BaseModel):
-    username: str
+    identifier: str  # username or email
     password: str
 
 class SignupRequest(BaseModel):
     username: str
     email: str
     password: str
+
+class ResendVerificationRequest(BaseModel):
+    email: str
+
+class VerifyEmailRequest(BaseModel):
+    token: str
 
 
 class GenerateRequest(BaseModel):
@@ -253,10 +262,20 @@ async def _upsert_connection(db: AsyncSession, user_id, platform: Platform, cred
 
 @app.post("/login")
 async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.username == req.username))
+    identifier = req.identifier.strip()
+    result = await db.execute(
+        select(User).where(or_(User.username == identifier, User.email == identifier.lower()))
+    )
     user = result.scalar_one_or_none()
-    if user is None or not verify_password(req.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid username or password")
+    if user is None or not user.password_hash or not verify_password(req.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid username/email or password")
+
+    if not user.is_verified:
+        raise HTTPException(
+            status_code=403,
+            detail="Please verify your email before logging in. Check your inbox for the verification link, "
+                   "or request a new one.",
+        )
 
     token = secrets.token_urlsafe(32)
     AUTH_TOKENS[token] = user.id
@@ -269,7 +288,7 @@ async def _get_or_create_admin_user(session: AsyncSession):
     result = await session.execute(select(User).where(User.username == ADMIN_USERNAME))
     user = result.scalar_one_or_none()
     if user is None:
-        user = User(username=ADMIN_USERNAME, password_hash=hash_password(ADMIN_PASSWORD))
+        user = User(username=ADMIN_USERNAME, password_hash=hash_password(ADMIN_PASSWORD), is_verified=True)
         session.add(user)
         await session.commit()
         await session.refresh(user)
@@ -294,14 +313,61 @@ async def signup(req: SignupRequest, db: AsyncSession = Depends(get_db)):
     if existing_email.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="An account with that email already exists")
 
-    user = User(username=req.username, email=email, password_hash=hash_password(req.password))
+    verification_token = secrets.token_urlsafe(32)
+    user = User(
+        username=req.username,
+        email=email,
+        password_hash=hash_password(req.password),
+        is_verified=False,
+        verification_token=verification_token,
+        verification_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=EMAIL_VERIFICATION_TOKEN_TTL_HOURS),
+    )
     db.add(user)
     await db.commit()
     await db.refresh(user)
 
-    token = secrets.token_urlsafe(32)
-    AUTH_TOKENS[token] = user.id
-    return {"token": token}
+    await run_in_threadpool(send_verification_email, email, verification_token, FRONTEND_BASE_URL)
+
+    # No auth token here - the account can't log in until the email link is
+    # clicked. The frontend shows a "check your email" screen instead.
+    return {"status": "verification_sent", "email": email}
+
+
+@app.post("/verify-email")
+async def verify_email(req: VerifyEmailRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.verification_token == req.token))
+    user = result.scalar_one_or_none()
+
+    if user is None:
+        raise HTTPException(status_code=400, detail="Invalid or already-used verification link.")
+
+    if user.verification_token_expires_at and user.verification_token_expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="This verification link has expired. Request a new one.")
+
+    user.is_verified = True
+    user.verification_token = None
+    user.verification_token_expires_at = None
+    await db.commit()
+
+    return {"status": "verified", "username": user.username}
+
+
+@app.post("/resend-verification")
+async def resend_verification(req: ResendVerificationRequest, db: AsyncSession = Depends(get_db)):
+    email = req.email.strip().lower()
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    # Same response whether or not the account exists / is already verified,
+    # so this endpoint can't be used to enumerate registered emails.
+    if user is not None and not user.is_verified:
+        token = secrets.token_urlsafe(32)
+        user.verification_token = token
+        user.verification_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=EMAIL_VERIFICATION_TOKEN_TTL_HOURS)
+        await db.commit()
+        await run_in_threadpool(send_verification_email, email, token, FRONTEND_BASE_URL)
+
+    return {"status": "ok"}
 
 
 @app.post("/generate")

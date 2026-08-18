@@ -13,12 +13,32 @@ function authHeaders(token) {
   return { Authorization: `Bearer ${token}` };
 }
 
-// create a new account
+// create a new account — the account is unverified until the emailed link is clicked
 export async function signup({ username, email, password }) {
   const res = await fetch(`${API_BASE}/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, email, password }),
+  });
+  return handle(res);
+}
+
+// confirm the token from the "?verify_token=" link in the verification email
+export async function verifyEmail({ token }) {
+  const res = await fetch(`${API_BASE}/verify-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  return handle(res);
+}
+
+// ask for a fresh verification email (e.g. the old link expired)
+export async function resendVerification({ email }) {
+  const res = await fetch(`${API_BASE}/resend-verification`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
   });
   return handle(res);
 }
@@ -32,14 +52,14 @@ export async function getLoginAuthorizeUrl({ provider }) {
 
 
 /*
-  Log in with username/password.
+  Log in with a username or email, plus password.
   Expected backend response: { token }
  */
-export async function login({ username, password }) {
+export async function login({ identifier, password }) {
   const res = await fetch(`${API_BASE}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ identifier, password }),
   });
   return handle(res);
 }
