@@ -69,7 +69,7 @@ export default function Sidebar({
         <div className="sidebar-header">
           <div className="sidebar-brand">
             <span className="sidebar-logo-mark" aria-hidden="true">◆</span>
-            <span className="sidebar-workspace-name">{workspaceName}</span>
+            {!collapsed && <span className="sidebar-workspace-name">{workspaceName}</span>}
           </div>
           <button
             className="sidebar-collapse-btn"

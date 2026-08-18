@@ -9,6 +9,67 @@ const OAUTH_PROVIDERS = [
   { key: "x", label: "Continue with X", color: "var(--ink)" },
 ];
 
+function EyeIcon({ off }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {off ? (
+        <>
+          <path d="M17.94 17.94A10.94 10.94 0 0112 20c-7 0-11-8-11-8a20.3 20.3 0 015.06-5.94M9.9 4.24A10.4 10.4 0 0112 4c7 0 11 8 11 8a20.3 20.3 0 01-3.22 4.4M14.12 14.12a3 3 0 11-4.24-4.24" />
+          <path d="M1 1l22 22" />
+        </>
+      ) : (
+        <>
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+          <circle cx="12" cy="12" r="3" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+// Password input with a show/hide eye toggle. Same label/required/etc API
+// as a plain <input>, just swaps type between "password" and "text".
+function PasswordField({ id, autoComplete, value, onChange, minLength }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        id={id}
+        type={visible ? "text" : "password"}
+        autoComplete={autoComplete}
+        value={value}
+        onChange={onChange}
+        required
+        minLength={minLength}
+        style={{ paddingRight: 40 }}
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        aria-label={visible ? "Hide password" : "Show password"}
+        tabIndex={-1}
+        style={{
+          position: "absolute",
+          top: "50%",
+          right: 10,
+          transform: "translateY(-50%)",
+          width: 28,
+          height: 28,
+          padding: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "transparent",
+          border: "none",
+          color: "var(--text-muted)",
+        }}
+      >
+        <EyeIcon off={visible} />
+      </button>
+    </div>
+  );
+}
+
 
 export default function Login({ onLogin, onSignUp, loading, error }) {
   const [mode, setMode] = useState("login"); // "login" | "signup"
@@ -68,13 +129,11 @@ export default function Login({ onLogin, onSignUp, loading, error }) {
 
         <div style={{ marginBottom: mode === "signup" ? "1rem" : "1.5rem" }}>
           <label htmlFor="password">Password</label>
-          <input
+          <PasswordField
             id="password"
-            type="password"
             autoComplete={mode === "login" ? "current-password" : "new-password"}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            required
             minLength={mode === "signup" ? 8 : undefined}
           />
         </div>
@@ -82,13 +141,11 @@ export default function Login({ onLogin, onSignUp, loading, error }) {
         {mode === "signup" && (
           <div style={{ marginBottom: "1.5rem" }}>
             <label htmlFor="confirm-password">Confirm password</label>
-            <input
+            <PasswordField
               id="confirm-password"
-              type="password"
               autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              required
               minLength={8}
             />
           </div>

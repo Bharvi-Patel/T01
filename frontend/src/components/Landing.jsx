@@ -20,6 +20,44 @@ const STEPS = [
   },
 ];
 
+// Fades + slides an element up into place the first time it scrolls into
+// view. Wrap any section/card in this instead of hand-rolling observers.
+function Reveal({ as: Tag = "div", delay = 0, className = "", children, ...rest }) {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.15, rootMargin: "0px 0px -40px 0px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <Tag
+      ref={ref}
+      className={`reveal${visible ? " reveal--visible" : ""}${className ? " " + className : ""}`}
+      style={{ transitionDelay: visible ? `${delay}ms` : "0ms" }}
+      {...rest}
+    >
+      {children}
+    </Tag>
+  );
+}
+
 function LandingNav({ onGetStarted }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -86,25 +124,25 @@ export default function Landing({ onGetStarted }) {
       <section id="hero" className="landing-section landing-hero">
         {/* <span className="landing-pill">⚡ AI‑DRAFTED, HUMAN‑APPROVED</span> */}
 
-        <h1 className="landing-headline">
+        <Reveal as="h1" className="landing-headline">
           Draft it once. <span className="landing-underline">Review</span> it once.<br />
           Publish everywhere.
-        </h1>
+        </Reveal>
 
-        <p className="landing-subtext">
+        <Reveal as="p" delay={100} className="landing-subtext">
           Give it a category and subtopic — it researches and writes a full post with
           sourced images. You read it, approve it, or send it back with notes.
           Nothing goes out until you say so.
-        </p>
+        </Reveal>
 
-        <div className="landing-hero-ctas">
+        <Reveal delay={200} className="landing-hero-ctas">
           <button className="primary" onClick={onGetStarted}>Get started</button>
           <button onClick={() => document.getElementById("features")?.scrollIntoView({ behavior: "smooth" })}>
             See how it works
           </button>
-        </div>
+        </Reveal>
 
-        <div className="landing-logos-strip">
+        <Reveal delay={300} className="landing-logos-strip">
           <p className="eyebrow" style={{ marginBottom: 14 }}>Publishes to</p>
           <div className="landing-logos-row">
             {PLATFORMS.map((p) => (
@@ -114,20 +152,20 @@ export default function Landing({ onGetStarted }) {
               </span>
             ))}
           </div>
-        </div>
+        </Reveal>
       </section>
 
       {/* FEATURES — bento */}
       <section id="features" className="landing-section">
-        <span className="landing-pill">☰ FEATURES</span>
-        <h2 className="landing-h2">Three steps, and a human in the loop</h2>
-        <p className="landing-subtext" style={{ margin: "0 auto 2.5rem" }}>
+        <Reveal as="span" className="landing-pill">☰ FEATURES</Reveal>
+        <Reveal as="h2" delay={80} className="landing-h2">Three steps, and a human in the loop</Reveal>
+        <Reveal as="p" delay={140} className="landing-subtext" style={{ margin: "0 auto 2.5rem" }}>
           No content ever ships without your approval. Drafting is automated.
           Approval isn't.
-        </p>
+        </Reveal>
 
         <div className="landing-bento">
-          <div className="landing-bento-card landing-bento-card--large">
+          <Reveal delay={0} className="landing-bento-card landing-bento-card--large">
             <span className="landing-card-step">{STEPS[0].n}</span>
             <h3>{STEPS[0].label}</h3>
             <p>{STEPS[0].desc}</p>
@@ -141,9 +179,9 @@ export default function Landing({ onGetStarted }) {
               <div className="landing-mock-draft-line" style={{ width: "60%" }} />
               <div className="landing-mock-draft-thumb" />
             </div>
-          </div>
+          </Reveal>
 
-          <div className="landing-bento-card">
+          <Reveal delay={120} className="landing-bento-card">
             <span className="landing-card-step">{STEPS[1].n}</span>
             <h3>{STEPS[1].label}</h3>
             <p>{STEPS[1].desc}</p>
@@ -151,9 +189,9 @@ export default function Landing({ onGetStarted }) {
               <span className="landing-mock-btn landing-mock-btn--reject">Send back</span>
               <span className="landing-mock-btn landing-mock-btn--approve">Approve</span>
             </div>
-          </div>
+          </Reveal>
 
-          <div className="landing-bento-card">
+          <Reveal delay={240} className="landing-bento-card">
             <span className="landing-card-step">{STEPS[2].n}</span>
             <h3>{STEPS[2].label}</h3>
             <p>{STEPS[2].desc}</p>
@@ -164,54 +202,54 @@ export default function Landing({ onGetStarted }) {
                 </span>
               ))}
             </div>
-          </div>
+          </Reveal>
         </div>
       </section>
 
       {/* INTEGRATIONS — dark band */}
       <section id="platforms" className="landing-dark-band">
         <div className="landing-section">
-          <span className="landing-pill landing-pill--dark">⚙ PLATFORMS</span>
-          <h2 className="landing-h2 landing-h2--dark">Don't duplicate the work. Integrate.</h2>
-          <p className="landing-subtext landing-subtext--dark">
+          <Reveal as="span" className="landing-pill landing-pill--dark">⚙ PLATFORMS</Reveal>
+          <Reveal as="h2" delay={80} className="landing-h2 landing-h2--dark">Don't duplicate the work. Integrate.</Reveal>
+          <Reveal as="p" delay={140} className="landing-subtext landing-subtext--dark">
             Connect each platform once. Posting to it happens from there.
-          </p>
+          </Reveal>
 
           <div className="landing-integrations-grid">
-            {PLATFORMS.map((p) => (
-              <div key={p.key} className="landing-integration-tile">
+            {PLATFORMS.map((p, i) => (
+              <Reveal key={p.key} delay={i * 60} className="landing-integration-tile">
                 <PlatformLogo platform={p} size={26} />
                 <span>{p.label}</span>
-              </div>
+              </Reveal>
             ))}
-            <div className="landing-integration-tile landing-integration-tile--muted">
+            <Reveal delay={PLATFORMS.length * 60} className="landing-integration-tile landing-integration-tile--muted">
               <span className="landing-integration-plus">+</span>
               <span>More soon</span>
-            </div>
+            </Reveal>
           </div>
         </div>
       </section>
 
       {/* PULL QUOTE */}
       <section className="landing-section landing-quote-section">
-        <p className="landing-quote">
+        <Reveal as="p" className="landing-quote">
           “Nothing publishes without a human saying so.”
-        </p>
-        <p className="landing-quote-caption">The one rule that never gets skipped.</p>
+        </Reveal>
+        <Reveal as="p" delay={100} className="landing-quote-caption">The one rule that never gets skipped.</Reveal>
       </section>
 
       {/* CTA + FOOTER — dark band */}
       <section className="landing-dark-band landing-cta-band">
         <div className="landing-section landing-cta">
-          <div>
+          <Reveal>
             <h2 className="landing-h2 landing-h2--dark" style={{ margin: 0 }}>
               Ready to put your content<br />on autopilot?
             </h2>
-          </div>
-          <div className="landing-cta-buttons">
+          </Reveal>
+          <Reveal delay={120} className="landing-cta-buttons">
             <button className="primary" onClick={onGetStarted}>Get started</button>
             <button className="landing-btn-ghost-dark" onClick={onGetStarted}>Log in</button>
-          </div>
+          </Reveal>
         </div>
 
         <footer className="landing-footer">
