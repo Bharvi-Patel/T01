@@ -29,6 +29,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [pagePicker, setPagePicker] = useState(null); // { platform, pendingId }
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
 
   useEffect(() => {
@@ -163,11 +164,13 @@ export default function App() {
 
   if (!token) {
     return (
-      <div style={{ width: "100%", maxWidth: showAuth ? 400 : 720 }}>
-        {showAuth
-          ? <Login onLogin={handleLogin} onSignUp={handleSignup} loading={authLoading} error={authError} />
-          : <Landing onGetStarted={() => setShowAuth(true)} />
-        }
+      <div className="center-viewport">
+        <div style={{ width: "100%", maxWidth: showAuth ? 400 : 720 }}>
+          {showAuth
+            ? <Login onLogin={handleLogin} onSignUp={handleSignup} loading={authLoading} error={authError} />
+            : <Landing onGetStarted={() => setShowAuth(true)} />
+          }
+        </div>
       </div>
     );
   }
@@ -176,13 +179,24 @@ export default function App() {
     <div style={{ display: "flex", minHeight: "100vh", width: "100%" }}>
       <Sidebar
         activeStep={step === "generate" || step === "draft" || step === "done" ? "generate" : step}
-        onNavigate={(key) => setStep(key)}
-        onNewPost={handleRestart}
+        onNavigate={(key) => { setStep(key); setMobileMenuOpen(false); }}
+        onNewPost={() => { handleRestart(); setMobileMenuOpen(false); }}
         onLogout={handleLogout}
+        mobileOpen={mobileMenuOpen}
+        onCloseMobile={() => setMobileMenuOpen(false)}
       />
 
-      <div style={{ flex: 1, padding: "3rem 3.5rem", display: "flex", justifyContent: "center" }}>
-        <div style={{ width: "100%", maxWidth: 700 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <button
+          className="mobile-menu-button"
+          onClick={() => setMobileMenuOpen(true)}
+          style={{ margin: "1rem 0 0 1rem" }}
+          aria-label="Open menu"
+        >
+          ☰
+        </button>
+
+        <div className="page-container">
           {step === "generate" && (
               <Form onSubmit={handleGenerate} loading={loading} error={error} />
 

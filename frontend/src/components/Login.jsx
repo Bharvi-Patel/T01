@@ -45,7 +45,7 @@ export default function Login({ onLogin, onSignUp, loading, error }) {
   return (
     <div style={{ width: "100%", maxWidth: 380 }}>
       {/* <p className="eyebrow" style={{ margin: "0 0 6px" }}>hehe</p> */}
-      <h1 className="masthead" style={{ fontSize: 44 }}>
+      <h1 className="masthead">
         {mode === "login" ? "Sign in" : "Create account"}
       </h1>
       <hr className="masthead-rule" key={mode} />

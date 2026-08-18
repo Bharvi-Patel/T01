@@ -6,7 +6,6 @@ import uuid
 from datetime import datetime, timezone
 import bcrypt
 
-from passlib.context import CryptContext
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 from sqlalchemy import (
@@ -29,8 +28,6 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 load_dotenv(override=True)
-
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:

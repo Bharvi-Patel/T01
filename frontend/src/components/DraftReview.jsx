@@ -37,9 +37,9 @@ export default function DraftReview({ draft, connections, onApprove, onReject, l
   }
 
   return (
-    <div style={{ maxWidth: 700 }}>
+    <div>
       <p className="eyebrow">Review</p>
-      <h1 className="masthead" style={{ fontSize: 44 }}>{title || "(untitled)"}</h1>
+      <h1 className="masthead">{title || "(untitled)"}</h1>
       <div className="masthead-rule" />
 
       <p style={{ fontSize: 15, color: "var(--text-secondary)", margin: "0 0 1.5rem" }}>

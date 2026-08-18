@@ -5,7 +5,6 @@ import uuid
 import requests
 from dotenv import load_dotenv
 from openai import OpenAI
-from IPython.display import Markdown, display, HTML
 from langchain_community.utilities import GoogleSerperAPIWrapper
 from io import BytesIO
 from PIL import Image
@@ -1195,102 +1194,6 @@ def clean_json_string(s):
     if match:
         s = match.group(0)
     return s.strip()
-
-
-def display_draft(draft_json_str):
-    if not draft_json_str or not draft_json_str.strip():
-        print("Draft is empty — check the tool-call trail in `messages` for what went wrong.")
-        return
-
-    cleaned = clean_json_string(draft_json_str)
-    if not cleaned:
-        print("No JSON object found in draft content. Raw content was:")
-        print(repr(draft_json_str))
-        return
-
-    try:
-        data = json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        print(f"Could not parse draft as JSON: {e}")
-        print("Raw content was:")
-        print(repr(draft_json_str))
-        return
-
-    title = data.get('title') or '(no title)'
-    meta_description = data.get('meta_description') or ''
-    category = data.get('category') or ''
-    tags = data.get('tags') or []
-    intro = data.get('intro') or ''
-    sections = data.get('sections') or []
-    conclusion = data.get('conclusion') or ''
-    status = data.get('status') or 'unknown'
-    featured = data.get('featured_image') or {}
-
-    all_images = []
-    if featured.get('url'):
-        all_images.append(featured['url'])
-    for section in sections:
-        img = section.get('image') or {}
-        url = img.get('url')
-        if url and url not in all_images:
-            all_images.append(url)
-
-    gallery_id = f"gallery_{uuid.uuid4().hex[:8]}"
-
-    if all_images:
-        thumbs_html = "".join(
-            f'<img src="{url}" class="{gallery_id}-thumb" '
-            f'onclick="document.getElementById(\'{gallery_id}-hero\').src=\'{url}\'; '
-            f'document.querySelectorAll(\'.{gallery_id}-thumb\').forEach(t=>t.classList.remove(\'active\')); '
-            f'this.classList.add(\'active\')" />'
-            for url in all_images
-        )
-        gallery_html = f"""
-        <div style="display:flex; gap:12px; margin:16px 0;">
-            <div style="flex:1; max-width:600px;">
-                <img id="{gallery_id}-hero" src="{all_images[0]}"
-                     style="width:100%; border-radius:8px; object-fit:cover; aspect-ratio:16/9;" />
-            </div>
-            <div style="display:flex; flex-direction:column; gap:8px; width:90px;">
-                {thumbs_html}
-            </div>
-        </div>
-        <style>
-            .{gallery_id}-thumb {{
-                width:100%; height:60px; object-fit:cover; border-radius:6px;
-                cursor:pointer; opacity:0.65; border:2px solid transparent;
-                transition: all 0.15s ease;
-            }}
-            .{gallery_id}-thumb:hover {{ opacity:1; }}
-            .{gallery_id}-thumb.active {{ opacity:1; border-color:#4a90d9; }}
-        </style>
-        """
-    else:
-        gallery_html = "<p><em>(no images sourced for this draft)</em></p>"
-
-    sections_html = ""
-    for section in sections:
-        heading = section.get('heading') or ''
-        text = section.get('text') or ''
-        sections_html += f"<h3>{heading}</h3><p>{text}</p>"
-
-    html = f"""
-    <div style="font-family:sans-serif; max-width:700px; line-height:1.5;">
-        <h1>{title}</h1>
-        <p><em>{meta_description}</em></p>
-        <p><strong>Category:</strong> {category} | <strong>Tags:</strong> {', '.join(tags)}</p>
-
-        {gallery_html}
-
-        <p>{intro}</p>
-        {sections_html}
-        <p>{conclusion}</p>
-        <hr/>
-        <p><strong>Status:</strong> {status}</p>
-    </div>
-    """
-
-    display(HTML(html))
 
 
 # Helper to extract the result of a specific tool from the message history
