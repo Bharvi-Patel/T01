@@ -119,6 +119,13 @@ class User(Base):
     # for password-based accounts — see SignupRequest in main.py.
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=True)
+    # Password accounts start unverified and can't log in until they click
+    # the emailed link (see /verify-email in main.py). OAuth logins and the
+    # bootstrapped admin are marked verified immediately - their email is
+    # already confirmed by the provider (or there's no email to confirm).
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    verification_token: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    verification_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     platform_connections: Mapped[list["PlatformConnection"]] = relationship(
