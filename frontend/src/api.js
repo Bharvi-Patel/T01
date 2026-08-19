@@ -4,7 +4,9 @@ async function handle(res) {
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const message = body?.detail || `Request failed with status ${res.status}`;
-    throw new Error(message);
+    const err = new Error(message);
+    err.status = res.status; // callers should check e.status === 401, not string-match the message
+    throw err;
   }
   return res.json();
 }
@@ -201,6 +203,21 @@ export async function getDrafts({ token, status, scheduledFrom, scheduledTo }) {
   if (status) url.searchParams.set("status", status);
   if (scheduledFrom) url.searchParams.set("scheduled_from", scheduledFrom);
   if (scheduledTo) url.searchParams.set("scheduled_to", scheduledTo);
+  const res = await fetch(url, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+/*
+  Real usage stats derived from PublishResult rows (no follower/reach data —
+  T01 doesn't call any platform's insights API).
+  Expected backend response: { range_days, total_drafts, total_words, currently_scheduled, total_attempts, successes, failures,
+  success_rate, by_platform: {platform: {total, success}}, daily: [{date, success, failure}],
+  cadence_by_weekday: [{weekday, count}], platform_reliability_daily: {platform: [{date, success, total}]},
+  top_categories: [{category, count}], recent_failures: [{platform, detail, published_at}] }
+ */
+export async function getAnalyticsSummary({ token, days = 30 }) {
+  const url = new URL(`${API_BASE}/analytics/summary`);
+  url.searchParams.set("days", days);
   const res = await fetch(url, { headers: authHeaders(token) });
   return handle(res);
 }

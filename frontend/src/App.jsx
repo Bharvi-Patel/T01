@@ -9,6 +9,7 @@ import Sidebar from "./components/Sidebar";
 import Settings from "./components/settings";
 import Publish from "./components/Publish";
 import Calendar from "./components/Calendar";
+import Analytics from "./components/Analytics";
 import { login as apiLogin, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, reviewDraft, scheduleDraft, getConnections, getDraft } from "./api";
 
 export default function App() {
@@ -165,7 +166,7 @@ export default function App() {
       setDraft(res.draft);
       setStep("draft");
     } catch (e) {
-      if (String(e.message).includes("401")) return handleLogout();
+      if (e.status === 401) return handleLogout();
       setError(e.message || "Something went wrong generating the draft.");
     } finally {
       setLoading(false);
@@ -180,7 +181,7 @@ export default function App() {
       setResult(res.results);
       setStep("done");
     } catch (e) {
-      if (String(e.message).includes("401")) return handleLogout();
+      if (e.status === 401) return handleLogout();
       setError(e.message || "Something went wrong while publishing the draft.");
     } finally {
       setLoading(false);
@@ -194,7 +195,7 @@ export default function App() {
       await scheduleDraft({ token, draftId, scheduledAt: scheduledAtISO, platforms, live });
       setStep("calendar");
     } catch (e) {
-      if (String(e.message).includes("401")) return handleLogout();
+      if (e.status === 401) return handleLogout();
       setError(e.message || "Something went wrong while scheduling the draft.");
     } finally {
       setLoading(false);
@@ -208,7 +209,7 @@ export default function App() {
       const res = await reviewDraft({ token, draftId, decision: "reject", feedback });
       setDraft(res.draft);
     } catch (e) {
-      if (String(e.message).includes("401")) return handleLogout();
+      if (e.status === 401) return handleLogout();
       setError(e.message || "Something went wrong revising the draft.");
     } finally {
       setLoading(false);
@@ -239,7 +240,7 @@ export default function App() {
       setDraft(res.draft);
       setStep("draft");
     } catch (e) {
-      if (String(e.message).includes("401")) return handleLogout();
+      if (e.status === 401) return handleLogout();
       setError(e.message || "Could not load that draft.");
     } finally {
       setLoading(false);
@@ -350,17 +351,21 @@ export default function App() {
           )}
 
           {step === "publish" && (
-            <Publish token={token} onNewPost={handleRestart} onOpenDraft={handleOpenDraft} initialTab={publishInitialTab} />
+            <Publish token={token} onNewPost={handleRestart} onOpenDraft={handleOpenDraft} onAuthError={handleLogout} initialTab={publishInitialTab} />
           )}
 
           {step === "calendar" && (
             <Calendar token={token} connections={connections} onOpenDraft={handleOpenDraft} onAuthError={handleLogout} />
           )}
 
-          {["inbox", "analytics", "billing", "notifications"].includes(step) && (
+          {step === "analytics" && (
+            <Analytics token={token} onAuthError={handleLogout} />
+          )}
+
+          {["inbox", "billing", "notifications"].includes(step) && (
             <div style={{ padding: "3rem 0", textAlign: "center", color: "var(--text-secondary)" }}>
               <p style={{ fontFamily: "var(--font-display)", fontSize: "22px", color: "var(--ink)", marginBottom: 8 }}>
-                {{ inbox: "Social Inbox", analytics: "Analytics", billing: "Billing", notifications: "Notifications" }[step]}
+                {{ inbox: "Social Inbox", billing: "Billing", notifications: "Notifications" }[step]}
               </p>
               <p>This section is coming soon.</p>
             </div>

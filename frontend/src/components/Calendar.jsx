@@ -7,7 +7,8 @@ import { getDrafts, rescheduleDraft, unscheduleDraft } from "../api";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MAX_CHIPS_PER_DAY = 3;
+const MAX_CHIPS_PER_DAY = 2;
+
 
 function platformByKey(key) {
   return PLATFORMS.find((p) => p.key === key);
@@ -133,13 +134,6 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
                 >
                   <PlatformLogo platform={p} size={13} />
                   <span style={{ flex: 1 }}>{p.label}</span>
-                  <span
-                    aria-hidden
-                    style={{
-                      width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                      background: r?.success ? "#4CAF7D" : "#E88A8A",
-                    }}
-                  />
                   <span style={{ color: r?.success ? "#4CAF7D" : "#E88A8A", fontSize: 11.5 }}>
                     {r?.success ? "Published" : r ? "Failed" : "Unknown"}
                   </span>
@@ -211,24 +205,17 @@ function PlatformFilterBar({ connections, activePlatform, onSelect, counts }) {
           <button
             key={p.key}
             onClick={() => onSelect(active ? null : p.key)}
-            title={`${p.label} — ${connected ? "connected" : "not connected"}`}
+            title={`${p.label} — ${connected ? "connected" : "not connected"}${active ? " (selected)" : ""}`}
             style={{
               display: "flex", alignItems: "center", gap: 7, height: 34,
               width: "auto", padding: "0 12px",
-              borderColor: active ? "var(--accent)" : "var(--border-strong)",
+              border: active ? "1.5px solid #4CAF7D" : "0.5px solid var(--border-strong)",
               background: active ? "var(--paper-raised)" : "transparent",
               opacity: connected ? 1 : 0.5,
             }}
           >
             <PlatformLogo platform={p} size={14} />
             <span style={{ fontSize: 13 }}>{p.label}</span>
-            <span
-              aria-hidden
-              style={{
-                width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                background: connected ? "#4CAF7D" : "var(--text-muted)",
-              }}
-            />
             {count > 0 && (
               <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{count}</span>
             )}
@@ -268,7 +255,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
     getDrafts({ token, scheduledFrom: from.toISOString(), scheduledTo: to.toISOString() })
       .then((res) => setDrafts(res.drafts.filter((d) => effectiveDate(d))))
       .catch((e) => {
-        if (String(e.message).includes("401")) return onAuthError?.();
+        if (e.status === 401) return onAuthError?.();
         setError(e.message || "Could not load the calendar.");
       })
       .finally(() => setLoading(false));
@@ -307,7 +294,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
       setSelectedDraftId(null);
       refresh();
     } catch (e) {
-      if (String(e.message).includes("401")) return onAuthError?.();
+      if (e.status === 401) return onAuthError?.();
       setError(e.message || "Could not reschedule that post.");
     } finally {
       setBusy(false);
@@ -321,7 +308,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
       setSelectedDraftId(null);
       refresh();
     } catch (e) {
-      if (String(e.message).includes("401")) return onAuthError?.();
+      if (e.status === 401) return onAuthError?.();
       setError(e.message || "Could not unschedule that post.");
     } finally {
       setBusy(false);
@@ -408,7 +395,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
                 onDragLeave={() => setDragOverKey((k) => (k === key ? null : k))}
                 onDrop={(e) => handleDrop(e, day)}
                 style={{
-                  minHeight: 108, padding: "6px 6px 8px", borderRight: "0.5px solid var(--border)",
+                  minHeight: 190, padding: "6px 6px 8px", borderRight: "0.5px solid var(--border)",
                   borderBottom: "0.5px solid var(--border)", background: isDragOver ? "var(--paper)" : "transparent",
                   opacity: inMonth ? 1 : 0.45,
                 }}
@@ -425,31 +412,79 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
                   </span>
                 </div>
 
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {items.slice(0, MAX_CHIPS_PER_DAY).map((d) => (
-                    <div
-                      key={d.draft_id}
-                      draggable
-                      onDragStart={(e) => e.dataTransfer.setData("text/draft-id", d.draft_id)}
-                      onClick={() => setSelectedDraftId(d.draft_id)}
-                      title={d.title || d.subtopic}
-                      style={{
-                        cursor: "pointer", background: "var(--paper-raised)", border: "0.5px solid var(--border-strong)",
-                        borderRadius: 6, padding: "3px 6px", fontSize: 11, display: "flex", alignItems: "center", gap: 5,
-                        color: "var(--ink)", overflow: "hidden",
-                      }}
-                    >
-                      <span style={{ display: "flex", gap: 2, flexShrink: 0 }}>
-                        {(d.scheduled_platforms || []).slice(0, 3).map((key) => {
-                          const p = platformByKey(key);
-                          return p ? <PlatformLogo key={key} platform={p} size={10} /> : null;
-                        })}
-                      </span>
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {formatTime(new Date(d.scheduled_at))} · {d.title || d.subtopic}
-                      </span>
-                    </div>
-                  ))}
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {items.slice(0, MAX_CHIPS_PER_DAY).map((d) => {
+                    const chipKeys = chipPlatforms(d);
+                    const published = isPublished(d);
+                    const thumb = d.featured_image?.url;
+                    return (
+                      <div
+                        key={d.draft_id}
+                        draggable={!published}
+                        onDragStart={(e) => e.dataTransfer.setData("text/draft-id", d.draft_id)}
+                        onClick={() => setSelectedDraftId(d.draft_id)}
+                        style={{
+                          cursor: "pointer", background: "var(--paper-raised)",
+                          border: "0.5px solid var(--border-strong)", borderRadius: 8,
+                          padding: "8px 9px", color: "var(--ink)", overflow: "hidden",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}>
+                          <span style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+                            {chipKeys.slice(0, 3).map((key) => {
+                              const p = platformByKey(key);
+                              return p ? <PlatformLogo key={key} platform={p} size={12} /> : null;
+                            })}
+                          </span>
+                          <span style={{ fontSize: 11, fontWeight: 500, color: "var(--text-secondary)" }}>
+                            {formatTime(new Date(effectiveDate(d)))}
+                          </span>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                          <p
+                            style={{
+                              flex: 1, margin: 0, fontSize: 12.5, lineHeight: 1.35, color: "var(--ink)",
+                              display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+                            }}
+                          >
+                            {d.title || d.subtopic}
+                          </p>
+                          {thumb && (
+                            <img
+                              src={thumb}
+                              alt=""
+                              style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover", flexShrink: 0 }}
+                            />
+                          )}
+                        </div>
+
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setSelectedDraftId(d.draft_id); }}
+                          style={{
+                            width: "auto", background: "transparent", border: "none", padding: 0,
+                            fontSize: 11, color: "var(--accent)", textAlign: "left", margin: "4px 0 0",
+                          }}
+                        >
+                          Show More
+                        </button>
+
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
+                          <span style={{ fontSize: 13, color: "var(--text-muted)", letterSpacing: 1 }}>•••</span>
+                          {published && (
+                            <span
+                              style={{
+                                fontSize: 10, fontWeight: 500, borderRadius: 4, padding: "2px 6px",
+                                color: "#4CAF7D", background: "rgba(76,175,125,0.12)",
+                              }}
+                            >
+                              Published
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                   {items.length > MAX_CHIPS_PER_DAY && (
                     <button
                       onClick={() => setSelectedDraftId(items[MAX_CHIPS_PER_DAY].draft_id)}
@@ -465,16 +500,16 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
         </div>
       </div>
 
-      {selectedDraft && (
-        <DraftDetailPanel
-          draft={selectedDraft}
-          busy={busy}
+      {selectedDraft && (                                          
+        <DraftDetailPanel                                    
+          draft={selectedDraft}                           
+          busy={busy}                                 
           onClose={() => setSelectedDraftId(null)}
-          onReschedule={handleReschedule}
+          onReschedule={handleReschedule}    
           onUnschedule={handleUnschedule}
           onOpen={onOpenDraft}
-        />
-      )}
+        />               
+      )}       
     </div>
   );
 }

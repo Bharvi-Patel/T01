@@ -3,6 +3,7 @@ import json
 import os
 import secrets
 import sys
+import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -216,7 +217,11 @@ async def _scheduler_loop():
         try:
             await _run_due_scheduled_drafts()
         except Exception:
-            pass  # keep polling even if a whole cycle throws unexpectedly
+            # Keep polling even if a whole cycle throws unexpectedly, but
+            # don't go silent about it — a swallowed exception here is how
+            # the SCHEDULED enum-case bug went unnoticed for as long as it did.
+            print("[scheduler] poll cycle failed:", file=sys.stderr)
+            traceback.print_exc()
         await asyncio.sleep(SCHEDULER_POLL_SECONDS)
 
 
@@ -454,9 +459,130 @@ async def generate(req: GenerateRequest, db: AsyncSession = Depends(get_db), use
     return {"draft_id": str(draft.id), "draft": draft.content}
 
 
+@app.get("/analytics/summary")
+async def analytics_summary(
+    days: int = 30,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """Real usage stats derived from publish attempts — no follower/reach data,
+    since T01 doesn't call any platform's insights API. Everything here is
+    counted from our own PublishResult rows."""
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Drafts the user actually wrote in this range — independent of whether
+    # they were ever published, since that's their own content output.
+    draft_totals = (
+        await db.execute(
+            select(func.count(Draft.id), func.coalesce(func.sum(Draft.word_count), 0))
+            .where(Draft.user_id == user_id, Draft.created_at >= since)
+        )
+    ).one()
+    total_drafts, total_words = draft_totals[0], int(draft_totals[1])
+
+    # "Currently scheduled" is a live count, not scoped to the days range —
+    # it's whatever's sitting on the calendar right now.
+    currently_scheduled = (
+        await db.execute(
+            select(func.count(Draft.id)).where(Draft.user_id == user_id, Draft.status == DraftStatus.SCHEDULED)
+        )
+    ).scalar_one()
+
+    rows = (
+        await db.execute(
+            select(PublishResult.platform, PublishResult.success, PublishResult.published_at, PublishResult.detail)
+            .join(Draft, Draft.id == PublishResult.draft_id)
+            .where(Draft.user_id == user_id, PublishResult.published_at >= since)
+        )
+    ).all()
+
+    total = len(rows)
+    successes = sum(1 for r in rows if r.success)
+    failures = total - successes
+
+    by_platform: dict[str, dict] = {}
+    for r in rows:
+        key = r.platform.value if hasattr(r.platform, "value") else r.platform
+        entry = by_platform.setdefault(key, {"total": 0, "success": 0})
+        entry["total"] += 1
+        entry["success"] += 1 if r.success else 0
+
+    # Daily counts for the sparkline bars - success vs failure per day, oldest first
+    daily: dict[str, dict] = {}
+    for r in rows:
+        day = r.published_at.date().isoformat()
+        entry = daily.setdefault(day, {"date": day, "success": 0, "failure": 0})
+        entry["success" if r.success else "failure"] += 1
+    daily_sorted = [daily[d] for d in sorted(daily.keys())]
+
+    # Posting cadence — successful publishes grouped by weekday, Monday first.
+    weekday_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    cadence_counts = [0] * 7
+    for r in rows:
+        if r.success:
+            cadence_counts[r.published_at.weekday()] += 1
+    cadence_by_weekday = [{"weekday": wl, "count": c} for wl, c in zip(weekday_labels, cadence_counts)]
+
+    # Per-platform reliability over time — daily success/total per platform,
+    # so a platform that's degrading (e.g. expired token) is visible as a trend
+    # rather than buried in the single aggregate success rate.
+    platform_daily: dict[str, dict[str, dict]] = {}
+    for r in rows:
+        key = r.platform.value if hasattr(r.platform, "value") else r.platform
+        day = r.published_at.date().isoformat()
+        day_bucket = platform_daily.setdefault(key, {}).setdefault(day, {"date": day, "success": 0, "total": 0})
+        day_bucket["total"] += 1
+        day_bucket["success"] += 1 if r.success else 0
+    platform_reliability_daily = {
+        key: [days_map[d] for d in sorted(days_map.keys())]
+        for key, days_map in platform_daily.items()
+    }
+
+    # Top categories among drafts that had at least one publish attempt in range
+    cat_rows = (
+        await db.execute(
+            select(Draft.category, func.count(func.distinct(Draft.id)))
+            .join(PublishResult, PublishResult.draft_id == Draft.id)
+            .where(Draft.user_id == user_id, PublishResult.published_at >= since)
+            .group_by(Draft.category)
+            .order_by(func.count(func.distinct(Draft.id)).desc())
+            .limit(5)
+        )
+    ).all()
+    top_categories = [{"category": c, "count": n} for c, n in cat_rows]
+
+    recent_failures = [
+        {
+            "platform": r.platform.value if hasattr(r.platform, "value") else r.platform,
+            "detail": r.detail,
+            "published_at": r.published_at.isoformat(),
+        }
+        for r in sorted(rows, key=lambda r: r.published_at, reverse=True)
+        if not r.success
+    ][:10]
+
+    return {
+        "range_days": days,
+        "total_drafts": total_drafts,
+        "total_words": total_words,
+        "currently_scheduled": currently_scheduled,
+        "total_attempts": total,
+        "successes": successes,
+        "failures": failures,
+        "success_rate": round(successes / total * 100, 1) if total else None,
+        "by_platform": by_platform,
+        "daily": daily_sorted,
+        "cadence_by_weekday": cadence_by_weekday,
+        "platform_reliability_daily": platform_reliability_daily,
+        "top_categories": top_categories,
+        "recent_failures": recent_failures,
+    }
+
+
 @app.get("/drafts")
 async def list_drafts(
     status: str | None = None,
+    exclude_status: str | None = None,
     scheduled_from: datetime | None = None,
     scheduled_to: datetime | None = None,
     db: AsyncSession = Depends(get_db),
@@ -486,6 +612,12 @@ async def list_drafts(
             query = query.where(Draft.status == DraftStatus(status))
         except ValueError:
             raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(s.value for s in DraftStatus)}")
+    if exclude_status:
+        try:
+            excluded = [DraftStatus(s) for s in exclude_status.split(",")]
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"exclude_status must be a comma-separated list from: {', '.join(s.value for s in DraftStatus)}")
+        query = query.where(Draft.status.notin_(excluded))
 
     # A date-range filter matches drafts scheduled in that range OR published
     # in that range, so calendar views can pull both upcoming and past posts
@@ -534,6 +666,8 @@ async def list_drafts(
                 "category": d.category,
                 "subtopic": d.subtopic,
                 "title": (d.content or {}).get("title"),
+                "meta_description": (d.content or {}).get("meta_description"),
+                "featured_image": (d.content or {}).get("featured_image"),
                 "status": d.status.value,
                 "created_at": d.created_at.isoformat(),
                 "updated_at": d.updated_at.isoformat(),
