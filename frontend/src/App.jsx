@@ -35,6 +35,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [pagePicker, setPagePicker] = useState(null); // { platform, pendingId }
+  const [publishInitialTab, setPublishInitialTab] = useState("new");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem("sidebar_collapsed");
@@ -216,6 +217,19 @@ export default function App() {
 
 
 
+  function handleSaveAsDraft() {
+    // The draft was already persisted as pending_review the moment it was
+    // generated, so there's nothing to save here — just leave the review
+    // screen without approving/scheduling/rejecting. Land on the Publish
+    // view's "Pending review" tab so it's visibly there, waiting.
+    setDraftId(null);
+    setDraft(null);
+    setResult(null);
+    setError("");
+    setPublishInitialTab("approval");
+    setStep("publish");
+  }
+
   async function handleOpenDraft(id) {
     setLoading(true);
     setError("");
@@ -268,7 +282,7 @@ export default function App() {
     <div style={{ display: "flex", minHeight: "100vh", width: "100%" }}>
       <Sidebar
         activeStep={step === "generate" || step === "draft" || step === "done" ? null : step}
-        onNavigate={(key) => { setStep(key); setMobileMenuOpen(false); }}
+        onNavigate={(key) => { setPublishInitialTab("new"); setStep(key); setMobileMenuOpen(false); }}
         onNewPost={() => { handleRestart(); setMobileMenuOpen(false); }}
         onLogout={handleLogout}
         mobileOpen={mobileMenuOpen}
@@ -314,6 +328,7 @@ export default function App() {
               onApprove={handleApprove}
               onSchedule={handleSchedule}
               onReject={handleReject}
+              onSaveAsDraft={handleSaveAsDraft}
               loading={loading}
               error={error}
             />
@@ -335,11 +350,11 @@ export default function App() {
           )}
 
           {step === "publish" && (
-            <Publish token={token} onNewPost={handleRestart} onOpenDraft={handleOpenDraft} />
+            <Publish token={token} onNewPost={handleRestart} onOpenDraft={handleOpenDraft} initialTab={publishInitialTab} />
           )}
 
           {step === "calendar" && (
-            <Calendar token={token} onOpenDraft={handleOpenDraft} onAuthError={handleLogout} />
+            <Calendar token={token} connections={connections} onOpenDraft={handleOpenDraft} onAuthError={handleLogout} />
           )}
 
           {["inbox", "analytics", "billing", "notifications"].includes(step) && (

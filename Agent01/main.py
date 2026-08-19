@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 from auth_oauth import LOGIN_PROVIDERS, x_start, x_finish
@@ -462,18 +462,71 @@ async def list_drafts(
     db: AsyncSession = Depends(get_db),
     user_id: uuid.UUID = Depends(require_auth),
 ):
-    query = select(Draft).where(Draft.user_id == user_id).order_by(Draft.created_at.desc())
+    # Earliest successful publish per draft — this is what "past posts" get
+    # placed on the calendar by, since scheduled_at is cleared to None the
+    # moment a draft actually publishes (see _publish_to_platforms).
+    first_published_subq = (
+        select(
+            PublishResult.draft_id.label("draft_id"),
+            func.min(PublishResult.published_at).label("first_published_at"),
+        )
+        .where(PublishResult.success.is_(True))
+        .group_by(PublishResult.draft_id)
+        .subquery()
+    )
+
+    query = (
+        select(Draft, first_published_subq.c.first_published_at)
+        .outerjoin(first_published_subq, first_published_subq.c.draft_id == Draft.id)
+        .where(Draft.user_id == user_id)
+        .order_by(Draft.created_at.desc())
+    )
     if status:
         try:
             query = query.where(Draft.status == DraftStatus(status))
         except ValueError:
             raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(s.value for s in DraftStatus)}")
-    if scheduled_from is not None:
-        query = query.where(Draft.scheduled_at.isnot(None), Draft.scheduled_at >= _ensure_utc(scheduled_from))
-    if scheduled_to is not None:
-        query = query.where(Draft.scheduled_at.isnot(None), Draft.scheduled_at <= _ensure_utc(scheduled_to))
+
+    # A date-range filter matches drafts scheduled in that range OR published
+    # in that range, so calendar views can pull both upcoming and past posts
+    # with a single call.
+    if scheduled_from is not None or scheduled_to is not None:
+        from_utc = _ensure_utc(scheduled_from) if scheduled_from is not None else None
+        to_utc = _ensure_utc(scheduled_to) if scheduled_to is not None else None
+
+        sched_cond = Draft.scheduled_at.isnot(None)
+        pub_cond = first_published_subq.c.first_published_at.isnot(None)
+        if from_utc is not None:
+            sched_cond = sched_cond & (Draft.scheduled_at >= from_utc)
+            pub_cond = pub_cond & (first_published_subq.c.first_published_at >= from_utc)
+        if to_utc is not None:
+            sched_cond = sched_cond & (Draft.scheduled_at <= to_utc)
+            pub_cond = pub_cond & (first_published_subq.c.first_published_at <= to_utc)
+
+        query = query.where(or_(sched_cond, pub_cond))
+
     result = await db.execute(query)
-    drafts = result.scalars().all()
+    rows = result.all()
+    draft_ids = [d.id for d, _ in rows]
+
+    # Full per-platform publish history (success and failure) for each draft,
+    # so a calendar chip/detail view can show real status per platform, not
+    # just "it went out".
+    results_by_draft: dict[uuid.UUID, list[dict]] = {}
+    if draft_ids:
+        pr_result = await db.execute(
+            select(PublishResult)
+            .where(PublishResult.draft_id.in_(draft_ids))
+            .order_by(PublishResult.published_at.asc())
+        )
+        for pr in pr_result.scalars().all():
+            results_by_draft.setdefault(pr.draft_id, []).append({
+                "platform": pr.platform.value,
+                "success": pr.success,
+                "detail": pr.detail,
+                "published_at": pr.published_at.isoformat() if pr.published_at else None,
+            })
+
     return {
         "drafts": [
             {
@@ -487,8 +540,10 @@ async def list_drafts(
                 "scheduled_at": d.scheduled_at.isoformat() if d.scheduled_at else None,
                 "scheduled_platforms": d.scheduled_platforms,
                 "scheduled_live": d.scheduled_live,
+                "published_at": first_published_at.isoformat() if first_published_at else None,
+                "publish_results": results_by_draft.get(d.id, []),
             }
-            for d in drafts
+            for d, first_published_at in rows
         ]
     }
 

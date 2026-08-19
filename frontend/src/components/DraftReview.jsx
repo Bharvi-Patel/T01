@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
-export default function DraftReview({ draft, connections, onApprove, onSchedule, onReject, loading, error }) {
+export default function DraftReview({ draft, connections, onApprove, onSchedule, onReject, onSaveAsDraft, loading, error }) {
   const [activePlatform, setActivePlatform] = useState("finto");
   const [selected, setSelected] = useState(new Set());
   const [showReject, setShowReject] = useState(false);
@@ -172,6 +172,11 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
             )}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button onClick={() => setShowReject(true)} disabled={loading}>Reject</button>
+              {onSaveAsDraft && (
+                <button onClick={onSaveAsDraft} disabled={loading}>
+                  Save as draft
+                </button>
+              )}
               <button
                 onClick={() => { setScheduleDate(todayStr); setShowSchedule(true); }}
                 disabled={loading || selected.size === 0}

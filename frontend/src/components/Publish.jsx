@@ -299,8 +299,8 @@ function NotificationsTab() {
   );
 }
 
-export default function Publish({ token, onNewPost, onOpenDraft }) {
-  const [tab, setTab] = useState("new");
+export default function Publish({ token, onNewPost, onOpenDraft, initialTab = "new" }) {
+  const [tab, setTab] = useState(initialTab);
 
   return (
     <div>
