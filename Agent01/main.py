@@ -45,10 +45,10 @@ OAUTH_STATES: dict[str, dict] = {}
 # Local disk storage for user-uploaded video. Images from manual drafts go
 # through the same imgbb hosting the AI path already uses (Instagram etc.
 # need a public URL regardless of who supplied the image) - but imgbb only
-# accepts images, so video is served directly off this backend instead.
-# NOTE: no publish adapter currently posts video to any platform - it's
-# stored and shown in review, but Approve & publish only sends the text +
-# images through. Wiring per-platform video upload is separate future work.
+# accepts images, so video is served directly off this backend instead, at
+# BACKEND_BASE_URL/media/<file>. That URL is what publish_dispatch hands to
+# each platform adapter (LinkedIn, Facebook, Instagram, Threads) to publish
+# the video - it needs to be a real public URL, not localhost, in production.
 MEDIA_DIR = Path(__file__).resolve().parent / "media"
 MEDIA_DIR.mkdir(exist_ok=True)
 EMAIL_VERIFICATION_TOKEN_TTL_HOURS = int(os.environ.get("EMAIL_VERIFICATION_TOKEN_TTL_HOURS", "24"))

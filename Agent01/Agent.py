@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import time
 import uuid
 import requests
 from dotenv import load_dotenv
@@ -409,6 +410,41 @@ def validate_and_prepare_instagram_image(image_url):
         return None
 
 
+def download_video_bytes(url: str) -> bytes:
+    """Download a video's raw bytes, unmodified. Unlike download_image()
+    there's no re-encode step - LinkedIn is the only adapter that needs the
+    bytes themselves (to PUT them in chunks); Facebook/Instagram/Threads all
+    take a video_url/file_url and fetch it Meta-side."""
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
+    return resp.content
+
+
+def wait_for_media_container(status_url, access_token, field="status_code", max_attempts=20, delay_seconds=3):
+    """Poll a Meta media container (Instagram or Threads) until an uploaded
+    video finishes processing server-side. Image containers publish
+    immediately so nothing else in this file needs this, but video containers
+    go through an async IN_PROGRESS step first - and since approve_and_publish
+    is one synchronous call with no background job queue behind it, this
+    blocks the request thread until Meta reports FINISHED (or times out).
+    `field` differs by API: Instagram uses "status_code", Threads uses "status".
+    """
+    for _ in range(max_attempts):
+        resp = requests.get(
+            status_url,
+            params={"fields": field, "access_token": access_token},
+            timeout=15,
+        )
+        _raise_with_api_detail(resp)
+        status = resp.json().get(field)
+        if status == "FINISHED":
+            return
+        if status in ("ERROR", "EXPIRED"):
+            raise RuntimeError(f"Video processing failed with status: {status}")
+        time.sleep(delay_seconds)
+    raise RuntimeError("Timed out waiting for video to finish processing")
+
+
 def upload_to_imgbb(image_bytes, api_key):
     """Temporarily host an image on imgbb, returns a public URL Instagram can fetch."""
     resp = requests.post(
@@ -498,6 +534,73 @@ def upload_image_to_linkedin(image_url, member_id, access_token):
     return image_urn
 
 
+def register_linkedin_video_upload(member_id, access_token, file_size_bytes):
+    """Ask LinkedIn for a place to upload a video of this size, returns
+    (upload_instructions, video_urn, upload_token). Unlike images, LinkedIn
+    hands back one or more byte-range chunks to PUT to (large files get
+    split into multiple uploadInstructions) instead of a single uploadUrl."""
+    resp = requests.post(
+        "https://api.linkedin.com/rest/videos?action=initializeUpload",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Linkedin-Version": LINKEDIN_API_VERSION,
+            "X-Restli-Protocol-Version": "2.0.0",
+        },
+        json={
+            "initializeUploadRequest": {
+                "owner": f"urn:li:person:{member_id}",
+                "fileSizeBytes": file_size_bytes,
+                "uploadCaptions": False,
+                "uploadThumbnail": False,
+            }
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    value = resp.json()["value"]
+    return value["uploadInstructions"], value["video"], value.get("uploadToken", "")
+
+
+def upload_video_to_linkedin(video_url, member_id, access_token):
+    """Downloads a video and uploads it to LinkedIn in the chunk(s) LinkedIn
+    itself asked for, then finalizes the upload. Returns the video URN to
+    reference in a post."""
+    video_bytes = download_video_bytes(video_url)
+    instructions, video_urn, upload_token = register_linkedin_video_upload(
+        member_id, access_token, len(video_bytes)
+    )
+
+    uploaded_part_ids = []
+    for instruction in instructions:
+        chunk = video_bytes[instruction["firstByte"]:instruction["lastByte"] + 1]
+        put_resp = requests.put(instruction["uploadUrl"], data=chunk, timeout=60)
+        put_resp.raise_for_status()
+        etag = put_resp.headers.get("ETag") or put_resp.headers.get("etag")
+        if etag:
+            uploaded_part_ids.append(etag)
+
+    finalize_resp = requests.post(
+        "https://api.linkedin.com/rest/videos?action=finalizeUpload",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Linkedin-Version": LINKEDIN_API_VERSION,
+            "X-Restli-Protocol-Version": "2.0.0",
+        },
+        json={
+            "finalizeUploadRequest": {
+                "video": video_urn,
+                "uploadToken": upload_token,
+                "uploadedPartIds": uploaded_part_ids,
+            }
+        },
+        timeout=15,
+    )
+    finalize_resp.raise_for_status()
+    return video_urn
+
+
 def publish_finto(payload, user_credentials):
     """Publish the content draft to finto.day, using the specific user account."""
     try:
@@ -566,15 +669,18 @@ def format_for_linkedin(payload):
     return f"{payload.get('title', '')}\n\n{hook}\n\n{tags}"
 
 
-def publish_linkedin(payload, access_token, member_id, image=None):
-    """Publish a single-image (or text-only) post to LinkedIn.
-    `image` is the resolved {"url", "source"} dict from build_carousel_images."""
+def publish_linkedin(payload, access_token, member_id, image=None, video=None):
+    """Publish a single-image, single-video, or text-only post to LinkedIn.
+    `image`/`video` are the resolved {"url", ...} dicts - video takes
+    priority when both are present, since a LinkedIn post can only carry
+    one piece of media."""
     try:
         if isinstance(payload, str):
             payload = json.loads(payload)
 
         post_text = format_for_linkedin(payload)
         image_url = image.get("url") if image else None
+        video_url = video.get("url") if video else None
 
         body = {
             "author": f"urn:li:person:{member_id}",
@@ -584,7 +690,10 @@ def publish_linkedin(payload, access_token, member_id, image=None):
             "lifecycleState": "PUBLISHED",
             "isReshareDisabledByAuthor": False,
         }
-        if image_url:
+        if video_url:
+            video_urn = upload_video_to_linkedin(video_url, member_id, access_token)
+            body["content"] = {"media": {"id": video_urn}}
+        elif image_url:
             image_urn = upload_image_to_linkedin(image_url, member_id, access_token)
             body["content"] = {"media": {"id": image_urn}}
 
@@ -658,17 +767,32 @@ def publish_linkedin_carousel(payload, access_token, member_id, carousel_images)
         return {"success": False, "error": str(e)}
 
 
-def publish_facebook(payload, page_access_token, page_id, image=None):
-    """Publish a post to a Facebook Page. Supports text-only or text-image.
-    `image` is the resolved image dict passed in by publish_dispatch."""
+def publish_facebook(payload, page_access_token, page_id, image=None, video=None):
+    """Publish a post to a Facebook Page. Supports text-only, text-image, or
+    text-video. `image`/`video` are resolved dicts from publish_dispatch -
+    video takes priority when both are present, since a feed post can only
+    carry one piece of media."""
     try:
         if isinstance(payload, str):
             payload = json.loads(payload)
 
         message = payload.get("facebook_post") or payload.get("intro", "")
         image_url = image.get("url") if image else None
+        video_url = video.get("url") if video else None
 
-        if image_url:
+        if video_url:
+            # /videos fetches the file itself from file_url server-side -
+            # no need to download/re-upload the bytes like LinkedIn requires.
+            resp = requests.post(
+                f"https://graph.facebook.com/v21.0/{page_id}/videos",
+                data={
+                    "file_url": video_url,
+                    "description": message,
+                    "access_token": page_access_token,
+                },
+                timeout=60,
+            )
+        elif image_url:
             # photos posts an image with a caption in one call
             resp = requests.post(
                 f"https://graph.facebook.com/v21.0/{page_id}/photos",
@@ -735,24 +859,57 @@ def publish_facebook_carousel(payload, page_access_token, page_id, carousel_imag
         return {"success": False, "error": str(e)}
 
 
-def publish_instagram(payload, page_access_token, ig_user_id, image=None):
-    """Publish a post to an Instagram Business account (image required).
-    `image` is the resolved image dict passed in by publish_dispatch."""
+def publish_instagram(payload, page_access_token, ig_user_id, image=None, video=None):
+    """Publish a post to an Instagram Business account (image or video
+    required). `image`/`video` are resolved dicts from publish_dispatch -
+    video takes priority when both are present, as a single feed post."""
     try:
         if isinstance(payload, str):
             payload = json.loads(payload)
 
+        caption = payload.get("instagram_caption") or payload.get("facebook_post") or payload.get("intro", "")
+        video_url = video.get("url") if video else None
+
+        if video_url:
+            # REELS is Meta's current media_type for feed video via the API -
+            # plain "VIDEO" is deprecated for non-Stories placement. Video
+            # containers process async server-side, so poll before publishing.
+            container_resp = requests.post(
+                f"https://graph.facebook.com/v21.0/{ig_user_id}/media",
+                data={
+                    "media_type": "REELS",
+                    "video_url": video_url,
+                    "caption": caption,
+                    "access_token": page_access_token,
+                },
+                timeout=30,
+            )
+            _raise_with_api_detail(container_resp)
+            creation_id = container_resp.json()["id"]
+
+            wait_for_media_container(
+                f"https://graph.facebook.com/v21.0/{creation_id}",
+                page_access_token,
+                field="status_code",
+            )
+
+            publish_resp = requests.post(
+                f"https://graph.facebook.com/v21.0/{ig_user_id}/media_publish",
+                data={"creation_id": creation_id, "access_token": page_access_token},
+                timeout=15,
+            )
+            _raise_with_api_detail(publish_resp)
+            return {"success": True, "post_id": publish_resp.json().get("id")}
+
         original_url = image.get("url") if image else None
         if not original_url:
-            return {"success": False, "error": "Instagram requires an image."}
+            return {"success": False, "error": "Instagram requires an image or video."}
 
         prepared_bytes = validate_and_prepare_instagram_image(original_url)
         if prepared_bytes is None:
             return {"success": False, "error": "Could not process featured image for Instagram."}
 
         hosted_url = upload_to_imgbb(prepared_bytes, IMGBB_API_KEY)
-
-        caption = payload.get("instagram_caption") or payload.get("facebook_post") or payload.get("intro", "")
 
         container_resp = requests.post(
             f"https://graph.facebook.com/v21.0/{ig_user_id}/media",
@@ -835,9 +992,10 @@ def publish_instagram_carousel(payload, page_access_token, ig_user_id, carousel_
         return {"success": False, "error": str(e)}
 
 
-def publish_threads(payload, access_token, threads_user_id, image=None):
-    """Publish a post to Threads — text-only, or with an image if one is available.
-    `image` is the resolved image dict passed in by publish_dispatch."""
+def publish_threads(payload, access_token, threads_user_id, image=None, video=None):
+    """Publish a post to Threads — text-only, or with an image/video if one
+    is available. `image`/`video` are resolved dicts from publish_dispatch -
+    video takes priority when both are present, as a single post."""
     try:
         if isinstance(payload, str):
             payload = json.loads(payload)
@@ -849,8 +1007,39 @@ def publish_threads(payload, access_token, threads_user_id, image=None):
         )[:500]
 
         image_url = image.get("url") if image else None
+        video_url = video.get("url") if video else None
 
-        if image_url:
+        if video_url:
+            container_resp = requests.post(
+                f"https://graph.threads.net/v1.0/{threads_user_id}/threads",
+                data={
+                    "media_type": "VIDEO",
+                    "video_url": video_url,
+                    "text": text,
+                    "access_token": access_token,
+                },
+                timeout=30,
+            )
+            _raise_with_api_detail(container_resp)
+            creation_id = container_resp.json()["id"]
+
+            # Threads' container status field is "status", not Instagram's
+            # "status_code" - same processing model, different field name.
+            wait_for_media_container(
+                f"https://graph.threads.net/v1.0/{creation_id}",
+                access_token,
+                field="status",
+            )
+
+            publish_resp = requests.post(
+                f"https://graph.threads.net/v1.0/{threads_user_id}/threads_publish",
+                data={"creation_id": creation_id, "access_token": access_token},
+                timeout=15,
+            )
+            _raise_with_api_detail(publish_resp)
+            return {"success": True, "post_id": publish_resp.json().get("id")}
+
+        elif image_url:
             prepared_bytes = validate_and_prepare_instagram_image(image_url)
             if prepared_bytes is not None:
                 hosted_url = upload_to_imgbb(prepared_bytes, IMGBB_API_KEY)  # re-host, same as Instagram
@@ -1089,18 +1278,31 @@ def publish_dispatch(payload, platform, user_credentials):
     (carousel path) or its first entry (single-image path) into the
     adapter — none of the adapters read payload["featured_image"] directly
     anymore, so there's no chance of them disagreeing about which image to use.
+
+    video is resolved the same way images are, from payload["video"]
+    (populated by /drafts/manual when the user attaches one). None of these
+    platforms can carry video alongside a carousel in one post, so a video
+    present on the draft always wins over any images - the carousel/
+    single-image branches below are only reached when there's no video.
     """
     carousel_images = build_carousel_images(payload)
     single_image = carousel_images[0] if carousel_images else None
+    video = payload.get("video")
 
     if platform == "finto":
         if not user_credentials or "email" not in user_credentials or "password" not in user_credentials:
             return {"success": False, "error": "Missing finto.day credentials for this user."}
+        # finto.day's writer form has no known video field/endpoint, so a
+        # video attachment is silently skipped here - text and images still
+        # publish as before. Wiring this up needs the actual API contract
+        # for video on finto.day, which isn't available anywhere in this repo.
         return publish_finto(payload, user_credentials)
 
     elif platform == "linkedin":
         if not user_credentials or "access_token" not in user_credentials or "member_id" not in user_credentials:
             return {"success": False, "error": "Missing LinkedIn credentials for this user."}
+        if video:
+            return publish_linkedin(payload, user_credentials["access_token"], user_credentials["member_id"], video=video)
         if len(carousel_images) > 1:
             return publish_linkedin_carousel(payload, user_credentials["access_token"], user_credentials["member_id"], carousel_images)
         return publish_linkedin(payload, user_credentials["access_token"], user_credentials["member_id"], single_image)
@@ -1108,6 +1310,8 @@ def publish_dispatch(payload, platform, user_credentials):
     elif platform == "facebook":
         if not user_credentials or "page_access_token" not in user_credentials or "page_id" not in user_credentials:
             return {"success": False, "error": "Missing Facebook credentials for this user."}
+        if video:
+            return publish_facebook(payload, user_credentials["page_access_token"], user_credentials["page_id"], video=video)
         if len(carousel_images) > 1:
             return publish_facebook_carousel(payload, user_credentials["page_access_token"], user_credentials["page_id"], carousel_images)
         return publish_facebook(payload, user_credentials["page_access_token"], user_credentials["page_id"], single_image)
@@ -1115,6 +1319,8 @@ def publish_dispatch(payload, platform, user_credentials):
     elif platform == "instagram":
         if not user_credentials or "page_access_token" not in user_credentials or "ig_page_id" not in user_credentials:
             return {"success": False, "error": "Missing Instagram credentials for this user."}
+        if video:
+            return publish_instagram(payload, user_credentials["page_access_token"], user_credentials["ig_page_id"], video=video)
         if len(carousel_images) > 1:
             return publish_instagram_carousel(payload, user_credentials["page_access_token"], user_credentials["ig_page_id"], carousel_images)
         return publish_instagram(payload, user_credentials["page_access_token"], user_credentials["ig_page_id"], single_image)
@@ -1122,6 +1328,8 @@ def publish_dispatch(payload, platform, user_credentials):
     elif platform == "threads":
         if not user_credentials or "access_token" not in user_credentials or "threads_user_id" not in user_credentials:
             return {"success": False, "error": "Missing Threads credentials for this user."}
+        if video:
+            return publish_threads(payload, user_credentials["access_token"], user_credentials["threads_user_id"], video=video)
         if len(carousel_images) > 1:
             return publish_threads_carousel(payload, user_credentials["access_token"], user_credentials["threads_user_id"], carousel_images)
         return publish_threads(payload, user_credentials["access_token"], user_credentials["threads_user_id"], single_image)

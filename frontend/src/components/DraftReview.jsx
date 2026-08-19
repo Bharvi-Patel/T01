@@ -73,7 +73,8 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
             style={{ width: "100%", borderRadius: "var(--radius)", display: "block" }}
           />
           <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "6px 0 0" }}>
-            Attached for reference only — video isn't published to platforms yet, only text and images are.
+            This video will be published in place of the images on platforms that support video
+            (finto.day doesn't yet, so it still gets the images).
           </p>
         </div>
       )}

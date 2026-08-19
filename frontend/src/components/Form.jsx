@@ -361,8 +361,9 @@ export default function Form({ onSubmit, loading, error, token }) {
               </div>
             </div>
             <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "6px 0 0" }}>
-              Up to {MAX_IMAGES} images plus one video. Video is attached for review only — it isn't
-              published to platforms automatically yet.
+              Up to {MAX_IMAGES} images plus one video. If a video is attached, it's published in place
+              of the images on platforms that support video — finto.day doesn't yet, so it still gets
+              the images there.
             </p>
           </div>
 
