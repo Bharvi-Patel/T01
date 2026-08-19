@@ -1,6 +1,6 @@
 // DraftReview.jsx
 import { useState, useEffect } from "react";
-import { PLATFORMS } from "./platforms";
+import { PLATFORMS, PlatformLogo } from "./platforms";
 
 export default function DraftReview({ draft, connections, onApprove, onReject, loading, error }) {
   const [activePlatform, setActivePlatform] = useState("finto");
@@ -84,7 +84,7 @@ export default function DraftReview({ draft, connections, onApprove, onReject, l
                   opacity: on ? 1 : 0.55,
                 }}
               >
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: p.color }} />
+                <PlatformLogo platform={p} size={14} />
                 {p.label}
               </button>
             );

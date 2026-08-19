@@ -4,14 +4,14 @@ export default function Done({ result, onRestart }) {
 
   return (
     <div style={{ background: "var(--surface-2)", borderRadius: 12, border: "0.5px solid var(--border)", padding: "1.5rem" }}>
-      <p style={{ fontWeight: 500, fontSize: 15, margin: "0 0 12px" }}>
+      <p style={{ fontWeight: 500, fontSize: 15, margin: "0 0 12px", color: "var(--ink)" }}>
         {anySuccess ? "Published" : "Publish failed"}
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: "1rem" }}>
         {entries.map(([platform, r]) => (
           <div key={platform} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-              <span style={{ textTransform: "capitalize" }}>{platform}</span>
+              <span style={{ textTransform: "capitalize", color: "var(--ink)" }}>{platform}</span>
               {r?.success
                 ? (r.url ? <a href={r.url} target="_blank" rel="noreferrer" style={{ color: "var(--text-accent)" }}>View</a> : <span style={{ color: "var(--text-secondary)" }}>Published</span>)
                 : <span style={{ color: "var(--danger)" }}>{r?.error || "Failed"}</span>}

@@ -195,7 +195,7 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
                 </p>
               </div>
               <button className="primary" style={{ width: "auto", padding: "0 20px" }} onClick={() => handleOAuthConnect(platform)}>
-                {connected ? "Reconnect" : "Connect"}
+                {connected ? "Connected" : "Connect"}
               </button>
             </div>
           </div>
