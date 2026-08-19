@@ -18,9 +18,10 @@ from dotenv import load_dotenv
 # provider.
 load_dotenv(override=True)
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,13 +39,24 @@ from oauth_platforms import (
 PENDING_PAGE_SELECTIONS: dict[str, dict] = {} # pending_id -> {"user_id","platform","pages","expires_at"}
 
 FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "http://localhost:5173")
+BACKEND_BASE_URL = os.environ.get("BACKEND_BASE_URL", "http://localhost:8000")
 OAUTH_STATES: dict[str, dict] = {} 
+
+# Local disk storage for user-uploaded video. Images from manual drafts go
+# through the same imgbb hosting the AI path already uses (Instagram etc.
+# need a public URL regardless of who supplied the image) - but imgbb only
+# accepts images, so video is served directly off this backend instead.
+# NOTE: no publish adapter currently posts video to any platform - it's
+# stored and shown in review, but Approve & publish only sends the text +
+# images through. Wiring per-platform video upload is separate future work.
+MEDIA_DIR = Path(__file__).resolve().parent / "media"
+MEDIA_DIR.mkdir(exist_ok=True)
 EMAIL_VERIFICATION_TOKEN_TTL_HOURS = int(os.environ.get("EMAIL_VERIFICATION_TOKEN_TTL_HOURS", "24"))
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "Agent01"))
 
-from Agent import agent01, revise_draft, approve_and_publish, clean_json_string, VALID_CATEGORIES
+from Agent import agent01, revise_draft, approve_and_publish, clean_json_string, VALID_CATEGORIES, upload_to_imgbb, IMGBB_API_KEY, suggest_hashtags
 
 from db import (
     AsyncSessionLocal,
@@ -88,6 +100,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 
 # In-memory auth tokens issued by /login. Resets on server restart, which
 # just logs everyone out - fine for an internal single-admin tool. Real
@@ -255,6 +269,11 @@ class GenerateRequest(BaseModel):
     category: str
     subtopic: str
     word_count: int
+
+
+class HashtagSuggestRequest(BaseModel):
+    text: str
+    category: str | None = None
 
 
 class ConnectFintoRequest(BaseModel):
@@ -450,6 +469,105 @@ async def generate(req: GenerateRequest, db: AsyncSession = Depends(get_db), use
         word_count=req.word_count,
         content=draft_content,
         messages=messages,
+        status=DraftStatus.PENDING_REVIEW,
+    )
+    db.add(draft)
+    await db.commit()
+    await db.refresh(draft)
+
+    return {"draft_id": str(draft.id), "draft": draft.content}
+
+
+@app.post("/assist/hashtags")
+async def assist_hashtags(req: HashtagSuggestRequest, user_id: uuid.UUID = Depends(require_auth)):
+    """Backs the manual composer's "# Hashtags" button - suggests hashtags
+    for whatever the user has written so far. Doesn't touch the DB; the
+    frontend inserts the returned tags into the post text itself."""
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="text must not be empty")
+    hashtags = await run_in_threadpool(suggest_hashtags, req.text, req.category)
+    return {"hashtags": hashtags}
+
+
+@app.post("/drafts/manual")
+async def create_manual_draft(
+    category: str = Form(...),
+    subtopic: str = Form(...),
+    title: str = Form(...),
+    body: str = Form(...),
+    images: list[UploadFile] = File(default=[]),
+    video: UploadFile | None = File(default=None),
+    intro: str | None = Form(default=None),
+    linkedin_post: str | None = Form(default=None),
+    facebook_post: str | None = Form(default=None),
+    instagram_caption: str | None = Form(default=None),
+    threads_post: str | None = Form(default=None),
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """Same draft pipeline as /generate, minus the LLM: the user writes the
+    post and supplies their own media instead of the agent researching and
+    drafting it. Produces the exact same `content` shape /generate does
+    (title/intro/sections/conclusion/featured_image/carousel_images plus
+    per-platform post fields) so review, scheduling, and approve_and_publish
+    all work unchanged - they only ever look at draft.content, never at how
+    it was built.
+
+    `body` is used everywhere a per-network field isn't explicitly supplied
+    (the frontend's "customize post per network" toggle - off by default).
+    """
+    if category not in VALID_CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"category must be one of: {', '.join(VALID_CATEGORIES)}",
+        )
+    if not body.strip():
+        raise HTTPException(status_code=400, detail="body must not be empty")
+
+    carousel_images = []
+    for image in images:
+        image_bytes = await image.read()
+        if not image_bytes:
+            continue
+        hosted_url = await run_in_threadpool(upload_to_imgbb, image_bytes, IMGBB_API_KEY)
+        if hosted_url:
+            carousel_images.append({"url": hosted_url, "source": "user upload"})
+
+    video_field = None
+    if video is not None and video.filename:
+        video_bytes = await video.read()
+        if video_bytes:
+            ext = Path(video.filename).suffix or ".mp4"
+            stored_name = f"{uuid.uuid4()}{ext}"
+            (MEDIA_DIR / stored_name).write_bytes(video_bytes)
+            video_field = {
+                "url": f"{BACKEND_BASE_URL}/media/{stored_name}",
+                "filename": video.filename,
+            }
+
+    draft_content = {
+        "title": title,
+        "meta_description": body[:160],
+        "intro": intro or body,
+        "sections": [],
+        "conclusion": "",
+        "featured_image": carousel_images[0] if carousel_images else {"url": "", "source": ""},
+        "carousel_images": carousel_images,
+        "video": video_field,
+        "linkedin_post": linkedin_post or body,
+        "facebook_post": facebook_post or body,
+        "instagram_caption": instagram_caption or body,
+        "threads_post": threads_post or body,
+        "twitter_post": body[:280],
+    }
+
+    draft = Draft(
+        user_id=user_id,
+        category=category,
+        subtopic=subtopic,
+        word_count=len(body.split()),
+        content=draft_content,
+        messages=[],  # no LLM conversation - nothing to revise against via /review reject
         status=DraftStatus.PENDING_REVIEW,
     )
     db.add(draft)
@@ -965,6 +1083,15 @@ async def review(req: ReviewRequest, db: AsyncSession = Depends(get_db),  user_i
     if req.decision == "reject":
         if not req.feedback:
             raise HTTPException(status_code=400, detail="feedback is required to reject a draft")
+        if not draft.messages:
+            # Manually-written drafts (POST /drafts/manual) have no LLM
+            # conversation to hand back to revise_draft - there's nothing
+            # for the agent to revise. The user should just edit their text
+            # and resubmit a new manual draft instead.
+            raise HTTPException(
+                status_code=400,
+                detail="This draft was written manually and can't be sent back for AI revision. Edit and resubmit it instead.",
+            )
 
         content, messages = await run_in_threadpool(revise_draft, draft.messages, feedback=req.feedback)
         draft.content = _parse_draft(content)

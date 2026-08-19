@@ -84,6 +84,53 @@ export async function generateDraft({ token, category, subtopic, wordCount }) {
 }
 
 /*
+  Ask the agent for hashtag suggestions based on whatever's been written so
+  far — backs the manual composer's "# Hashtags" button.
+  Expected backend response: { hashtags: ["#foo", "#bar", ...] }
+ */
+export async function suggestHashtags({ token, text, category }) {
+  const res = await fetch(`${API_BASE}/assist/hashtags`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ text, category }),
+  });
+  return handle(res);
+}
+
+/*
+  Create a draft from a post the user wrote themselves, instead of
+  generating one with AI. `images` is an array of File objects, `video` is
+  a single File or null/undefined. `platformBodies` is an optional
+  { finto, linkedin, facebook, instagram, threads } object of per-network
+  overrides — omit it (or leave it undefined) to use `body` everywhere.
+  Expected backend response: { draft_id, draft: {...draft json...} }
+  (same shape as generateDraft, so callers can treat the two identically)
+ */
+export async function createManualDraft({ token, category, subtopic, title, body, images, video, platformBodies }) {
+  const form = new FormData();
+  form.append("category", category);
+  form.append("subtopic", subtopic);
+  form.append("title", title);
+  form.append("body", body);
+  (images || []).forEach((file) => form.append("images", file));
+  if (video) form.append("video", video);
+  if (platformBodies) {
+    if (platformBodies.finto) form.append("intro", platformBodies.finto);
+    if (platformBodies.linkedin) form.append("linkedin_post", platformBodies.linkedin);
+    if (platformBodies.facebook) form.append("facebook_post", platformBodies.facebook);
+    if (platformBodies.instagram) form.append("instagram_caption", platformBodies.instagram);
+    if (platformBodies.threads) form.append("threads_post", platformBodies.threads);
+  }
+
+  const res = await fetch(`${API_BASE}/drafts/manual`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: form,
+  });
+  return handle(res);
+}
+
+/*
   Approve or reject an existing draft.
   Expected backend response for reject: { draft_id, draft: {...revised draft...} }
   Expected backend response for approve: { draft_id, results: { <platform>: {...} } }

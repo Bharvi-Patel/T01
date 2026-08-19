@@ -56,6 +56,30 @@ serper_images = GoogleSerperAPIWrapper(type="images")
 
 MODEL = "gemini-3.1-flash-lite"
 
+
+def suggest_hashtags(text, category=None, max_tags=8):
+    """Ask Gemini for a short list of relevant hashtags for a piece of post
+    text. Returns a list of '#word' strings, no explanation - backs the
+    manual-post composer's "# Hashtags" button (DraftReview never calls
+    this; it's specific to the write-it-yourself flow in Form.jsx)."""
+    prompt = (
+        f"Suggest up to {max_tags} concise, relevant social-media hashtags for this post"
+        + (f" in the '{category}' category" if category else "")
+        + ". Respond with ONLY the hashtags separated by spaces, each starting "
+        + "with #, no other text.\n\nPost:\n" + text
+    )
+    resp = gemini.chat.completions.create(model=MODEL, messages=[{"role": "user", "content": prompt}])
+    raw = resp.choices[0].message.content or ""
+    tags = re.findall(r"#\w+", raw)
+    seen = set()
+    unique = []
+    for t in tags:
+        if t.lower() not in seen:
+            seen.add(t.lower())
+            unique.append(t)
+    return unique[:max_tags]
+
+
 CATEGORY_MAP = {
     "Technology": 1, "Web Development": 2, "Artificial Intelligence": 3, "Gadgets": 4,
     "Business": 5, "Startups": 6, "Finance": 7,

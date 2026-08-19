@@ -10,7 +10,7 @@ import Settings from "./components/settings";
 import Publish from "./components/Publish";
 import Calendar from "./components/Calendar";
 import Analytics from "./components/Analytics";
-import { login as apiLogin, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, reviewDraft, scheduleDraft, getConnections, getDraft } from "./api";
+import { login as apiLogin, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft } from "./api";
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem("auth_token"));
@@ -157,17 +157,20 @@ export default function App() {
     handleRestart();
   }
 
-  async function handleGenerate({ category, subtopic, wordCount }) {
+  async function handleGenerate(formValues) {
     setLoading(true);
     setError("");
     try {
-      const res = await generateDraft({ token, category, subtopic, wordCount });
+      const res =
+        formValues.mode === "manual"
+          ? await createManualDraft({ token, ...formValues })
+          : await generateDraft({ token, ...formValues });
       setDraftId(res.draft_id);
       setDraft(res.draft);
       setStep("draft");
     } catch (e) {
       if (e.status === 401) return handleLogout();
-      setError(e.message || "Something went wrong generating the draft.");
+      setError(e.message || "Something went wrong creating the draft.");
     } finally {
       setLoading(false);
     }
@@ -318,7 +321,7 @@ export default function App() {
           )}
 
           {step === "generate" && (
-              <Form onSubmit={handleGenerate} loading={loading} error={error} />
+              <Form onSubmit={handleGenerate} loading={loading} error={error} token={token} />
 
           )}
 

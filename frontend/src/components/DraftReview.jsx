@@ -26,7 +26,7 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
 
   if (!draft) return null;
 
-  const { title, meta_description, intro, sections = [], conclusion, featured_image } = draft;
+  const { title, meta_description, intro, sections = [], conclusion, featured_image, video } = draft;
   const postText = {
     finto: intro, linkedin: draft.linkedin_post, facebook: draft.facebook_post,
     instagram: draft.instagram_caption, threads: draft.threads_post,
@@ -64,6 +64,18 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
           src={featured_image.url} alt={title}
           style={{ width: "100%", borderRadius: "var(--radius)", marginBottom: "1.5rem" }}
         />
+      )}
+
+      {video?.url && (
+        <div style={{ marginBottom: "1.5rem" }}>
+          <video
+            src={video.url} controls
+            style={{ width: "100%", borderRadius: "var(--radius)", display: "block" }}
+          />
+          <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "6px 0 0" }}>
+            Attached for reference only — video isn't published to platforms yet, only text and images are.
+          </p>
+        </div>
       )}
 
       <div style={{ fontFamily: "var(--font-display)", fontSize: 17, lineHeight: 1.7 }}>
