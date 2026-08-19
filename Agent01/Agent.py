@@ -20,6 +20,25 @@ openai_api_key = os.getenv("OPENAI_API_KEY")
 google_api_key = os.getenv("GOOGLE_API_KEY")
 IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY")
 
+
+def _raise_with_api_detail(resp):
+    """Like resp.raise_for_status(), but folds the response body into the
+    exception message. Meta's Graph API (Facebook/Instagram/Threads) returns
+    a JSON body like {"error": {"message": "...", "code": ..., "type": ...}}
+    on 4xx responses that explains *why* the request was rejected (expired
+    token, missing permission, bad media URL, etc.) — plain raise_for_status()
+    discards that and just says "400 Client Error: Bad Request for url: ...",
+    which isn't enough to diagnose anything.
+    """
+    try:
+        resp.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        try:
+            detail = resp.json()
+        except ValueError:
+            detail = resp.text
+        raise requests.exceptions.HTTPError(f"{e} | response body: {detail}", response=resp) from e
+
 FINTO_BASE = "https://finto.day"
 finto_email = os.environ.get("FINTO_EMAIL")
 finto_password = os.environ.get("FINTO_PASSWORD")
@@ -716,7 +735,7 @@ def publish_instagram(payload, page_access_token, ig_user_id, image=None):
             data={"image_url": hosted_url, "caption": caption, "access_token": page_access_token},
             timeout=15,
         )
-        container_resp.raise_for_status()
+        _raise_with_api_detail(container_resp)
         creation_id = container_resp.json()["id"]
 
         publish_resp = requests.post(
@@ -724,7 +743,7 @@ def publish_instagram(payload, page_access_token, ig_user_id, image=None):
             data={"creation_id": creation_id, "access_token": page_access_token},
             timeout=15,
         )
-        publish_resp.raise_for_status()
+        _raise_with_api_detail(publish_resp)
         return {"success": True, "post_id": publish_resp.json().get("id")}
 
     except Exception as e:
@@ -761,7 +780,7 @@ def publish_instagram_carousel(payload, page_access_token, ig_user_id, carousel_
                 },
                 timeout=15,
             )
-            resp.raise_for_status()
+            _raise_with_api_detail(resp)
             item_ids.append(resp.json()["id"])
 
         if len(item_ids) < 2:
@@ -777,7 +796,7 @@ def publish_instagram_carousel(payload, page_access_token, ig_user_id, carousel_
             },
             timeout=15,
         )
-        resp.raise_for_status()
+        _raise_with_api_detail(resp)
         creation_id = resp.json()["id"]
 
         publish_resp = requests.post(
@@ -785,7 +804,7 @@ def publish_instagram_carousel(payload, page_access_token, ig_user_id, carousel_
             data={"creation_id": creation_id, "access_token": page_access_token},
             timeout=15,
         )
-        publish_resp.raise_for_status()
+        _raise_with_api_detail(publish_resp)
         return {"success": True, "post_id": publish_resp.json().get("id")}
 
     except Exception as e:
@@ -836,7 +855,7 @@ def publish_threads(payload, access_token, threads_user_id, image=None):
             data=container_data,
             timeout=15,
         )
-        container_resp.raise_for_status()
+        _raise_with_api_detail(container_resp)
         creation_id = container_resp.json()["id"]
 
         publish_resp = requests.post(
@@ -844,7 +863,7 @@ def publish_threads(payload, access_token, threads_user_id, image=None):
             data={"creation_id": creation_id, "access_token": access_token},
             timeout=15,
         )
-        publish_resp.raise_for_status()
+        _raise_with_api_detail(publish_resp)
         return {"success": True, "post_id": publish_resp.json().get("id")}
 
     except Exception as e:
@@ -886,7 +905,7 @@ def publish_threads_carousel(payload, access_token, threads_user_id, carousel_im
                 },
                 timeout=15,
             )
-            resp.raise_for_status()
+            _raise_with_api_detail(resp)
             item_ids.append(resp.json()["id"])
 
         if len(item_ids) < 2:
@@ -902,7 +921,7 @@ def publish_threads_carousel(payload, access_token, threads_user_id, carousel_im
             },
             timeout=15,
         )
-        resp.raise_for_status()
+        _raise_with_api_detail(resp)
         creation_id = resp.json()["id"]
 
         publish_resp = requests.post(
@@ -910,7 +929,7 @@ def publish_threads_carousel(payload, access_token, threads_user_id, carousel_im
             data={"creation_id": creation_id, "access_token": access_token},
             timeout=15,
         )
-        publish_resp.raise_for_status()
+        _raise_with_api_detail(publish_resp)
         return {"success": True, "post_id": publish_resp.json().get("id")}
 
     except Exception as e:

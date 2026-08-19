@@ -11,7 +11,7 @@ export default function Done({ result, onRestart }) {
         {entries.map(([platform, r]) => (
           <div key={platform} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#ECEFEA" }}>
-              <span style={{ textTransform: "capitalize", color: "var(--ink)" }}>{platform}</span>
+              <span style={{ textTransform: "capitalize", color: "#fff" }}>{platform}</span>
               {r?.success
                 ? (r.url ? <a href={r.url} target="_blank" rel="noreferrer" style={{ color: "#7FA687" }}>View</a> : <span style={{ color: "#9BA79E" }}>Published</span>)
                 : <span style={{ color: "#E88A8A" }}>{r?.error || "Failed"}</span>}

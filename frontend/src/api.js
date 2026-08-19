@@ -192,12 +192,15 @@ export async function disconnectPlatform({ token, platform }) {
 
 /*
   List the current user's drafts, optionally filtered by status
-  ("pending_review" | "published" | "publish_failed" | "rejected").
-  Expected backend response: { drafts: [{ draft_id, category, subtopic, title, status, created_at, updated_at }] }
+  ("pending_review" | "scheduled" | "published" | "publish_failed" | "rejected"),
+  and/or by a scheduled_at date range (for the calendar view).
+  Expected backend response: { drafts: [{ draft_id, category, subtopic, title, status, created_at, updated_at, scheduled_at, scheduled_platforms, scheduled_live }] }
  */
-export async function getDrafts({ token, status }) {
+export async function getDrafts({ token, status, scheduledFrom, scheduledTo }) {
   const url = new URL(`${API_BASE}/drafts`);
   if (status) url.searchParams.set("status", status);
+  if (scheduledFrom) url.searchParams.set("scheduled_from", scheduledFrom);
+  if (scheduledTo) url.searchParams.set("scheduled_to", scheduledTo);
   const res = await fetch(url, { headers: authHeaders(token) });
   return handle(res);
 }
@@ -208,6 +211,46 @@ export async function getDrafts({ token, status }) {
  */
 export async function getDraft({ token, draftId }) {
   const res = await fetch(`${API_BASE}/drafts/${draftId}`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+/*
+  Queue a draft to auto-publish at a future date/time.
+  scheduledAt should be an ISO 8601 string. Expected backend response:
+  { draft_id, status, scheduled_at, scheduled_platforms }
+ */
+export async function scheduleDraft({ token, draftId, scheduledAt, platforms, live }) {
+  const res = await fetch(`${API_BASE}/drafts/${draftId}/schedule`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ scheduled_at: scheduledAt, platforms, live }),
+  });
+  return handle(res);
+}
+
+/*
+  Move an already-scheduled draft to a new date/time (e.g. calendar drag & drop).
+  Keeps its existing platforms/live choice. Expected backend response:
+  { draft_id, scheduled_at }
+ */
+export async function rescheduleDraft({ token, draftId, scheduledAt }) {
+  const res = await fetch(`${API_BASE}/drafts/${draftId}/schedule`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ scheduled_at: scheduledAt }),
+  });
+  return handle(res);
+}
+
+/*
+  Pull a scheduled draft off the calendar, back to pending_review.
+  Expected backend response: { draft_id, status }
+ */
+export async function unscheduleDraft({ token, draftId }) {
+  const res = await fetch(`${API_BASE}/drafts/${draftId}/schedule`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
   return handle(res);
 }
 

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import secrets
@@ -176,12 +177,56 @@ async def login_oauth_callback(provider: str, code: str | None = None, state: st
     return RedirectResponse(url=f"{FRONTEND_BASE_URL}/?login_token={token}")
 
     
+SCHEDULER_POLL_SECONDS = int(os.environ.get("SCHEDULER_POLL_SECONDS", "30"))
+_scheduler_task: asyncio.Task | None = None
+
+
+async def _run_due_scheduled_drafts():
+    """One poll cycle: publish every draft whose scheduled_at has arrived.
+    Each draft is published independently — one bad publish (or one bad
+    draft) shouldn't stop the rest of the batch or crash the loop."""
+    async with AsyncSessionLocal() as db:
+        now = datetime.now(timezone.utc)
+        result = await db.execute(
+            select(Draft).where(Draft.status == DraftStatus.SCHEDULED, Draft.scheduled_at <= now)
+        )
+        due_drafts = result.scalars().all()
+        for draft in due_drafts:
+            try:
+                platforms = [Platform(p) for p in (draft.scheduled_platforms or [])]
+                if not platforms:
+                    draft.status = DraftStatus.PUBLISH_FAILED
+                    draft.scheduled_at = None
+                    draft.scheduled_platforms = None
+                    await db.commit()
+                    continue
+                await _publish_to_platforms(db, draft, platforms, draft.scheduled_live, draft.user_id)
+            except Exception:
+                # Don't let one draft's failure kill the rest of this cycle
+                # (or the loop) — mark it failed and move on; the real error
+                # per-platform is already captured in PublishResult rows.
+                draft.status = DraftStatus.PUBLISH_FAILED
+                draft.scheduled_at = None
+                draft.scheduled_platforms = None
+                await db.commit()
+
+
+async def _scheduler_loop():
+    while True:
+        try:
+            await _run_due_scheduled_drafts()
+        except Exception:
+            pass  # keep polling even if a whole cycle throws unexpectedly
+        await asyncio.sleep(SCHEDULER_POLL_SECONDS)
+
+
 @app.on_event("startup")
 async def on_startup():
-    global ADMIN_USER_ID
+    global ADMIN_USER_ID, _scheduler_task
     await init_db()
     async with AsyncSessionLocal() as session:
         ADMIN_USER_ID = await _get_or_create_admin_user(session)
+    _scheduler_task = asyncio.create_task(_scheduler_loop())
 
 
 
@@ -233,6 +278,14 @@ class ReviewRequest(BaseModel):
     platforms: list[str] | None = None  # required when decision == "approve"
     feedback: str | None = None
     live: bool = False
+
+class ScheduleRequest(BaseModel):
+    scheduled_at: datetime
+    platforms: list[str]
+    live: bool = False
+
+class RescheduleRequest(BaseModel):
+    scheduled_at: datetime
 
 
 def _parse_draft(content: str) -> dict:
@@ -402,13 +455,23 @@ async def generate(req: GenerateRequest, db: AsyncSession = Depends(get_db), use
 
 
 @app.get("/drafts")
-async def list_drafts(status: str | None = None, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+async def list_drafts(
+    status: str | None = None,
+    scheduled_from: datetime | None = None,
+    scheduled_to: datetime | None = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
     query = select(Draft).where(Draft.user_id == user_id).order_by(Draft.created_at.desc())
     if status:
         try:
             query = query.where(Draft.status == DraftStatus(status))
         except ValueError:
             raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(s.value for s in DraftStatus)}")
+    if scheduled_from is not None:
+        query = query.where(Draft.scheduled_at.isnot(None), Draft.scheduled_at >= _ensure_utc(scheduled_from))
+    if scheduled_to is not None:
+        query = query.where(Draft.scheduled_at.isnot(None), Draft.scheduled_at <= _ensure_utc(scheduled_to))
     result = await db.execute(query)
     drafts = result.scalars().all()
     return {
@@ -421,6 +484,9 @@ async def list_drafts(status: str | None = None, db: AsyncSession = Depends(get_
                 "status": d.status.value,
                 "created_at": d.created_at.isoformat(),
                 "updated_at": d.updated_at.isoformat(),
+                "scheduled_at": d.scheduled_at.isoformat() if d.scheduled_at else None,
+                "scheduled_platforms": d.scheduled_platforms,
+                "scheduled_live": d.scheduled_live,
             }
             for d in drafts
         ]
@@ -434,6 +500,83 @@ async def get_draft(draft_id: uuid.UUID, db: AsyncSession = Depends(get_db), use
     if draft is None:
         raise HTTPException(status_code=404, detail="Unknown draft_id")
     return {"draft_id": str(draft.id), "draft": draft.content, "status": draft.status.value}
+
+
+@app.post("/drafts/{draft_id}/schedule")
+async def schedule_draft(
+    draft_id: uuid.UUID, req: ScheduleRequest,
+    db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.user_id == user_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Unknown draft_id")
+
+    if not req.platforms:
+        raise HTTPException(status_code=400, detail="platforms is required to schedule a draft")
+
+    for p in req.platforms:
+        try:
+            Platform(p)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"platform must be one of: {', '.join(pl.value for pl in Platform)} (got {p!r})")
+
+    scheduled_at = _ensure_utc(req.scheduled_at)
+    if scheduled_at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
+
+    draft.scheduled_at = scheduled_at
+    draft.scheduled_platforms = req.platforms
+    draft.scheduled_live = req.live
+    draft.status = DraftStatus.SCHEDULED
+    await db.commit()
+    await db.refresh(draft)
+    return {
+        "draft_id": str(draft.id), "status": draft.status.value,
+        "scheduled_at": draft.scheduled_at.isoformat(), "scheduled_platforms": draft.scheduled_platforms,
+    }
+
+
+@app.patch("/drafts/{draft_id}/schedule")
+async def reschedule_draft(
+    draft_id: uuid.UUID, req: RescheduleRequest,
+    db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    """Move an already-scheduled draft to a new date/time (e.g. calendar
+    drag & drop) without needing to resend its platforms/live choice."""
+    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.user_id == user_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Unknown draft_id")
+    if draft.status != DraftStatus.SCHEDULED:
+        raise HTTPException(status_code=400, detail="This draft isn't currently scheduled")
+
+    scheduled_at = _ensure_utc(req.scheduled_at)
+    if scheduled_at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
+
+    draft.scheduled_at = scheduled_at
+    await db.commit()
+    return {"draft_id": str(draft.id), "scheduled_at": draft.scheduled_at.isoformat()}
+
+
+@app.delete("/drafts/{draft_id}/schedule")
+async def unschedule_draft(
+    draft_id: uuid.UUID, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.user_id == user_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Unknown draft_id")
+    if draft.status != DraftStatus.SCHEDULED:
+        raise HTTPException(status_code=400, detail="This draft isn't currently scheduled")
+
+    draft.status = DraftStatus.PENDING_REVIEW
+    draft.scheduled_at = None
+    draft.scheduled_platforms = None
+    draft.scheduled_live = False
+    await db.commit()
+    return {"draft_id": str(draft.id), "status": draft.status.value}
 
 
 @app.post("/connect/finto")
@@ -557,6 +700,69 @@ async def select_page(platform: str, req: SelectPageRequest, db: AsyncSession = 
     PENDING_PAGE_SELECTIONS.pop(req.pending_id, None)
     return {"success": True}
 
+async def _publish_to_platforms(db: AsyncSession, draft: Draft, platforms: list[Platform], live: bool, user_id) -> dict:
+    """Publish `draft` to each platform in `platforms`, recording a PublishResult
+    per platform and updating draft.status to PUBLISHED/PUBLISH_FAILED based on
+    whether any platform succeeded. Also clears any scheduling fields, since a
+    draft that has just been published (successfully or not) is no longer
+    "on the calendar" either way.
+
+    Shared by the immediate approve-and-publish path (/review) and the
+    background scheduler (_run_due_scheduled_drafts) so both go through
+    identical publish/record-keeping logic.
+    """
+    results = {}
+    any_success = False
+    for platform in platforms:
+        conn_result = await db.execute(
+            select(PlatformConnection).where(
+                PlatformConnection.user_id == user_id,
+                PlatformConnection.platform == platform,
+            )
+        )
+        connection = conn_result.scalar_one_or_none()
+        if connection is None:
+            error = f"No {platform.value} connection found - connect that platform first."
+            results[platform.value] = {"success": False, "error": error}
+            db.add(PublishResult(draft_id=draft.id, platform=platform, success=False, detail=error))
+            continue
+
+        user_credentials = dict(connection.credentials)
+        for field in SECRET_CREDENTIAL_FIELDS.get(platform, []):
+            if field in user_credentials:
+                user_credentials[field] = decrypt_secret(user_credentials[field])
+
+        try:
+            publish_result = await run_in_threadpool(
+                approve_and_publish,
+                draft_json_str=json.dumps(draft.content),
+                platform=platform.value,
+                user_credentials=user_credentials,
+                live=live,
+            )
+            success = True
+            detail = json.dumps(publish_result) if not isinstance(publish_result, str) else publish_result
+        except Exception as e:
+            publish_result, success, detail = None, False, str(e)
+
+        results[platform.value] = publish_result if success else {"success": False, "error": detail}
+        any_success = any_success or success
+        db.add(PublishResult(draft_id=draft.id, platform=platform, success=success, detail=detail))
+
+    draft.status = DraftStatus.PUBLISHED if any_success else DraftStatus.PUBLISH_FAILED
+    draft.scheduled_at = None
+    draft.scheduled_platforms = None
+    draft.scheduled_live = False
+    await db.commit()
+    return results
+
+
+def _ensure_utc(dt: datetime) -> datetime:
+    """Treat a naive datetime (no tzinfo) as UTC rather than raising or
+    silently comparing wrong — browsers/JS can send either form."""
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
 @app.post("/review")
 async def review(req: ReviewRequest, db: AsyncSession = Depends(get_db),  user_id: uuid.UUID = Depends(require_auth)):
     result = await db.execute(select(Draft).where(Draft.id == req.draft_id))
@@ -590,46 +796,7 @@ async def review(req: ReviewRequest, db: AsyncSession = Depends(get_db),  user_i
         except ValueError:
             raise HTTPException(status_code=400, detail=f"platform must be one of: {', '.join(pl.value for pl in Platform)} (got {p!r})")
 
-    results = {}
-    any_success = False
-    for platform in platforms:
-        conn_result = await db.execute(
-            select(PlatformConnection).where(
-                PlatformConnection.user_id == user_id,
-                PlatformConnection.platform == platform,
-            )
-        )
-        connection = conn_result.scalar_one_or_none()
-        if connection is None:
-            error = f"No {platform.value} connection found - connect that platform first."
-            results[platform.value] = {"success": False, "error": error}
-            db.add(PublishResult(draft_id=draft.id, platform=platform, success=False, detail=error))
-            continue
-
-        user_credentials = dict(connection.credentials)
-        for field in SECRET_CREDENTIAL_FIELDS.get(platform, []):
-            if field in user_credentials:
-                user_credentials[field] = decrypt_secret(user_credentials[field])
-
-        try:
-            publish_result = await run_in_threadpool(
-                approve_and_publish,
-                draft_json_str=json.dumps(draft.content),
-                platform=platform.value,
-                user_credentials=user_credentials,
-                live=req.live,
-            )
-            success = True
-            detail = json.dumps(publish_result) if not isinstance(publish_result, str) else publish_result
-        except Exception as e:
-            publish_result, success, detail = None, False, str(e)
-
-        results[platform.value] = publish_result if success else {"success": False, "error": detail}
-        any_success = any_success or success
-        db.add(PublishResult(draft_id=draft.id, platform=platform, success=success, detail=detail))
-
-    draft.status = DraftStatus.PUBLISHED if any_success else DraftStatus.PUBLISH_FAILED
-    await db.commit()
+    results = await _publish_to_platforms(db, draft, platforms, req.live, user_id)
 
     return {"draft_id": str(draft.id), "results": results}
 
@@ -637,3 +804,26 @@ async def review(req: ReviewRequest, db: AsyncSession = Depends(get_db),  user_i
 async def list_connections(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
     result = await db.execute(select(PlatformConnection.platform).where(PlatformConnection.user_id == user_id))
     return {"connections": [p.value for p in result.scalars().all()]}
+
+
+
+@app.delete("/connect/{platform}")
+async def disconnect_platform(platform: str, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    try:
+        platform_enum = Platform(platform)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"platform must be one of: {', '.join(pl.value for pl in Platform)} (got {platform!r})")
+
+    result = await db.execute(
+        select(PlatformConnection).where(
+            PlatformConnection.user_id == user_id,
+            PlatformConnection.platform == platform_enum,
+        )
+    )
+    connection = result.scalar_one_or_none()
+    if connection is None:
+        raise HTTPException(status_code=404, detail=f"No {platform_enum.value} connection found")
+
+    await db.delete(connection)
+    await db.commit()
+    return {"success": True}

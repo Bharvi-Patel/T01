@@ -2,16 +2,20 @@
 import { useState, useEffect } from "react";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
-export default function DraftReview({ draft, connections, onApprove, onReject, loading, error }) {
+export default function DraftReview({ draft, connections, onApprove, onSchedule, onReject, loading, error }) {
   const [activePlatform, setActivePlatform] = useState("finto");
   const [selected, setSelected] = useState(new Set());
   const [showReject, setShowReject] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [live, setLive] = useState(false);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("09:00");
 
   useEffect(() => {
     setShowReject(false);
     setFeedback("");
+    setShowSchedule(false);
   }, [draft]);
 
   useEffect(() => {
@@ -35,6 +39,15 @@ export default function DraftReview({ draft, connections, onApprove, onReject, l
     setSelected(next);
     setActivePlatform(key);
   }
+
+  function handleScheduleSubmit() {
+    if (!scheduleDate || !scheduleTime) return;
+    const local = new Date(`${scheduleDate}T${scheduleTime}`);
+    if (Number.isNaN(local.getTime())) return;
+    onSchedule(local.toISOString(), Array.from(selected), live);
+  }
+
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   return (
     <div>
@@ -123,6 +136,32 @@ export default function DraftReview({ draft, connections, onApprove, onReject, l
               </button>
             </div>
           </>
+        ) : showSchedule ? (
+          <>
+            <p className="eyebrow" style={{ marginBottom: 10 }}>Schedule for</p>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <input
+                type="date" min={todayStr} value={scheduleDate}
+                onChange={(e) => setScheduleDate(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <input
+                type="time" value={scheduleTime}
+                onChange={(e) => setScheduleTime(e.target.value)}
+                style={{ flex: 1 }}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setShowSchedule(false)} disabled={loading}>Cancel</button>
+              <button
+                className="primary"
+                onClick={handleScheduleSubmit}
+                disabled={loading || selected.size === 0 || !scheduleDate}
+              >
+                {loading ? "Scheduling…" : "Confirm schedule"}
+              </button>
+            </div>
+          </>
         ) : (
           <>
             {!selected.has("linkedin") && !selected.has("facebook") && !selected.has("instagram") && !selected.has("threads") && (
@@ -131,8 +170,14 @@ export default function DraftReview({ draft, connections, onApprove, onReject, l
                 <span style={{ fontSize: 13, fontFamily: "var(--font-sans)" }}>Publish live on finto.day</span>
               </label>
             )}
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button onClick={() => setShowReject(true)} disabled={loading}>Reject</button>
+              <button
+                onClick={() => { setScheduleDate(todayStr); setShowSchedule(true); }}
+                disabled={loading || selected.size === 0}
+              >
+                Schedule…
+              </button>
               <button
                 className="primary"
                 onClick={() => onApprove(live, Array.from(selected))}

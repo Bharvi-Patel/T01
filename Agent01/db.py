@@ -94,6 +94,7 @@ class Base(DeclarativeBase):
 
 class DraftStatus(str, enum.Enum):
     PENDING_REVIEW = "pending_review"
+    SCHEDULED = "scheduled"
     PUBLISHED = "published"
     PUBLISH_FAILED = "publish_failed"
     REJECTED = "rejected"
@@ -194,6 +195,14 @@ class Draft(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
     )
+
+    # Scheduling — set when a draft is queued for future auto-publish
+    # (status becomes SCHEDULED). All three are cleared back to None/False
+    # the moment the scheduler actually publishes it (success or failure),
+    # so "has a scheduled_at" is equivalent to "currently on the calendar".
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    scheduled_platforms: Mapped[list | None] = mapped_column(JSON, nullable=True)  # list[str] of Platform values
+    scheduled_live: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="drafts")
     publish_results: Mapped[list["PublishResult"]] = relationship(

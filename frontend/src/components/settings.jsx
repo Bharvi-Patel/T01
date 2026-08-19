@@ -204,7 +204,7 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <PlatformBadge platform={platform} connected={connected} />
-                <p style={{ fontWeight: 500, fontSize: 15, margin: 0, color: "var(--ink)" }}>
+                <p style={{ fontWeight: 500, fontSize: 15, margin: 0, color: "#fff" }}>
                   {PLATFORM_LABELS[platform] || platform}
                 </p>
               </div>

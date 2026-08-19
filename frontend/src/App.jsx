@@ -8,7 +8,8 @@ import Landing from "./components/Landing";
 import Sidebar from "./components/Sidebar";
 import Settings from "./components/settings";
 import Publish from "./components/Publish";
-import { login as apiLogin, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, reviewDraft, getConnections, getDraft } from "./api";
+import Calendar from "./components/Calendar";
+import { login as apiLogin, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, reviewDraft, scheduleDraft, getConnections, getDraft } from "./api";
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem("auth_token"));
@@ -185,6 +186,20 @@ export default function App() {
     }
   }
 
+  async function handleSchedule(scheduledAtISO, platforms, live) {
+    setLoading(true);
+    setError("");
+    try {
+      await scheduleDraft({ token, draftId, scheduledAt: scheduledAtISO, platforms, live });
+      setStep("calendar");
+    } catch (e) {
+      if (String(e.message).includes("401")) return handleLogout();
+      setError(e.message || "Something went wrong while scheduling the draft.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleReject(feedback) {
     setLoading(true);
     setError("");
@@ -297,6 +312,7 @@ export default function App() {
               draft={draft}
               connections={connections}
               onApprove={handleApprove}
+              onSchedule={handleSchedule}
               onReject={handleReject}
               loading={loading}
               error={error}
@@ -322,10 +338,14 @@ export default function App() {
             <Publish token={token} onNewPost={handleRestart} onOpenDraft={handleOpenDraft} />
           )}
 
-          {["inbox", "calendar", "analytics", "billing", "notifications"].includes(step) && (
+          {step === "calendar" && (
+            <Calendar token={token} onOpenDraft={handleOpenDraft} onAuthError={handleLogout} />
+          )}
+
+          {["inbox", "analytics", "billing", "notifications"].includes(step) && (
             <div style={{ padding: "3rem 0", textAlign: "center", color: "var(--text-secondary)" }}>
               <p style={{ fontFamily: "var(--font-display)", fontSize: "22px", color: "var(--ink)", marginBottom: 8 }}>
-                {{ inbox: "Social Inbox", calendar: "Calendar", analytics: "Analytics", billing: "Billing", notifications: "Notifications" }[step]}
+                {{ inbox: "Social Inbox", analytics: "Analytics", billing: "Billing", notifications: "Notifications" }[step]}
               </p>
               <p>This section is coming soon.</p>
             </div>
