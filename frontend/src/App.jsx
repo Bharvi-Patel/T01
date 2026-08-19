@@ -314,6 +314,7 @@ export default function App() {
               pagePicker={pagePicker}
               onDone={() => { setPagePicker(null); setStep("generate"); }}
               onPagePickerDone={() => { setPagePicker(null); refreshConnections(); }}
+              onConnectionsChanged={refreshConnections}
             />
           )}
 

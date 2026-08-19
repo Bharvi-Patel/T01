@@ -34,7 +34,7 @@ export default function Form({ onSubmit, loading, error }) {
         padding: "1.5rem",
       }}
     >
-      <p style={{ fontWeight: 500, fontSize: 15, margin: "0 0 1rem" }}>
+      <p style={{ fontWeight: 500, fontSize: 15, margin: "0 0 1rem", color: "#fff"}}>
         Generate a new post
       </p>
 

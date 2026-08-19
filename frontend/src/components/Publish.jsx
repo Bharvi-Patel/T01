@@ -23,7 +23,7 @@ const TABS = [
   { key: "approval", label: "Needs Approval" },
   { key: "rejected", label: "Rejected" },
   { key: "media", label: "Media" },
-  { key: "notifications", label: "Notifications" },
+  { key: "notifications", label: "Mobile Notifications" },
 ];
 
 const STATUS_LABEL = {
@@ -73,19 +73,19 @@ function DraftList({ token, status, onOpenDraft, emptyLabel }) {
           onClick={() => onOpenDraft(d.draft_id)}
           style={{
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-            width: "100%", textAlign: "left", background: "var(--surface-2)",
-            border: "0.5px solid var(--border)", borderRadius: 10, padding: "12px 16px",
+            width: "100%", textAlign: "left", background: "#16222A",
+            border: "0.5px solid #22303A", borderRadius: 10, padding: "12px 16px",
           }}
         >
           <div style={{ minWidth: 0 }}>
-            <p style={{ margin: 0, fontWeight: 500, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <p style={{ margin: 0, fontWeight: 500, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#ECEFEA" }}>
               {d.title || d.subtopic}
             </p>
-            <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)", textTransform: "capitalize" }}>
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: "#66716C", textTransform: "capitalize" }}>
               {d.category} · {formatDate(d.created_at)}
             </p>
           </div>
-          <span style={{ fontSize: 11, color: "var(--text-secondary)", flexShrink: 0, fontFamily: "var(--font-mono)" }}>
+          <span style={{ fontSize: 11, color: "#9BA79E", flexShrink: 0, fontFamily: "var(--font-mono)" }}>
             {STATUS_LABEL[d.status] || d.status}
           </span>
         </button>
@@ -182,8 +182,8 @@ function MediaTab() {
       <input ref={videoRef} type="file" accept="video/*" multiple style={{ display: "none" }} onChange={(e) => handleFiles(e, "video")} />
 
       {textDraftOpen && (
-        <div style={{ background: "var(--surface-2)", borderRadius: 12, border: "0.5px solid var(--border)", padding: "1.25rem" }}>
-          <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 10px" }}>Add text</p>
+        <div style={{ background: "#16222A", borderRadius: 12, border: "0.5px solid #22303A", padding: "1.25rem" }}>
+          <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 10px", color: "#ECEFEA" }}>Add text</p>
           <textarea
             value={textDraft}
             onChange={(e) => setTextDraft(e.target.value)}
@@ -217,20 +217,20 @@ function MediaTab() {
                 key={i}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-                  background: "var(--surface-2)", border: "0.5px solid var(--border)", borderRadius: 10, padding: "10px 16px",
+                  background: "#16222A", border: "0.5px solid #22303A", borderRadius: 10, padding: "10px 16px",
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                   <MenuIcon name={a.type === "photo" ? "image" : a.type} size={14} />
-                  <span style={{ fontSize: 11, textTransform: "uppercase", fontFamily: "var(--font-mono)", color: "var(--text-muted)", flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, textTransform: "uppercase", fontFamily: "var(--font-mono)", color: "#66716C", flexShrink: 0 }}>
                     {a.type}
                   </span>
-                  <span style={{ fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
+                  <span style={{ fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#ECEFEA" }}>{a.name}</span>
                 </div>
                 <button
                   onClick={() => removeAsset(i)}
                   aria-label="Remove"
-                  style={{ width: "auto", background: "transparent", border: "none", color: "var(--text-muted)", padding: "0 4px" }}
+                  style={{ width: "auto", background: "transparent", border: "none", color: "#66716C", padding: "0 4px" }}
                 >
                   ✕
                 </button>
@@ -268,18 +268,18 @@ function NotificationsTab() {
         These are mobile push reminders. Toggling them here just previews the setting — nothing is sent yet since
         there's no notification/scheduling backend behind it.
       </p>
-      <div style={{ background: "var(--surface-2)", borderRadius: 12, border: "0.5px solid var(--border)", padding: "0.5rem 1.25rem" }}>
+      <div style={{ background: "#16222A", borderRadius: 12, border: "0.5px solid #22303A", padding: "0.5rem 1.25rem" }}>
         {ITEMS.map((item, i) => (
           <div
             key={item.key}
             style={{
               display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-              padding: "14px 0", borderBottom: i < ITEMS.length - 1 ? "0.5px solid var(--border)" : "none",
+              padding: "14px 0", borderBottom: i < ITEMS.length - 1 ? "0.5px solid #22303A" : "none",
             }}
           >
             <div>
-              <p style={{ margin: 0, fontSize: 14, fontWeight: 500 }}>{item.label}</p>
-              <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>{item.hint}</p>
+              <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: "#ECEFEA" }}>{item.label}</p>
+              <p style={{ margin: "2px 0 0", fontSize: 12, color: "#66716C" }}>{item.hint}</p>
             </div>
             <button
               onClick={() => toggle(item.key)}
@@ -323,10 +323,8 @@ export default function Publish({ token, onNewPost, onOpenDraft }) {
 
       {tab === "new" && (
         <div style={{ padding: "1.5rem 0", textAlign: "center" }}>
-          <p style={{ fontFamily: "var(--font-display)", fontSize: 20, margin: "0 0 8px" }}>Start a new post</p>
-          <p style={{ color: "var(--text-secondary)", margin: "0 0 20px" }}>
-            Give the agent a category and subtopic, and it'll draft the article plus every platform's post for you.
-          </p>
+          <p style={{ fontFamily: "var(--font-display)", fontSize: 20, margin: "0 0 8px" }}>Create a new post</p>
+          
           <button className="primary" style={{ width: "auto", padding: "0 24px" }} onClick={onNewPost}>+ New</button>
         </div>
       )}

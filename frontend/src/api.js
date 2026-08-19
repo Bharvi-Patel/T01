@@ -179,6 +179,18 @@ export async function getAuthorizeUrl({ token, platform }) {
 }
 
 /*
+  Disconnect a previously connected platform.
+  Expected backend response: { success: true }
+ */
+export async function disconnectPlatform({ token, platform }) {
+  const res = await fetch(`${API_BASE}/connect/${platform}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
+/*
   List the current user's drafts, optionally filtered by status
   ("pending_review" | "published" | "publish_failed" | "rejected").
   Expected backend response: { drafts: [{ draft_id, category, subtopic, title, status, created_at, updated_at }] }

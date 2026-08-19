@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { connectFinto, getAuthorizeUrl, getPendingPages, selectPage } from "../api";
+import { connectFinto, getAuthorizeUrl, getPendingPages, selectPage, disconnectPlatform } from "../api";
 
 const PLATFORM_LABELS = { linkedin: "LinkedIn", facebook: "Facebook", instagram: "Instagram", threads: "Threads" };
 
@@ -57,7 +57,7 @@ function PlatformBadge({ platform, connected }) {
   );
 }
 
-export default function Settings({ token, connections = {}, connectStatus, onDismissStatus, onDone, onAuthError, pagePicker, onPagePickerDone }) {
+export default function Settings({ token, connections = {}, connectStatus, onDismissStatus, onDone, onAuthError, pagePicker, onPagePickerDone, onConnectionsChanged }) {
   const [fintoEmail, setFintoEmail] = useState("");
   const [fintoPassword, setFintoPassword] = useState("");
   const [fintoStatus, setFintoStatus] = useState("");
@@ -125,6 +125,7 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
   }
 
   const [oauthError, setOauthError] = useState("");
+  const [disconnectingPlatform, setDisconnectingPlatform] = useState(null);
 
   async function handleOAuthConnect(platform) {
     setOauthError("");
@@ -137,6 +138,24 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
     }
   }
 
+  async function handleDisconnect(platform) {
+    setOauthError("");
+    setDisconnectingPlatform(platform);
+    try {
+      await disconnectPlatform({ token, platform });
+      onConnectionsChanged?.();
+    } catch (err) {
+      if (String(err.message).includes("Not authenticated")) return onAuthError?.();
+      setOauthError(err.message || `Failed to disconnect ${platform}.`);
+    } finally {
+      setDisconnectingPlatform(null);
+    }
+  }
+
+  function handleToggleConnect(platform, connected) {
+    connected ? handleDisconnect(platform) : handleOAuthConnect(platform);
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
       {oauthError && (
@@ -144,21 +163,16 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
           {oauthError}
         </p>
       )}
-      {connectStatus && (
+      {connectStatus?.type === "error" && (
         <div
           style={{
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
             fontSize: 13, borderRadius: "var(--radius)", padding: "10px 14px",
-            color: connectStatus.type === "success" ? "var(--ink)" : "var(--danger)",
-            background: connectStatus.type === "success" ? "var(--surface-2)" : "var(--danger-bg)",
+            color: "var(--danger)", background: "var(--danger-bg)",
             border: "0.5px solid var(--border)",
           }}
         >
-          <span>
-            {connectStatus.type === "success"
-              ? `${PLATFORM_LABELS[connectStatus.platform] || connectStatus.platform} connected.`
-              : `Couldn't connect: ${(connectStatus.detail || "oauth_failed").replace(/_/g, " ")}`}
-          </span>
+          <span>{`Couldn't connect: ${(connectStatus.detail || "oauth_failed").replace(/_/g, " ")}`}</span>
           <button onClick={onDismissStatus} style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer" }}>
             ✕
           </button>
@@ -190,12 +204,17 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <PlatformBadge platform={platform} connected={connected} />
-                <p style={{ fontWeight: 500, fontSize: 15, margin: 0 }}>
+                <p style={{ fontWeight: 500, fontSize: 15, margin: 0, color: "var(--ink)" }}>
                   {PLATFORM_LABELS[platform] || platform}
                 </p>
               </div>
-              <button className="primary" style={{ width: "auto", padding: "0 20px" }} onClick={() => handleOAuthConnect(platform)}>
-                {connected ? "Connected" : "Connect"}
+              <button
+                className="primary"
+                style={{ width: "auto", padding: "0 20px" }}
+                onClick={() => handleToggleConnect(platform, connected)}
+                disabled={disconnectingPlatform === platform}
+              >
+                {disconnectingPlatform === platform ? "Disconnecting…" : connected ? "Connected" : "Connect"}
               </button>
             </div>
           </div>
