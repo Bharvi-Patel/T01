@@ -157,7 +157,7 @@ export default function Landing({ onGetStarted }) {
 
       {/* FEATURES — bento */}
       <section id="features" className="landing-section">
-        <Reveal as="span" className="landing-pill">☰ FEATURES</Reveal>
+        {/* <Reveal as="span" className="landing-pill">☰ FEATURES</Reveal> */}
         <Reveal as="h2" delay={80} className="landing-h2">Three steps, and a human in the loop</Reveal>
         <Reveal as="p" delay={140} className="landing-subtext" style={{ margin: "0 auto 2.5rem" }}>
           No content ever ships without your approval. Drafting is automated.
