@@ -24,7 +24,7 @@ export default function App() {
   const [resendLoading, setResendLoading] = useState(false);
   const [resendMessage, setResendMessage] = useState("");
 
-  const [connections, setConnections] = useState({}); // { finto: true, linkedin: false, ... }
+  const [connections, setConnections] = useState({}); // { linkedin: { profile_name, profile_picture_url }, ... } — key present means connected
 
   const [showAuth, setShowAuth] = useState(false);
   
@@ -71,9 +71,7 @@ export default function App() {
     if (!token) return;
     getConnections({ token })
       .then((res) => {
-        const next = {};
-        res.connections.forEach((key) => { next[key] = true; });
-        setConnections(next);
+        setConnections(res.connections || {});
       })
       .catch(() => {});
   }

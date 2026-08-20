@@ -199,7 +199,10 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
 
       <div style={{ background: "var(--paper-raised)", borderRadius: 12, border: "0.5px solid var(--border-strong)", padding: "0.5rem 1.25rem" }}>
         {["linkedin", "facebook", "instagram", "threads"].map((platform, i, arr) => {
-          const connected = Boolean(connections?.[platform]);
+          const connection = connections?.[platform];
+          const connected = Boolean(connection);
+          const profileName = connection?.profile_name;
+          const profilePictureUrl = connection?.profile_picture_url;
           return (
             <div
               key={platform}
@@ -215,9 +218,24 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
                   <p style={{ margin: 0, fontWeight: 500, fontSize: 14, color: "var(--ink)" }}>
                     {PLATFORM_LABELS[platform] || platform}
                   </p>
-                  <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>
-                    {connected ? "Account connected" : "Not connected"}
-                  </p>
+                  {connected ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                      {profilePictureUrl ? (
+                        <img
+                          src={profilePictureUrl}
+                          alt=""
+                          style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover", display: "block", flexShrink: 0 }}
+                        />
+                      ) : (
+                        <span style={{ width: 16, height: 16, borderRadius: "50%", background: "var(--border)", flexShrink: 0 }} />
+                      )}
+                      <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+                        {profileName || "Account connected"}
+                      </p>
+                    </div>
+                  ) : (
+                    <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>Not connected</p>
+                  )}
                 </div>
               </div>
               <button

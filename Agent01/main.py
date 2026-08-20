@@ -1132,8 +1132,19 @@ async def review(req: ReviewRequest, db: AsyncSession = Depends(get_db),  user_i
 
 @app.get("/connections")
 async def list_connections(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
-    result = await db.execute(select(PlatformConnection.platform).where(PlatformConnection.user_id == user_id))
-    return {"connections": [p.value for p in result.scalars().all()]}
+    result = await db.execute(
+        select(PlatformConnection.platform, PlatformConnection.credentials).where(
+            PlatformConnection.user_id == user_id
+        )
+    )
+    connections = {
+        platform.value: {
+            "profile_name": (credentials or {}).get("profile_name"),
+            "profile_picture_url": (credentials or {}).get("profile_picture_url"),
+        }
+        for platform, credentials in result.all()
+    }
+    return {"connections": connections}
 
 
 

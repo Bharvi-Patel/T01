@@ -62,7 +62,16 @@ def linkedin_finish(code: str) -> dict:
         timeout=15,
     )
     userinfo.raise_for_status()
-    return {"access_token": access_token, "member_id": userinfo.json()["sub"]}
+    info = userinfo.json()
+    # TEMP DEBUG: same investigation as Instagram - log the raw userinfo
+    # response so we can see exactly what LinkedIn sends for `picture`.
+    print(f"[linkedin_finish DEBUG] raw userinfo response: {info!r}")
+    return {
+        "access_token": access_token,
+        "member_id": info["sub"],
+        "profile_name": info.get("name"),
+        "profile_picture_url": info.get("picture"),
+    }
 
 
 # Facebook 
@@ -122,21 +131,59 @@ def instagram_exchange(code: str) -> str:
     return _meta_exchange_long_lived(resp.json()["access_token"])
 
 
+def _facebook_page_picture_url(page_id: str, page_access_token: str) -> str | None:
+    try:
+        resp = requests.get(
+            f"https://graph.facebook.com/v21.0/{page_id}/picture",
+            params={"redirect": "false", "access_token": page_access_token},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json().get("data", {}).get("url")
+    except requests.RequestException:
+        return None
+
+
 def facebook_credentials_from_page(page: dict) -> dict:
-    return {"page_access_token": page["access_token"], "page_id": page["id"]}
+    return {
+        "page_access_token": page["access_token"],
+        "page_id": page["id"],
+        "profile_name": page.get("name"),
+        "profile_picture_url": _facebook_page_picture_url(page["id"], page["access_token"]),
+    }
 
 
 def instagram_credentials_from_page(page: dict) -> dict:
+    # Query the IG business account's username/profile_picture_url as
+    # *nested* fields under the Page (instagram_business_account{...}),
+    # rather than as a separate standalone lookup on the IG user node -
+    # that second form was reliably coming back with username but a
+    # silently-empty profile_picture_url even for accounts confirmed (via
+    # their linked Threads identity) to have a picture set. Nesting under
+    # the Page query is the pattern documented/observed to actually return
+    # the field.
     ig_resp = requests.get(
         f"https://graph.facebook.com/v21.0/{page['id']}",
-        params={"fields": "instagram_business_account", "access_token": page["access_token"]},
+        params={
+            "fields": "instagram_business_account{id,username,profile_picture_url}",
+            "access_token": page["access_token"],
+        },
         timeout=15,
     )
     ig_resp.raise_for_status()
-    ig_account = ig_resp.json().get("instagram_business_account")
+    ig_payload = ig_resp.json()
+    # TEMP DEBUG: remove once root-caused/confirmed working.
+    print(f"[instagram_credentials_from_page DEBUG] raw page response: {ig_payload!r}")
+    ig_account = ig_payload.get("instagram_business_account")
     if not ig_account:
         raise ValueError(f"The Page '{page.get('name', page['id'])}' has no linked Instagram Business account.")
-    return {"page_access_token": page["access_token"], "ig_page_id": ig_account["id"]}
+
+    return {
+        "page_access_token": page["access_token"],
+        "ig_page_id": ig_account["id"],
+        "profile_name": ig_account.get("username"),
+        "profile_picture_url": ig_account.get("profile_picture_url"),
+    }
 def facebook_finish(code: str) -> dict:
     long_token = facebook_exchange(code)
     pages = list_pages(long_token)
@@ -149,7 +196,7 @@ def instagram_authorize_url(state: str) -> str:
     return (
         "https://www.facebook.com/v21.0/dialog/oauth"
         f"?client_id={META_APP_ID}&redirect_uri={_redirect_uri('instagram')}&state={state}"
-        "&scope=pages_show_list,business_management,instagram_basic,instagram_content_publish"
+        "&scope=pages_show_list,pages_read_engagement,business_management,instagram_basic,instagram_content_publish"
     )
 
 
@@ -193,13 +240,38 @@ def threads_finish(code: str) -> dict:
     long_resp.raise_for_status()
     long_token = long_resp.json()["access_token"]
 
+    # The user id is required - the connection can't be saved without it, so
+    # that call stays unguarded. Username/profile picture are nice-to-have
+    # display data only, so a field-name or permissions hiccup there must
+    # never take down the whole connect flow.
     me_resp = requests.get(
         "https://graph.threads.net/v1.0/me",
         params={"fields": "id", "access_token": long_token},
         timeout=15,
     )
     me_resp.raise_for_status()
-    return {"access_token": long_token, "threads_user_id": me_resp.json()["id"]}
+    threads_user_id = me_resp.json()["id"]
+
+    profile_name, profile_picture_url = None, None
+    try:
+        profile_resp = requests.get(
+            "https://graph.threads.net/v1.0/me",
+            params={"fields": "username,threads_profile_picture_url", "access_token": long_token},
+            timeout=15,
+        )
+        profile_resp.raise_for_status()
+        profile = profile_resp.json()
+        profile_name = profile.get("username")
+        profile_picture_url = profile.get("threads_profile_picture_url")
+    except requests.RequestException:
+        pass
+
+    return {
+        "access_token": long_token,
+        "threads_user_id": threads_user_id,
+        "profile_name": profile_name,
+        "profile_picture_url": profile_picture_url,
+    }
 
 
 OAUTH_PROVIDERS = {
