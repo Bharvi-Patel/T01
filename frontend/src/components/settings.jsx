@@ -197,31 +197,44 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
         </form>
       </div> */}
 
-      {["linkedin", "facebook", "instagram", "threads"].map((platform) => {
-        const connected = Boolean(connections?.[platform]);
-        return (
-          <div key={platform} style={{ background: "var(--surface-2)", borderRadius: 12, border: "0.5px solid var(--border)", padding: "1.5rem" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ background: "var(--paper-raised)", borderRadius: 12, border: "0.5px solid var(--border-strong)", padding: "0.5rem 1.25rem" }}>
+        {["linkedin", "facebook", "instagram", "threads"].map((platform, i, arr) => {
+          const connected = Boolean(connections?.[platform]);
+          return (
+            <div
+              key={platform}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                padding: "14px 0",
+                borderBottom: i < arr.length - 1 ? "0.5px solid var(--border)" : "none",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                 <PlatformBadge platform={platform} connected={connected} />
-                <p style={{ fontWeight: 500, fontSize: 15, margin: 0, color: "#fff" }}>
-                  {PLATFORM_LABELS[platform] || platform}
-                </p>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ margin: 0, fontWeight: 500, fontSize: 14, color: "var(--ink)" }}>
+                    {PLATFORM_LABELS[platform] || platform}
+                  </p>
+                  <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>
+                    {connected ? "Account connected" : "Not connected"}
+                  </p>
+                </div>
               </div>
               <button
-                className="primary"
-                style={{ width: "auto", padding: "0 20px" }}
                 onClick={() => handleToggleConnect(platform, connected)}
                 disabled={disconnectingPlatform === platform}
+                style={{
+                  background: "transparent", border: "none", padding: 0, width: "auto", flexShrink: 0,
+                  fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-secondary)", cursor: "pointer",
+                }}
               >
                 {disconnectingPlatform === platform ? "Disconnecting…" : connected ? "Connected" : "Connect"}
               </button>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
 
-    
     </div>
   );
 }
