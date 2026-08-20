@@ -3,7 +3,7 @@
 // click a chip to see details / reschedule / unschedule / open the draft;
 // drag a chip onto another day to reschedule it (same time of day, new date).
 import { useState, useEffect, useCallback } from "react";
-import { getDrafts, rescheduleDraft, unscheduleDraft } from "../api";
+import { getDrafts, rescheduleDraft, unscheduleDraft, getDraft } from "../api";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -35,6 +35,23 @@ function isPublished(d) {
   return !d.scheduled_at && !!d.published_at;
 }
 
+// Full post text lives on the draft's content, keyed per platform — pick
+// whichever matches the platforms this chip is scheduled/published to,
+// falling back to the general intro/meta description.
+function pickBodyText(content, platformKeys) {
+  if (!content) return "";
+  const byPlatform = {
+    linkedin: content.linkedin_post,
+    facebook: content.facebook_post,
+    instagram: content.instagram_caption,
+    threads: content.threads_post,
+  };
+  for (const key of platformKeys) {
+    if (byPlatform[key]) return byPlatform[key];
+  }
+  return content.intro || content.meta_description || "";
+}
+
 function startOfDay(d) {
   const copy = new Date(d);
   copy.setHours(0, 0, 0, 0);
@@ -59,7 +76,7 @@ function formatTime(d) {
 
 // Builds the 6-week (42 day) grid for the month containing `viewDate`,
 // including the trailing/leading days from adjacent months.
-function buildGrid(viewDate) {
+function buildMonthGrid(viewDate) {
   const first = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
   const gridStart = new Date(first);
   gridStart.setDate(gridStart.getDate() - first.getDay());
@@ -70,6 +87,23 @@ function buildGrid(viewDate) {
     days.push(d);
   }
   return days;
+}
+
+// Builds the 7-day grid (Sun–Sat) for the week containing `viewDate`.
+function buildWeekGrid(viewDate) {
+  const start = new Date(viewDate);
+  start.setDate(start.getDate() - start.getDay());
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    days.push(d);
+  }
+  return days;
+}
+
+function buildGrid(viewDate, viewMode) {
+  return viewMode === "week" ? buildWeekGrid(viewDate) : buildMonthGrid(viewDate);
 }
 
 function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, busy }) {
@@ -194,57 +228,52 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
   );
 }
 
-function PlatformFilterBar({ connections, activePlatform, onSelect, counts }) {
+function ImageLightbox({ src, onClose }) {
   return (
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-      {PLATFORMS.map((p) => {
-        const connected = !!connections?.[p.key];
-        const active = activePlatform === p.key;
-        const count = counts[p.key] || 0;
-        return (
-          <button
-            key={p.key}
-            onClick={() => onSelect(active ? null : p.key)}
-            title={`${p.label} — ${connected ? "connected" : "not connected"}${active ? " (selected)" : ""}`}
-            style={{
-              display: "flex", alignItems: "center", gap: 7, height: 34,
-              width: "auto", padding: "0 12px",
-              border: active ? "1.5px solid #4CAF7D" : "0.5px solid var(--border-strong)",
-              background: active ? "var(--paper-raised)" : "transparent",
-              opacity: connected ? 1 : 0.5,
-            }}
-          >
-            <PlatformLogo platform={p} size={14} />
-            <span style={{ fontSize: 13 }}>{p.label}</span>
-            {count > 0 && (
-              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{count}</span>
-            )}
-          </button>
-        );
-      })}
-      {activePlatform && (
-        <button
-          onClick={() => onSelect(null)}
-          style={{ width: "auto", padding: "0 12px", background: "transparent", border: "none", fontSize: 12.5, color: "var(--text-muted)" }}
-        >
-          Clear filter
-        </button>
-      )}
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
+        padding: "2rem",
+      }}
+      onClick={onClose}
+    >
+      <img
+        src={src}
+        alt=""
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 10, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}
+      />
+      <button
+        onClick={onClose}
+        aria-label="Close image"
+        style={{
+          position: "absolute", top: 20, right: 20, width: 34, height: 34, padding: 0,
+          borderRadius: "50%", background: "rgba(255,255,255,0.12)", border: "0.5px solid rgba(255,255,255,0.3)",
+          color: "#fff", fontSize: 16,
+        }}
+      >
+        ✕
+      </button>
     </div>
   );
 }
 
 export default function Calendar({ token, connections, onOpenDraft, onAuthError }) {
   const [viewDate, setViewDate] = useState(() => startOfDay(new Date()));
+  const [viewMode, setViewMode] = useState("month"); // "month" | "week"
   const [drafts, setDrafts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedDraftId, setSelectedDraftId] = useState(null);
   const [dragOverKey, setDragOverKey] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [activePlatform, setActivePlatform] = useState(null);
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
+  const [expandedContent, setExpandedContent] = useState({});
+  const [expandLoadingId, setExpandLoadingId] = useState(null);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
 
-  const grid = buildGrid(viewDate);
+  const grid = buildGrid(viewDate, viewMode);
 
   const refresh = useCallback(() => {
     setLoading(true);
@@ -260,31 +289,29 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
       })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, viewDate.getFullYear(), viewDate.getMonth()]);
+  }, [token, viewMode, viewDate.getFullYear(), viewDate.getMonth(), viewDate.getDate()]);
 
   useEffect(refresh, [refresh]);
 
   const byDay = {};
-  const visibleDrafts = activePlatform
-    ? drafts.filter((d) => chipPlatforms(d).includes(activePlatform))
-    : drafts;
-  visibleDrafts.forEach((d) => {
+  drafts.forEach((d) => {
     const key = dateKey(new Date(effectiveDate(d)));
     (byDay[key] ||= []).push(d);
   });
   Object.values(byDay).forEach((list) => list.sort((a, b) => new Date(effectiveDate(a)) - new Date(effectiveDate(b))));
 
-  const platformCounts = {};
-  drafts.forEach((d) => {
-    chipPlatforms(d).forEach((key) => {
-      platformCounts[key] = (platformCounts[key] || 0) + 1;
-    });
-  });
-
   const selectedDraft = drafts.find((d) => d.draft_id === selectedDraftId) || null;
+  const maxChipsPerDay = viewMode === "week" ? 6 : MAX_CHIPS_PER_DAY;
 
-  function goToMonth(delta) {
-    setViewDate((prev) => startOfDay(new Date(prev.getFullYear(), prev.getMonth() + delta, 1)));
+  function navigate(delta) {
+    setViewDate((prev) => {
+      if (viewMode === "week") {
+        const next = new Date(prev);
+        next.setDate(next.getDate() + delta * 7);
+        return startOfDay(next);
+      }
+      return startOfDay(new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
+    });
   }
 
   async function handleReschedule(draftId, scheduledAtISO) {
@@ -315,6 +342,30 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
     }
   }
 
+  async function toggleExpand(e, draftId) {
+    e.stopPropagation();
+    if (expandedIds.has(draftId)) {
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(draftId);
+        return next;
+      });
+      return;
+    }
+    setExpandedIds((prev) => new Set(prev).add(draftId));
+    if (!expandedContent[draftId]) {
+      setExpandLoadingId(draftId);
+      try {
+        const res = await getDraft({ token, draftId });
+        setExpandedContent((prev) => ({ ...prev, [draftId]: res.draft }));
+      } catch {
+        // If the fetch fails, the chip just falls back to its title/summary.
+      } finally {
+        setExpandLoadingId(null);
+      }
+    }
+  }
+
   function handleDrop(e, day) {
     e.preventDefault();
     setDragOverKey(null);
@@ -330,45 +381,58 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
     handleReschedule(draftId, next.toISOString());
   }
 
-  const monthLabel = viewDate.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const periodLabel = viewMode === "week"
+    ? (() => {
+        const start = grid[0];
+        const end = grid[grid.length - 1];
+        const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear();
+        const startMonth = start.toLocaleDateString(undefined, { month: "short" });
+        if (sameMonth) {
+          return `${startMonth} ${start.getDate()} – ${end.getDate()}, ${end.getFullYear()}`;
+        }
+        const endStr = end.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+        return `${startMonth} ${start.getDate()} – ${endStr}`;
+      })()
+    : viewDate.toLocaleDateString(undefined, { month: "long", year: "numeric" });
   const today = startOfDay(new Date());
-  const activePlatformInfo = activePlatform ? platformByKey(activePlatform) : null;
-  const activePlatformConnected = activePlatform ? !!connections?.[activePlatform] : false;
 
   return (
     <div>
-      <PlatformFilterBar
-        connections={connections}
-        activePlatform={activePlatform}
-        onSelect={setActivePlatform}
-        counts={platformCounts}
-      />
-
-      {activePlatformInfo && (
-        <p style={{ fontSize: 12.5, color: "var(--text-muted)", margin: "0 0 16px", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          <PlatformLogo platform={activePlatformInfo} size={12} />
-          {activePlatformInfo.label} — {activePlatformConnected ? "connected" : "not connected"}
-          {" · "}
-          {visibleDrafts.filter((d) => d.scheduled_at).length} upcoming
-          {" · "}
-          {visibleDrafts.filter((d) => isPublished(d)).length} published in view
-        </p>
-      )}
-
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: "1.25rem" }}>
         <p style={{ fontFamily: "var(--font-display)", fontSize: "clamp(20px, 3vw, 26px)", color: "var(--ink)", margin: 0 }}>
-          {monthLabel}
+          {periodLabel}
         </p>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", border: "0.5px solid var(--border-strong)", borderRadius: 6, overflow: "hidden" }}>
+            <button
+              onClick={() => setViewMode("month")}
+              style={{
+                width: "auto", padding: "0 14px", border: "none", borderRadius: 0,
+                background: viewMode === "month" ? "var(--accent)" : "transparent",
+                color: viewMode === "month" ? "#fff" : "var(--text-secondary)",
+              }}
+            >
+              Month
+            </button>
+            <button
+              onClick={() => setViewMode("week")}
+              style={{
+                width: "auto", padding: "0 14px", border: "none", borderRadius: 0,
+                background: viewMode === "week" ? "var(--accent)" : "transparent",
+                color: viewMode === "week" ? "#fff" : "var(--text-secondary)",
+              }}
+            >
+              Week
+            </button>
+          </div>
           <button onClick={() => setViewDate(startOfDay(new Date()))} style={{ width: "auto", padding: "0 14px" }}>Today</button>
-          <button onClick={() => goToMonth(-1)} style={{ width: "auto", padding: "0 14px" }} aria-label="Previous month">‹</button>
-          <button onClick={() => goToMonth(1)} style={{ width: "auto", padding: "0 14px" }} aria-label="Next month">›</button>
+          <button onClick={() => navigate(-1)} style={{ width: "auto", padding: "0 14px" }} aria-label={viewMode === "week" ? "Previous week" : "Previous month"}>‹</button>
+          <button onClick={() => navigate(1)} style={{ width: "auto", padding: "0 14px" }} aria-label={viewMode === "week" ? "Next week" : "Next month"}>›</button>
         </div>
       </div>
 
       {error && (
-        <p style={{ fontSize: 13, color: "var(--danger)", background: "var(--danger-bg)", borderRadius: "var(--radius)", padding: "8px 12px", marginBottom: 16 }}>
-          {error}
+        <p style={{ fontSize: 13, color: "var(--danger)", background: "var(--danger-bg)", borderRadius: "var(--radius)", padding: "8px 12px", marginBottom: 16 }}>          {error}
         </p>
       )}
 
@@ -383,7 +447,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)" }}>
           {grid.map((day, i) => {
             const key = dateKey(day);
-            const inMonth = day.getMonth() === viewDate.getMonth();
+            const inMonth = viewMode === "week" ? true : day.getMonth() === viewDate.getMonth();
             const items = byDay[key] || [];
             const isToday = isSameDay(day, today);
             const isDragOver = dragOverKey === key;
@@ -395,7 +459,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
                 onDragLeave={() => setDragOverKey((k) => (k === key ? null : k))}
                 onDrop={(e) => handleDrop(e, day)}
                 style={{
-                  minHeight: 190, padding: "6px 6px 8px", borderRight: "0.5px solid var(--border)",
+                  minHeight: viewMode === "week" ? 420 : 190, padding: "6px 6px 8px", borderRight: "0.5px solid var(--border)",
                   borderBottom: "0.5px solid var(--border)", background: isDragOver ? "var(--paper)" : "transparent",
                   opacity: inMonth ? 1 : 0.45,
                 }}
@@ -413,10 +477,16 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {items.slice(0, MAX_CHIPS_PER_DAY).map((d) => {
+                  {items.slice(0, maxChipsPerDay).map((d) => {
                     const chipKeys = chipPlatforms(d);
                     const published = isPublished(d);
                     const thumb = d.featured_image?.url;
+                    const isExpanded = expandedIds.has(d.draft_id);
+                    const fullContent = expandedContent[d.draft_id];
+                    const isLoadingExpand = expandLoadingId === d.draft_id;
+                    const expandedText = fullContent
+                      ? pickBodyText(fullContent, chipKeys)
+                      : d.meta_description || d.title || d.subtopic;
                     return (
                       <div
                         key={d.draft_id}
@@ -441,32 +511,48 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
                           </span>
                         </div>
 
-                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                          <p
-                            style={{
-                              flex: 1, margin: 0, fontSize: 12.5, lineHeight: 1.35, color: "var(--ink)",
-                              display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
-                            }}
-                          >
-                            {d.title || d.subtopic}
+                        {isExpanded ? (
+                          <p style={{ margin: "0 0 4px", fontSize: 12.5, lineHeight: 1.5, color: "var(--ink)", whiteSpace: "pre-wrap" }}>
+                            {isLoadingExpand ? "Loading…" : expandedText}
                           </p>
-                          {thumb && (
-                            <img
-                              src={thumb}
-                              alt=""
-                              style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover", flexShrink: 0 }}
-                            />
-                          )}
-                        </div>
+                        ) : (
+                          <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                            <p
+                              style={{
+                                flex: 1, margin: 0, fontSize: 12.5, lineHeight: 1.35, color: "var(--ink)",
+                                display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+                              }}
+                            >
+                              {d.title || d.subtopic}
+                            </p>
+                            {thumb && (
+                              <img
+                                src={thumb}
+                                alt=""
+                                onClick={(e) => { e.stopPropagation(); setLightboxSrc(thumb); }}
+                                style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover", flexShrink: 0, cursor: "zoom-in" }}
+                              />
+                            )}
+                          </div>
+                        )}
+
+                        {isExpanded && thumb && (
+                          <img
+                            src={thumb}
+                            alt=""
+                            onClick={(e) => { e.stopPropagation(); setLightboxSrc(thumb); }}
+                            style={{ width: "100%", maxHeight: 120, borderRadius: 6, objectFit: "cover", marginBottom: 6, cursor: "zoom-in" }}
+                          />
+                        )}
 
                         <button
-                          onClick={(e) => { e.stopPropagation(); setSelectedDraftId(d.draft_id); }}
+                          onClick={(e) => toggleExpand(e, d.draft_id)}
                           style={{
                             width: "auto", background: "transparent", border: "none", padding: 0,
                             fontSize: 11, color: "var(--accent)", textAlign: "left", margin: "4px 0 0",
                           }}
                         >
-                          Show More
+                          {isExpanded ? "Show Less" : "Show More"}
                         </button>
 
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
@@ -485,12 +571,12 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
                       </div>
                     );
                   })}
-                  {items.length > MAX_CHIPS_PER_DAY && (
+                  {items.length > maxChipsPerDay && (
                     <button
-                      onClick={() => setSelectedDraftId(items[MAX_CHIPS_PER_DAY].draft_id)}
+                      onClick={() => setSelectedDraftId(items[maxChipsPerDay].draft_id)}
                       style={{ width: "auto", background: "transparent", border: "none", padding: 0, fontSize: 11, color: "var(--text-muted)", textAlign: "left" }}
                     >
-                      +{items.length - MAX_CHIPS_PER_DAY} more
+                      +{items.length - maxChipsPerDay} more
                     </button>
                   )}
                 </div>
@@ -510,6 +596,10 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
           onOpen={onOpenDraft}
         />               
       )}       
+
+      {lightboxSrc && (
+        <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
+      )}
     </div>
   );
 }

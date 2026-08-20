@@ -738,14 +738,18 @@ async def list_drafts(
         query = query.where(Draft.status.notin_(excluded))
 
     # A date-range filter matches drafts scheduled in that range OR published
-    # in that range, so calendar views can pull both upcoming and past posts
-    # with a single call.
+    # in that range, so calendar/scheduled views can pull both upcoming and
+    # past posts with a single call. The published side is further limited
+    # to drafts that were AT SOME POINT scheduled (was_scheduled) — this is
+    # a "scheduled" view, not a full publish history, so a draft published
+    # immediately (never scheduled) shouldn't show up here just because its
+    # publish date happens to fall in the range.
     if scheduled_from is not None or scheduled_to is not None:
         from_utc = _ensure_utc(scheduled_from) if scheduled_from is not None else None
         to_utc = _ensure_utc(scheduled_to) if scheduled_to is not None else None
 
         sched_cond = Draft.scheduled_at.isnot(None)
-        pub_cond = first_published_subq.c.first_published_at.isnot(None)
+        pub_cond = first_published_subq.c.first_published_at.isnot(None) & Draft.was_scheduled.is_(True)
         if from_utc is not None:
             sched_cond = sched_cond & (Draft.scheduled_at >= from_utc)
             pub_cond = pub_cond & (first_published_subq.c.first_published_at >= from_utc)
@@ -836,6 +840,7 @@ async def schedule_draft(
     draft.scheduled_platforms = req.platforms
     draft.scheduled_live = req.live
     draft.status = DraftStatus.SCHEDULED
+    draft.was_scheduled = True
     await db.commit()
     await db.refresh(draft)
     return {

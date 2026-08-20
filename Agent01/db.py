@@ -204,6 +204,13 @@ class Draft(Base):
     scheduled_platforms: Mapped[list | None] = mapped_column(JSON, nullable=True)  # list[str] of Platform values
     scheduled_live: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # Set once, the first time a draft is scheduled, and never cleared
+    # afterwards (unlike scheduled_at/scheduled_platforms/scheduled_live,
+    # which reset on publish or unschedule). This is what distinguishes
+    # "was ever scheduled, now published" from "published immediately,
+    # never scheduled" once scheduled_at has been wiped.
+    was_scheduled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     user: Mapped["User"] = relationship(back_populates="drafts")
     publish_results: Mapped[list["PublishResult"]] = relationship(
         back_populates="draft", cascade="all, delete-orphan"

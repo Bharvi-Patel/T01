@@ -19,6 +19,14 @@
   --font-display: "Newsreader", Georgia, serif;
   --font-sans: "IBM Plex Sans", -apple-system, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-emoji: "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", sans-serif;
+}
+
+/* Force a real emoji font on anything holding emoji glyphs, so unsupported
+   codepoints in --font-sans/--font-mono fall through to the OS emoji font
+   instead of rendering as blank tofu squares. */
+.emoji-glyph {
+  font-family: var(--font-emoji);
 }
 
 /* dark is the default identity, not a media-query fallback */

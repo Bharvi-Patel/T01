@@ -245,9 +245,10 @@ export async function disconnectPlatform({ token, platform }) {
   and/or by a scheduled_at date range (for the calendar view).
   Expected backend response: { drafts: [{ draft_id, category, subtopic, title, status, created_at, updated_at, scheduled_at, scheduled_platforms, scheduled_live }] }
  */
-export async function getDrafts({ token, status, scheduledFrom, scheduledTo }) {
+export async function getDrafts({ token, status, excludeStatus, scheduledFrom, scheduledTo }) {
   const url = new URL(`${API_BASE}/drafts`);
   if (status) url.searchParams.set("status", status);
+  if (excludeStatus) url.searchParams.set("exclude_status", excludeStatus);
   if (scheduledFrom) url.searchParams.set("scheduled_from", scheduledFrom);
   if (scheduledTo) url.searchParams.set("scheduled_to", scheduledTo);
   const res = await fetch(url, { headers: authHeaders(token) });

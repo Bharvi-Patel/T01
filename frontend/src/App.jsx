@@ -225,12 +225,12 @@ export default function App() {
     // The draft was already persisted as pending_review the moment it was
     // generated, so there's nothing to save here — just leave the review
     // screen without approving/scheduling/rejecting. Land on the Publish
-    // view's "Pending review" tab so it's visibly there, waiting.
+    // view's "Drafts" tab (pending review) so it's visibly there, waiting.
     setDraftId(null);
     setDraft(null);
     setResult(null);
     setError("");
-    setPublishInitialTab("approval");
+    setPublishInitialTab("drafts");
     setStep("publish");
   }
 

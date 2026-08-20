@@ -20,14 +20,14 @@ function MenuIcon({ name, size = 15 }) {
 const TABS = [
   { key: "new", label: "New Post" },
   { key: "drafts", label: "Drafts" },
-  { key: "approval", label: "Needs Approval" },
-  { key: "rejected", label: "Rejected" },
+  { key: "scheduled", label: "Scheduled" },
   { key: "media", label: "Media" },
   { key: "notifications", label: "Mobile Notifications" },
 ];
 
 const STATUS_LABEL = {
   pending_review: "Pending review",
+  scheduled: "Scheduled",
   published: "Published",
   publish_failed: "Publish failed",
   rejected: "Rejected",
@@ -41,7 +41,7 @@ function formatDate(iso) {
   }
 }
 
-function DraftList({ token, status, onOpenDraft, emptyLabel }) {
+function DraftList({ token, status, excludeStatus, onOpenDraft, emptyLabel }) {
   const [drafts, setDrafts] = useState(null);
   const [error, setError] = useState("");
 
@@ -49,11 +49,11 @@ function DraftList({ token, status, onOpenDraft, emptyLabel }) {
     let cancelled = false;
     setDrafts(null);
     setError("");
-    getDrafts({ token, status })
+    getDrafts({ token, status, excludeStatus })
       .then((res) => { if (!cancelled) setDrafts(res.drafts); })
       .catch((e) => { if (!cancelled) setError(e.message || "Could not load drafts."); });
     return () => { cancelled = true; };
-  }, [token, status]);
+  }, [token, status, excludeStatus]);
 
   if (error) {
     return <p style={{ fontSize: 13, color: "var(--danger)" }}>{error}</p>;
@@ -330,13 +330,15 @@ export default function Publish({ token, onNewPost, onOpenDraft, initialTab = "n
       )}
 
       {tab === "drafts" && (
-        <DraftList token={token} onOpenDraft={onOpenDraft} emptyLabel="No drafts yet — start a new post to create one." />
+        <DraftList token={token} status="pending_review" onOpenDraft={onOpenDraft} emptyLabel="No drafts pending review right now." />
       )}
-      {tab === "approval" && (
-        <DraftList token={token} status="pending_review" onOpenDraft={onOpenDraft} emptyLabel="Nothing waiting on approval right now." />
-      )}
-      {tab === "rejected" && (
-        <DraftList token={token} status="rejected" onOpenDraft={onOpenDraft} emptyLabel="No rejected drafts." />
+      {tab === "scheduled" && (
+        <DraftList
+          token={token}
+          excludeStatus="pending_review,rejected"
+          onOpenDraft={onOpenDraft}
+          emptyLabel="Nothing scheduled or posted yet."
+        />
       )}
       {tab === "media" && <MediaTab />}
       {tab === "notifications" && <NotificationsTab />}
