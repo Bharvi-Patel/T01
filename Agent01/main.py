@@ -703,6 +703,7 @@ async def list_drafts(
     exclude_status: str | None = None,
     scheduled_from: datetime | None = None,
     scheduled_to: datetime | None = None,
+    was_scheduled: bool | None = None,
     db: AsyncSession = Depends(get_db),
     user_id: uuid.UUID = Depends(require_auth),
 ):
@@ -736,6 +737,14 @@ async def list_drafts(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"exclude_status must be a comma-separated list from: {', '.join(s.value for s in DraftStatus)}")
         query = query.where(Draft.status.notin_(excluded))
+
+    # Direct filter for "posts that are or were ever scheduled" (the Publish
+    # page's Scheduled tab), independent of the date-range logic below —
+    # this covers currently-scheduled drafts, drafts that already published
+    # after being scheduled, and drafts that were scheduled and later
+    # unscheduled back to pending_review (was_scheduled is never cleared).
+    if was_scheduled is not None:
+        query = query.where(Draft.was_scheduled.is_(was_scheduled))
 
     # A date-range filter matches drafts scheduled in that range OR published
     # in that range, so calendar/scheduled views can pull both upcoming and

@@ -242,13 +242,16 @@ export async function disconnectPlatform({ token, platform }) {
 /*
   List the current user's drafts, optionally filtered by status
   ("pending_review" | "scheduled" | "published" | "publish_failed" | "rejected"),
+  by exclude_status (comma-separated statuses to leave out), by was_scheduled
+  (true = only drafts that are or were ever scheduled, for the Scheduled tab),
   and/or by a scheduled_at date range (for the calendar view).
   Expected backend response: { drafts: [{ draft_id, category, subtopic, title, status, created_at, updated_at, scheduled_at, scheduled_platforms, scheduled_live }] }
  */
-export async function getDrafts({ token, status, excludeStatus, scheduledFrom, scheduledTo }) {
+export async function getDrafts({ token, status, excludeStatus, wasScheduled, scheduledFrom, scheduledTo }) {
   const url = new URL(`${API_BASE}/drafts`);
   if (status) url.searchParams.set("status", status);
   if (excludeStatus) url.searchParams.set("exclude_status", excludeStatus);
+  if (wasScheduled !== undefined) url.searchParams.set("was_scheduled", wasScheduled);
   if (scheduledFrom) url.searchParams.set("scheduled_from", scheduledFrom);
   if (scheduledTo) url.searchParams.set("scheduled_to", scheduledTo);
   const res = await fetch(url, { headers: authHeaders(token) });

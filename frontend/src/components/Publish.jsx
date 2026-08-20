@@ -41,7 +41,7 @@ function formatDate(iso) {
   }
 }
 
-function DraftList({ token, status, excludeStatus, onOpenDraft, emptyLabel }) {
+function DraftList({ token, status, excludeStatus, wasScheduled, onOpenDraft, emptyLabel }) {
   const [drafts, setDrafts] = useState(null);
   const [error, setError] = useState("");
 
@@ -49,11 +49,11 @@ function DraftList({ token, status, excludeStatus, onOpenDraft, emptyLabel }) {
     let cancelled = false;
     setDrafts(null);
     setError("");
-    getDrafts({ token, status, excludeStatus })
+    getDrafts({ token, status, excludeStatus, wasScheduled })
       .then((res) => { if (!cancelled) setDrafts(res.drafts); })
       .catch((e) => { if (!cancelled) setError(e.message || "Could not load drafts."); });
     return () => { cancelled = true; };
-  }, [token, status, excludeStatus]);
+  }, [token, status, excludeStatus, wasScheduled]);
 
   if (error) {
     return <p style={{ fontSize: 13, color: "var(--danger)" }}>{error}</p>;
@@ -66,26 +66,26 @@ function DraftList({ token, status, excludeStatus, onOpenDraft, emptyLabel }) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {drafts.map((d) => (
+    <div style={{ background: "var(--paper-raised)", borderRadius: 12, border: "0.5px solid var(--border-strong)", padding: "0.5rem 1.25rem" }}>
+      {drafts.map((d, i) => (
         <button
           key={d.draft_id}
           onClick={() => onOpenDraft(d.draft_id)}
           style={{
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-            width: "100%", textAlign: "left", background: "#16222A",
-            border: "0.5px solid #22303A", borderRadius: 10, padding: "12px 16px",
+            width: "100%", textAlign: "left", background: "transparent", border: "none", borderRadius: 0,
+            padding: "14px 0", borderBottom: i < drafts.length - 1 ? "0.5px solid var(--border)" : "none",
           }}
         >
           <div style={{ minWidth: 0 }}>
-            <p style={{ margin: 0, fontWeight: 500, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#ECEFEA" }}>
+            <p style={{ margin: 0, fontWeight: 500, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink)" }}>
               {d.title || d.subtopic}
             </p>
-            <p style={{ margin: "2px 0 0", fontSize: 12, color: "#66716C", textTransform: "capitalize" }}>
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)", textTransform: "capitalize" }}>
               {d.category} · {formatDate(d.created_at)}
             </p>
           </div>
-          <span style={{ fontSize: 11, color: "#9BA79E", flexShrink: 0, fontFamily: "var(--font-mono)" }}>
+          <span style={{ fontSize: 11, color: "var(--text-secondary)", flexShrink: 0, fontFamily: "var(--font-mono)" }}>
             {STATUS_LABEL[d.status] || d.status}
           </span>
         </button>
@@ -182,8 +182,8 @@ function MediaTab() {
       <input ref={videoRef} type="file" accept="video/*" multiple style={{ display: "none" }} onChange={(e) => handleFiles(e, "video")} />
 
       {textDraftOpen && (
-        <div style={{ background: "#16222A", borderRadius: 12, border: "0.5px solid #22303A", padding: "1.25rem" }}>
-          <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 10px", color: "#ECEFEA" }}>Add text</p>
+        <div style={{ background: "var(--paper-raised)", borderRadius: 12, border: "0.5px solid var(--border-strong)", padding: "1.25rem" }}>
+          <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 10px", color: "var(--ink)" }}>Add text</p>
           <textarea
             value={textDraft}
             onChange={(e) => setTextDraft(e.target.value)}
@@ -211,26 +211,26 @@ function MediaTab() {
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
             {AddNewButton}
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ background: "var(--paper-raised)", borderRadius: 12, border: "0.5px solid var(--border-strong)", padding: "0.5rem 1.25rem" }}>
             {assets.map((a, i) => (
               <div
                 key={i}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-                  background: "#16222A", border: "0.5px solid #22303A", borderRadius: 10, padding: "10px 16px",
+                  padding: "14px 0", borderBottom: i < assets.length - 1 ? "0.5px solid var(--border)" : "none",
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                   <MenuIcon name={a.type === "photo" ? "image" : a.type} size={14} />
-                  <span style={{ fontSize: 11, textTransform: "uppercase", fontFamily: "var(--font-mono)", color: "#66716C", flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, textTransform: "uppercase", fontFamily: "var(--font-mono)", color: "var(--text-muted)", flexShrink: 0 }}>
                     {a.type}
                   </span>
-                  <span style={{ fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#ECEFEA" }}>{a.name}</span>
+                  <span style={{ fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink)" }}>{a.name}</span>
                 </div>
                 <button
                   onClick={() => removeAsset(i)}
                   aria-label="Remove"
-                  style={{ width: "auto", background: "transparent", border: "none", color: "#66716C", padding: "0 4px" }}
+                  style={{ width: "auto", background: "transparent", border: "none", color: "var(--text-muted)", padding: "0 4px" }}
                 >
                   ✕
                 </button>
@@ -268,18 +268,18 @@ function NotificationsTab() {
         These are mobile push reminders. Toggling them here just previews the setting — nothing is sent yet since
         there's no notification/scheduling backend behind it.
       </p>
-      <div style={{ background: "#16222A", borderRadius: 12, border: "0.5px solid #22303A", padding: "0.5rem 1.25rem" }}>
+      <div style={{ background: "var(--paper-raised)", borderRadius: 12, border: "0.5px solid var(--border-strong)", padding: "0.5rem 1.25rem" }}>
         {ITEMS.map((item, i) => (
           <div
             key={item.key}
             style={{
               display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-              padding: "14px 0", borderBottom: i < ITEMS.length - 1 ? "0.5px solid #22303A" : "none",
+              padding: "14px 0", borderBottom: i < ITEMS.length - 1 ? "0.5px solid var(--border-strong)" : "none",
             }}
           >
             <div>
-              <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: "#ECEFEA" }}>{item.label}</p>
-              <p style={{ margin: "2px 0 0", fontSize: 12, color: "#66716C" }}>{item.hint}</p>
+              <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{item.label}</p>
+              <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>{item.hint}</p>
             </div>
             <button
               onClick={() => toggle(item.key)}
@@ -335,9 +335,9 @@ export default function Publish({ token, onNewPost, onOpenDraft, initialTab = "n
       {tab === "scheduled" && (
         <DraftList
           token={token}
-          excludeStatus="pending_review,rejected"
+          wasScheduled={true}
           onOpenDraft={onOpenDraft}
-          emptyLabel="Nothing scheduled or posted yet."
+          emptyLabel="Nothing scheduled yet — schedule a draft to see it here."
         />
       )}
       {tab === "media" && <MediaTab />}
