@@ -2,40 +2,6 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { suggestHashtags } from "../api";
 import { EMOJI_CATEGORIES, EMOJI_RECENTS_KEY, DEFAULT_RECENT_EMOJIS } from "../emojiCategories";
 
-// Many systems (especially Windows, and Linux without Noto Color Emoji
-// installed) don't have a full color-emoji font, so a lot of emoji render
-// as blank "tofu" squares instead of pictures — no CSS font-family fallback
-// can fix that if the glyph just isn't installed anywhere on the OS.
-// To guarantee every emoji renders identically everywhere, we render them
-// as small images from the Twemoji CDN instead of relying on system fonts.
-// (Same rule Twemoji itself uses: codepoints joined by "-", dropping the
-// variation selector U+FE0F *except* inside ZWJ sequences.)
-function twemojiCodepoints(str) {
-  const chars = Array.from(str).map((c) => c.codePointAt(0));
-  const isZwjSequence = chars.includes(0x200d);
-  const filtered = isZwjSequence ? chars : chars.filter((cp) => cp !== 0xfe0f);
-  return filtered.map((cp) => cp.toString(16)).join("-");
-}
-
-function EmojiGlyph({ emoji, size = 15 }) {
-  const [imgFailed, setImgFailed] = useState(false);
-  const codepoints = useMemo(() => twemojiCodepoints(emoji), [emoji]);
-
-  if (!imgFailed) {
-    return (
-      <img
-        src={`https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/${codepoints}.png`}
-        alt={emoji}
-        draggable={false}
-        onError={() => setImgFailed(true)}
-        style={{ width: size + 3, height: size + 3, verticalAlign: "middle" }}
-      />
-    );
-  }
-  // Last-resort fallback if the CDN image itself fails (e.g. offline)
-  return <span className="emoji-glyph" style={{ fontSize: size }}>{emoji}</span>;
-}
-
 const CATEGORIES = [
   "Technology",
   "Web Development",
@@ -65,7 +31,7 @@ const NETWORKS = [
   { key: "threads", label: "Threads" },
 ];
 
-export default function Form({ onSubmit, loading, error, token }) {
+export default function Form({ onSubmit, loading, error, token, initialManualAsset, onConsumeInitialAsset }) {
   const [mode, setMode] = useState("ai"); // "ai" | "manual"
 
   const [category, setCategory] = useState("Business");
@@ -81,6 +47,23 @@ export default function Form({ onSubmit, loading, error, token }) {
 
   const [customizePerNetwork, setCustomizePerNetwork] = useState(false);
   const [networkText, setNetworkText] = useState({}); // { [key]: string } — falls back to `body` when blank
+
+  // A media/text asset handed off from the Media tab's "Send to composer" -
+  // consumed once on mount only, then cleared in the parent so it doesn't
+  // reapply on a later, unrelated visit to this form.
+  useEffect(() => {
+    if (!initialManualAsset) return;
+    setMode("manual");
+    if (initialManualAsset.type === "photo" && initialManualAsset.file) {
+      setImages((prev) => [...prev, initialManualAsset.file].slice(0, MAX_IMAGES));
+    } else if (initialManualAsset.type === "video" && initialManualAsset.file) {
+      setVideo(initialManualAsset.file);
+    } else if (initialManualAsset.type === "text" && initialManualAsset.content) {
+      setBody((prev) => (prev ? prev : initialManualAsset.content).slice(0, CHAR_LIMIT));
+    }
+    onConsumeInitialAsset?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [hashtagLoading, setHashtagLoading] = useState(false);
   const [hashtagError, setHashtagError] = useState("");
@@ -356,7 +339,7 @@ export default function Form({ onSubmit, loading, error, token }) {
                       className="composer-toolbar-btn"
                       title="Insert emoji"
                     >
-                      <EmojiGlyph emoji="🙂" size={16} />
+                      🙂
                     </button>
                     {showEmojiPicker && (
                       <div
@@ -375,15 +358,14 @@ export default function Form({ onSubmit, loading, error, token }) {
                               type="button"
                               title={cat.label}
                               onClick={() => jumpToSection(cat.key)}
-                              className="emoji-glyph"
                               style={{
                                 flex: 1, background: "transparent", border: "none",
                                 borderBottom: "2px solid transparent",
-                                borderRadius: 0, padding: "5px 0 7px", display: "flex", alignItems: "center", justifyContent: "center",
+                                borderRadius: 0, padding: "5px 0 7px", fontSize: 14,
                                 opacity: emojiQuery ? 0.5 : 1,
                               }}
                             >
-                              <EmojiGlyph emoji={cat.icon} size={14} />
+                              {cat.icon}
                             </button>
                           ))}
                         </div>
@@ -419,9 +401,9 @@ export default function Form({ onSubmit, loading, error, token }) {
                                     type="button"
                                     onClick={() => pickEmoji(emoji)}
                                     title={emoji}
-                                    style={{ height: 28, width: 28, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "1px solid transparent", borderRadius: 4 }}
+                                    style={{ height: 28, width: 28, padding: 0, fontSize: 15, background: "transparent", border: "1px solid transparent", borderRadius: 4 }}
                                   >
-                                    <EmojiGlyph emoji={emoji} />
+                                    {emoji}
                                   </button>
                                 ))}
                               </div>
@@ -444,9 +426,9 @@ export default function Form({ onSubmit, loading, error, token }) {
                                         type="button"
                                         onClick={() => pickEmoji(emoji)}
                                         title={emoji}
-                                        style={{ height: 28, width: 28, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "1px solid transparent", borderRadius: 4 }}
+                                        style={{ height: 28, width: 28, padding: 0, fontSize: 15, background: "transparent", border: "1px solid transparent", borderRadius: 4 }}
                                       >
-                                        <EmojiGlyph emoji={emoji} />
+                                        {emoji}
                                       </button>
                                     ))}
                                   </div>
@@ -528,7 +510,9 @@ export default function Form({ onSubmit, loading, error, token }) {
               </div>
             </div>
             <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "8px 0 0" }}>
-              Up to {MAX_IMAGES} images plus one video. 
+              Up to {MAX_IMAGES} images plus one video. If a video is attached, it's published in place
+              of the images on platforms that support video — finto.day doesn't yet, so it still gets
+              the images there.
             </p>
           </div>
 

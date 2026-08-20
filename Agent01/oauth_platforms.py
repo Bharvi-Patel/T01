@@ -63,9 +63,6 @@ def linkedin_finish(code: str) -> dict:
     )
     userinfo.raise_for_status()
     info = userinfo.json()
-    # TEMP DEBUG: same investigation as Instagram - log the raw userinfo
-    # response so we can see exactly what LinkedIn sends for `picture`.
-    print(f"[linkedin_finish DEBUG] raw userinfo response: {info!r}")
     return {
         "access_token": access_token,
         "member_id": info["sub"],
@@ -154,14 +151,6 @@ def facebook_credentials_from_page(page: dict) -> dict:
 
 
 def instagram_credentials_from_page(page: dict) -> dict:
-    # Query the IG business account's username/profile_picture_url as
-    # *nested* fields under the Page (instagram_business_account{...}),
-    # rather than as a separate standalone lookup on the IG user node -
-    # that second form was reliably coming back with username but a
-    # silently-empty profile_picture_url even for accounts confirmed (via
-    # their linked Threads identity) to have a picture set. Nesting under
-    # the Page query is the pattern documented/observed to actually return
-    # the field.
     ig_resp = requests.get(
         f"https://graph.facebook.com/v21.0/{page['id']}",
         params={
@@ -172,8 +161,6 @@ def instagram_credentials_from_page(page: dict) -> dict:
     )
     ig_resp.raise_for_status()
     ig_payload = ig_resp.json()
-    # TEMP DEBUG: remove once root-caused/confirmed working.
-    print(f"[instagram_credentials_from_page DEBUG] raw page response: {ig_payload!r}")
     ig_account = ig_payload.get("instagram_business_account")
     if not ig_account:
         raise ValueError(f"The Page '{page.get('name', page['id'])}' has no linked Instagram Business account.")
@@ -184,6 +171,8 @@ def instagram_credentials_from_page(page: dict) -> dict:
         "profile_name": ig_account.get("username"),
         "profile_picture_url": ig_account.get("profile_picture_url"),
     }
+
+
 def facebook_finish(code: str) -> dict:
     long_token = facebook_exchange(code)
     pages = list_pages(long_token)

@@ -33,6 +33,17 @@ const STATUS_LABEL = {
   rejected: "Rejected",
 };
 
+// Green for anything on-track (pending, scheduled, published); red only for
+// genuine failure states, so a red label still stands out as something to
+// act on rather than everything looking the same.
+const STATUS_COLOR = {
+  pending_review: "var(--accent)",
+  scheduled: "var(--accent)",
+  published: "var(--accent)",
+  publish_failed: "var(--danger)",
+  rejected: "var(--danger)",
+};
+
 function formatDate(iso) {
   try {
     return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -85,7 +96,7 @@ function DraftList({ token, status, excludeStatus, wasScheduled, onOpenDraft, em
               {d.category} · {formatDate(d.created_at)}
             </p>
           </div>
-          <span style={{ fontSize: 11, color: "var(--text-secondary)", flexShrink: 0, fontFamily: "var(--font-mono)" }}>
+          <span style={{ fontSize: 11, color: STATUS_COLOR[d.status] || "var(--text-secondary)", flexShrink: 0, fontFamily: "var(--font-mono)", fontWeight: 600 }}>
             {STATUS_LABEL[d.status] || d.status}
           </span>
         </button>
@@ -94,12 +105,13 @@ function DraftList({ token, status, excludeStatus, wasScheduled, onOpenDraft, em
   );
 }
 
-function MediaTab() {
+function MediaTab({ onSendToCompose }) {
   const photoRef = useRef(null);
   const videoRef = useRef(null);
   const [assets, setAssets] = useState([]); // { type: "photo"|"video"|"text", name }
   const [menuOpen, setMenuOpen] = useState(false);
   const [textDraftOpen, setTextDraftOpen] = useState(false);
+  const [textDraftName, setTextDraftName] = useState("");
   const [textDraft, setTextDraft] = useState("");
   const menuRef = useRef(null);
 
@@ -113,20 +125,40 @@ function MediaTab() {
 
   function handleFiles(e, type) {
     const files = Array.from(e.target.files || []);
-    setAssets((prev) => [...prev, ...files.map((f) => ({ type, name: f.name }))]);
+    setAssets((prev) => [
+      ...prev,
+      ...files.map((f) => ({ type, name: f.name, file: f, previewUrl: URL.createObjectURL(f) })),
+    ]);
     e.target.value = "";
   }
 
   function addTextAsset() {
     if (!textDraft.trim()) return;
-    setAssets((prev) => [...prev, { type: "text", name: textDraft.trim().slice(0, 60) || "Untitled text" }]);
+    setAssets((prev) => [
+      ...prev,
+      { type: "text", name: textDraftName.trim() || "Untitled text", content: textDraft.trim() },
+    ]);
+    setTextDraftName("");
     setTextDraft("");
     setTextDraftOpen(false);
   }
 
   function removeAsset(i) {
-    setAssets((prev) => prev.filter((_, idx) => idx !== i));
+    setAssets((prev) => {
+      const removed = prev[i];
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      return prev.filter((_, idx) => idx !== i);
+    });
   }
+
+  // Preview blob URLs are only valid for this tab's lifetime - release them
+  // on unmount so switching tabs doesn't leak memory.
+  useEffect(() => {
+    return () => {
+      assets.forEach((a) => { if (a.previewUrl) URL.revokeObjectURL(a.previewUrl); });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const AddNewButton = (
     <div ref={menuRef} style={{ position: "relative", display: "inline-block" }}>
@@ -184,6 +216,13 @@ function MediaTab() {
       {textDraftOpen && (
         <div style={{ background: "var(--paper-raised)", borderRadius: 12, border: "0.5px solid var(--border-strong)", padding: "1.25rem" }}>
           <p style={{ fontWeight: 500, fontSize: 14, margin: "0 0 10px", color: "var(--ink)" }}>Add text</p>
+          <input
+            type="text"
+            value={textDraftName}
+            onChange={(e) => setTextDraftName(e.target.value)}
+            placeholder="Name (e.g. Product launch caption)"
+            style={{ width: "100%", marginBottom: 10 }}
+          />
           <textarea
             value={textDraft}
             onChange={(e) => setTextDraft(e.target.value)}
@@ -194,7 +233,7 @@ function MediaTab() {
           />
           <div style={{ display: "flex", gap: 8 }}>
             <button className="primary" style={{ width: "auto", padding: "0 18px" }} onClick={addTextAsset}>Save</button>
-            <button style={{ width: "auto", padding: "0 18px" }} onClick={() => { setTextDraftOpen(false); setTextDraft(""); }}>Cancel</button>
+            <button style={{ width: "auto", padding: "0 18px" }} onClick={() => { setTextDraftOpen(false); setTextDraftName(""); setTextDraft(""); }}>Cancel</button>
           </div>
         </div>
       )}
@@ -211,29 +250,73 @@ function MediaTab() {
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
             {AddNewButton}
           </div>
-          <div style={{ background: "var(--paper-raised)", borderRadius: 12, border: "0.5px solid var(--border-strong)", padding: "0.5rem 1.25rem" }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+              gap: "1.25rem",
+            }}
+          >
             {assets.map((a, i) => (
-              <div
-                key={i}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-                  padding: "14px 0", borderBottom: i < assets.length - 1 ? "0.5px solid var(--border)" : "none",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                  <MenuIcon name={a.type === "photo" ? "image" : a.type} size={14} />
-                  <span style={{ fontSize: 11, textTransform: "uppercase", fontFamily: "var(--font-mono)", color: "var(--text-muted)", flexShrink: 0 }}>
-                    {a.type}
-                  </span>
-                  <span style={{ fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink)" }}>{a.name}</span>
-                </div>
-                <button
-                  onClick={() => removeAsset(i)}
-                  aria-label="Remove"
-                  style={{ width: "auto", background: "transparent", border: "none", color: "var(--text-muted)", padding: "0 4px" }}
+              <div key={i} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div
+                  style={{
+                    position: "relative", borderRadius: 14,
+                    aspectRatio: a.type === "text" ? "2.4 / 1" : "1 / 1",
+                    background: "var(--paper-raised)", border: "0.5px solid var(--border-strong)",
+                    overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center",
+                  }}
                 >
-                  ✕
-                </button>
+                  {a.type === "photo" && a.previewUrl ? (
+                    <img
+                      src={a.previewUrl}
+                      alt={a.name}
+                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                      onError={(e) => { e.currentTarget.style.display = "none"; }}
+                    />
+                  ) : a.type === "video" && a.previewUrl ? (
+                    <video
+                      src={a.previewUrl}
+                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                      muted
+                    />
+                  ) : (
+                    <MenuIcon name={a.type === "photo" ? "image" : a.type} size={a.type === "text" ? 20 : 32} />
+                  )}
+                  <button
+                    onClick={() => removeAsset(i)}
+                    aria-label="Remove"
+                    style={{
+                      position: "absolute", top: 8, right: 8, width: 24, height: 24, padding: 0,
+                      borderRadius: "50%", background: "rgba(0,0,0,0.55)", border: "none",
+                      color: "#fff", fontSize: 12, lineHeight: "24px", display: "flex",
+                      alignItems: "center", justifyContent: "center",
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <p
+                  style={{
+                    margin: 0, fontSize: 12.5, color: "var(--ink)", textAlign: "center",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}
+                  title={a.name}
+                >
+                  {a.name}
+                </p>
+                {onSendToCompose && (
+                  <button
+                    onClick={() => onSendToCompose(a)}
+                    style={{
+                      width: "auto", alignSelf: "center", background: "transparent", border: "none",
+                      padding: 0, fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--accent)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Send to composer →
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -299,7 +382,7 @@ function NotificationsTab() {
   );
 }
 
-export default function Publish({ token, onNewPost, onOpenDraft, initialTab = "new" }) {
+export default function Publish({ token, onNewPost, onOpenDraft, initialTab = "new", onSendMediaToCompose }) {
   const [tab, setTab] = useState(initialTab);
 
   return (
@@ -340,7 +423,7 @@ export default function Publish({ token, onNewPost, onOpenDraft, initialTab = "n
           emptyLabel="Nothing scheduled yet — schedule a draft to see it here."
         />
       )}
-      {tab === "media" && <MediaTab />}
+      {tab === "media" && <MediaTab onSendToCompose={onSendMediaToCompose} />}
       {tab === "notifications" && <NotificationsTab />}
     </div>
   );

@@ -243,7 +243,8 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
                 disabled={disconnectingPlatform === platform}
                 style={{
                   background: "transparent", border: "none", padding: 0, width: "auto", flexShrink: 0,
-                  fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-secondary)", cursor: "pointer",
+                  fontSize: 11, fontFamily: "var(--font-mono)", cursor: "pointer", fontWeight: 600,
+                  color: disconnectingPlatform === platform ? "var(--text-secondary)" : "var(--accent)",
                 }}
               >
                 {disconnectingPlatform === platform ? "Disconnecting…" : connected ? "Connected" : "Connect"}

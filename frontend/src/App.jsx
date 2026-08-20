@@ -37,6 +37,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [pagePicker, setPagePicker] = useState(null); // { platform, pendingId }
   const [publishInitialTab, setPublishInitialTab] = useState("new");
+  const [composeHandoffAsset, setComposeHandoffAsset] = useState(null); // { type, name, file, content } from Media tab, consumed once by Form
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem("sidebar_collapsed");
@@ -256,6 +257,11 @@ export default function App() {
     setError("");
   }
 
+  function handleSendMediaToCompose(asset) {
+    setComposeHandoffAsset(asset);
+    handleRestart();
+  }
+
   if (!token) {
     if (showAuth) {
       return (
@@ -319,7 +325,14 @@ export default function App() {
           )}
 
           {step === "generate" && (
-              <Form onSubmit={handleGenerate} loading={loading} error={error} token={token} />
+              <Form
+                onSubmit={handleGenerate}
+                loading={loading}
+                error={error}
+                token={token}
+                initialManualAsset={composeHandoffAsset}
+                onConsumeInitialAsset={() => setComposeHandoffAsset(null)}
+              />
 
           )}
 
@@ -352,7 +365,7 @@ export default function App() {
           )}
 
           {step === "publish" && (
-            <Publish token={token} onNewPost={handleRestart} onOpenDraft={handleOpenDraft} onAuthError={handleLogout} initialTab={publishInitialTab} />
+            <Publish token={token} onNewPost={handleRestart} onOpenDraft={handleOpenDraft} onAuthError={handleLogout} initialTab={publishInitialTab} onSendMediaToCompose={handleSendMediaToCompose} />
           )}
 
           {step === "calendar" && (
