@@ -1,5 +1,6 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { suggestHashtags } from "../api";
+import { EMOJI_CATEGORIES, EMOJI_RECENTS_KEY, DEFAULT_RECENT_EMOJIS } from "../emojiCategories";
 
 const CATEGORIES = [
   "Technology",
@@ -49,6 +50,74 @@ export default function Form({ onSubmit, loading, error, token }) {
 
   const [hashtagLoading, setHashtagLoading] = useState(false);
   const [hashtagError, setHashtagError] = useState("");
+
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [emojiQuery, setEmojiQuery] = useState("");
+  const [recentEmojis, setRecentEmojis] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(EMOJI_RECENTS_KEY) || "null");
+      return Array.isArray(saved) && saved.length ? saved : DEFAULT_RECENT_EMOJIS;
+    } catch {
+      return DEFAULT_RECENT_EMOJIS;
+    }
+  });
+  const emojiPickerRef = useRef(null);
+  const emojiScrollRef = useRef(null);
+  const emojiSectionRefs = useRef({});
+
+  useEffect(() => {
+    if (!showEmojiPicker) return;
+    function handleClickOutside(e) {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(e.target)) {
+        setShowEmojiPicker(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showEmojiPicker]);
+
+  // Search runs across every category at once. With no query, every
+  // category is shown stacked in one continuous scroll (matching a
+  // standard emoji picker) instead of switching one category at a time —
+  // the tabs just jump-scroll to that section.
+  const emojiSearchResults = useMemo(() => {
+    const q = emojiQuery.trim().toLowerCase();
+    if (!q) return null;
+    const hits = [];
+    for (const cat of EMOJI_CATEGORIES) {
+      for (const item of cat.emojis) {
+        if (item.char.includes(q) || item.keywords.includes(q)) hits.push(item.char);
+      }
+    }
+    return hits;
+  }, [emojiQuery]);
+
+  // Sections rendered when not searching: "Frequently used" (from recents)
+  // followed by every real category, each with its full emoji list.
+  const emojiSections = [
+    { key: "frequent", label: "Frequently used", icon: "🕘", emojis: recentEmojis },
+    ...EMOJI_CATEGORIES.filter((c) => c.key !== "frequent").map((c) => ({
+      ...c,
+      emojis: c.emojis.map((e) => e.char),
+    })),
+  ];
+
+  function jumpToSection(key) {
+    setEmojiQuery("");
+    const el = emojiSectionRefs.current[key];
+    if (el && emojiScrollRef.current) {
+      emojiScrollRef.current.scrollTop = el.offsetTop - emojiScrollRef.current.offsetTop - 4;
+    }
+  }
+
+  function pickEmoji(emoji) {
+    insertAtCursor(emoji);
+    setRecentEmojis((prev) => {
+      const next = [emoji, ...prev.filter((e) => e !== emoji)].slice(0, 24);
+      try { localStorage.setItem(EMOJI_RECENTS_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
 
   function addFiles(fileList) {
     const files = Array.from(fileList || []);
@@ -139,44 +208,20 @@ export default function Form({ onSubmit, loading, error, token }) {
     }
   }
 
-  const toolbarBtnStyle = {
-    display: "inline-flex", alignItems: "center", justifyContent: "center",
-    height: 28, minWidth: 28, padding: "0 8px", fontSize: 13,
-    background: "transparent", border: "1px solid var(--border)",
-  };
-
   return (
-    <form
-      onSubmit={handleSubmit}
-      style={{
-        background: "var(--surface-2)",
-        borderRadius: 12,
-        border: "0.5px solid var(--border)",
-        padding: "1.5rem",
-      }}
-    >
-      <p style={{ fontWeight: 500, fontSize: 15, margin: "0 0 1rem", color: "var(--ink)" }}>
-        Generate a new post
-      </p>
+    <form className="composer" onSubmit={handleSubmit}>
+      <div className="composer-head">
+        <h2 className="composer-title">Generate a new post</h2>
+        {/* <span className="stamp composer-stamp">{mode === "ai" ? "AI Draft" : "Manual Draft"}</span> */}
+      </div>
 
-      <div
-        role="tablist"
-        style={{
-          display: "flex",
-          gap: 8,
-          marginBottom: "1.25rem",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          padding: 4,
-        }}
-      >
+      <div className="composer-tabs" role="tablist">
         <button
           type="button"
           role="tab"
           aria-selected={mode === "ai"}
           onClick={() => setMode("ai")}
-          className={mode === "ai" ? "primary" : ""}
-          style={{ flex: 1 }}
+          className={`composer-tab ${mode === "ai" ? "is-active" : ""}`}
         >
           Generate with AI
         </button>
@@ -185,22 +230,17 @@ export default function Form({ onSubmit, loading, error, token }) {
           role="tab"
           aria-selected={mode === "manual"}
           onClick={() => setMode("manual")}
-          className={mode === "manual" ? "primary" : ""}
-          style={{ flex: 1 }}
+          className={`composer-tab ${mode === "manual" ? "is-active" : ""}`}
         >
           Write it myself
         </button>
       </div>
 
       {mode === "ai" ? (
-        <>
-          <div style={{ marginBottom: "1rem" }}>
+        <div className="composer-fields">
+          <div className="composer-field">
             <label htmlFor="category">Category</label>
-            <select
-              id="category"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-            >
+            <select id="category" value={category} onChange={(e) => setCategory(e.target.value)}>
               {CATEGORIES.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -209,7 +249,7 @@ export default function Form({ onSubmit, loading, error, token }) {
             </select>
           </div>
 
-          <div style={{ marginBottom: "1rem" }}>
+          <div className="composer-field">
             <label htmlFor="subtopic">Subtopic</label>
             <input
               id="subtopic"
@@ -220,7 +260,7 @@ export default function Form({ onSubmit, loading, error, token }) {
             />
           </div>
 
-          <div style={{ marginBottom: "1.5rem" }}>
+          <div className="composer-field">
             <label htmlFor="wordcount">Word count</label>
             <input
               id="wordcount"
@@ -230,20 +270,15 @@ export default function Form({ onSubmit, loading, error, token }) {
               onChange={(e) => setWordCount(e.target.value)}
             />
           </div>
-        </>
+        </div>
       ) : (
         <>
           {/* Composer card: textarea, toolbar, full-width dropzone button — laid out like a social-post composer */}
           <div style={{ marginBottom: "0.5rem" }}>
-            <label htmlFor="body">Post text</label>
-            <div
-              style={{
-                background: "var(--paper-raised, var(--surface-1, var(--surface-2)))",
-                border: "1px solid var(--border)",
-                borderRadius: "var(--radius)",
-                padding: 12,
-              }}
-            >
+            <label htmlFor="body" style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)", display: "block", marginBottom: 8 }}>
+              Post text
+            </label>
+            <div className="composer-writer">
               <textarea
                 ref={bodyRef}
                 id="body"
@@ -252,7 +287,6 @@ export default function Form({ onSubmit, loading, error, token }) {
                 onChange={(e) => setBody(e.target.value.slice(0, CHAR_LIMIT))}
                 placeholder="Write something..."
                 required
-                style={{ border: "none", borderRadius: 0, padding: 0, resize: "vertical", marginBottom: 12 }}
               />
 
               {hashtagError && (
@@ -265,25 +299,130 @@ export default function Form({ onSubmit, loading, error, token }) {
                     type="button"
                     onClick={handleSuggestHashtags}
                     disabled={hashtagLoading || !body.trim()}
-                    style={{ ...toolbarBtnStyle, opacity: hashtagLoading || !body.trim() ? 0.5 : 1 }}
+                    className="composer-toolbar-btn"
                     title="Generate hashtags with AI for what you've written"
                   >
                     {hashtagLoading ? "Generating…" : "✨ Write hashtags with AI"}
                   </button>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 12, color: "var(--text-secondary)", marginRight: 4 }}>
+                  <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--text-muted)", marginRight: 4 }}>
                     {body.length}/{CHAR_LIMIT}
                   </span>
-                  <button type="button" onClick={() => wrapSelection("**")} style={toolbarBtnStyle} title="Bold">
+                  <button type="button" onClick={() => wrapSelection("**")} className="composer-toolbar-btn" title="Bold">
                     <strong>B</strong>
                   </button>
-                  <button type="button" onClick={() => wrapSelection("_")} style={toolbarBtnStyle} title="Italic">
+                  <button type="button" onClick={() => wrapSelection("_")} className="composer-toolbar-btn" title="Italic">
                     <em>I</em>
                   </button>
-                  <button type="button" onClick={() => insertAtCursor("🙂")} style={toolbarBtnStyle} title="Insert emoji">
-                    🙂
-                  </button>
+                  <div ref={emojiPickerRef} style={{ position: "relative" }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowEmojiPicker((v) => !v)}
+                      className="composer-toolbar-btn"
+                      title="Insert emoji"
+                    >
+                      🙂
+                    </button>
+                    {showEmojiPicker && (
+                      <div
+                        style={{
+                          position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 20,
+                          width: 300,
+                          background: "var(--paper-raised)", border: "1px solid var(--border)",
+                          borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div style={{ display: "flex", gap: 2, padding: "6px 6px 0", borderBottom: "1px solid var(--border)" }}>
+                          {emojiSections.map((cat) => (
+                            <button
+                              key={cat.key}
+                              type="button"
+                              title={cat.label}
+                              onClick={() => jumpToSection(cat.key)}
+                              style={{
+                                flex: 1, background: "transparent", border: "none",
+                                borderBottom: "2px solid transparent",
+                                borderRadius: 0, padding: "5px 0 7px", fontSize: 14,
+                                opacity: emojiQuery ? 0.5 : 1,
+                              }}
+                            >
+                              {cat.icon}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div style={{ padding: 6 }}>
+                          <input
+                            type="text"
+                            value={emojiQuery}
+                            onChange={(e) => setEmojiQuery(e.target.value)}
+                            placeholder="Search"
+                            style={{ width: "100%", fontSize: 12, padding: "5px 8px" }}
+                          />
+                        </div>
+
+                        {emojiSearchResults && (
+                          <div style={{ padding: "0 10px 4px", fontSize: 11, color: "var(--text-muted)" }}>
+                            {emojiSearchResults.length} result{emojiSearchResults.length === 1 ? "" : "s"}
+                          </div>
+                        )}
+
+                        <div
+                          ref={emojiScrollRef}
+                          style={{ padding: "0 6px 8px", maxHeight: 300, overflowY: "auto" }}
+                        >
+                          {emojiSearchResults ? (
+                            emojiSearchResults.length === 0 ? (
+                              <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "6px 0" }}>No emoji found.</p>
+                            ) : (
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 2 }}>
+                                {emojiSearchResults.map((emoji, i) => (
+                                  <button
+                                    key={`${emoji}-${i}`}
+                                    type="button"
+                                    onClick={() => pickEmoji(emoji)}
+                                    title={emoji}
+                                    style={{ height: 28, width: 28, padding: 0, fontSize: 15, background: "transparent", border: "1px solid transparent", borderRadius: 4 }}
+                                  >
+                                    {emoji}
+                                  </button>
+                                ))}
+                              </div>
+                            )
+                          ) : (
+                            emojiSections.map((cat) => (
+                              cat.emojis.length === 0 ? null : (
+                                <div
+                                  key={cat.key}
+                                  ref={(el) => { emojiSectionRefs.current[cat.key] = el; }}
+                                  style={{ marginBottom: 10 }}
+                                >
+                                  <div style={{ fontSize: 11, color: "var(--text-muted)", padding: "4px 4px 4px" }}>
+                                    {cat.label}
+                                  </div>
+                                  <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 2 }}>
+                                    {cat.emojis.map((emoji, i) => (
+                                      <button
+                                        key={`${cat.key}-${emoji}-${i}`}
+                                        type="button"
+                                        onClick={() => pickEmoji(emoji)}
+                                        title={emoji}
+                                        style={{ height: 28, width: 28, padding: 0, fontSize: 15, background: "transparent", border: "1px solid transparent", borderRadius: 4 }}
+                                      >
+                                        {emoji}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -292,14 +431,7 @@ export default function Form({ onSubmit, loading, error, token }) {
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
-                style={{
-                  border: `1px dashed ${dragOver ? "var(--accent)" : "var(--border-strong)"}`,
-                  borderRadius: "var(--radius)",
-                  cursor: "pointer",
-                  background: dragOver ? "var(--surface-2)" : "transparent",
-                  padding: images.length || video ? 10 : "12px 10px",
-                  textAlign: "center",
-                }}
+                className={`composer-dropzone ${dragOver ? "is-over" : ""} ${images.length || video ? "has-media" : ""}`}
               >
                 <input
                   ref={fileInputRef}
@@ -311,7 +443,7 @@ export default function Form({ onSubmit, loading, error, token }) {
                 />
 
                 {images.length === 0 && !video ? (
-                  <p style={{ margin: 0, fontSize: 13, color: "var(--text-secondary)" }}>
+                  <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>
                     Click or Drag &amp; Drop media
                   </p>
                 ) : (
@@ -360,15 +492,15 @@ export default function Form({ onSubmit, loading, error, token }) {
                 )}
               </div>
             </div>
-            <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "6px 0 0" }}>
+            <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "8px 0 0" }}>
               Up to {MAX_IMAGES} images plus one video. If a video is attached, it's published in place
               of the images on platforms that support video — finto.day doesn't yet, so it still gets
               the images there.
             </p>
           </div>
 
-          <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", margin: "1rem 0 1.5rem" }}>
-            <span style={{ fontSize: 13 }}>Customize post per network</span>
+          <label className="composer-network-toggle">
+            <span>Customize post per network</span>
             <span
               onClick={() => setCustomizePerNetwork((v) => !v)}
               style={{
@@ -388,15 +520,16 @@ export default function Form({ onSubmit, loading, error, token }) {
           </label>
 
           {customizePerNetwork && (
-            <div style={{ marginBottom: "1.5rem", display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="composer-fields" style={{ marginBottom: "1rem" }}>
               {NETWORKS.map((n) => (
-                <div key={n.key}>
+                <div key={n.key} className="composer-field">
                   <label htmlFor={`net-${n.key}`}>{n.label}</label>
                   <textarea
                     id={`net-${n.key}`}
                     rows={2}
                     value={networkText[n.key] ?? body}
                     onChange={(e) => setNetworkText((prev) => ({ ...prev, [n.key]: e.target.value }))}
+                    style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 6, color: "var(--ink)", padding: 8 }}
                   />
                 </div>
               ))}
@@ -411,16 +544,16 @@ export default function Form({ onSubmit, loading, error, token }) {
             fontSize: 13,
             color: "var(--text-danger)",
             background: "var(--bg-danger)",
-            borderRadius: "var(--radius)",
+            borderRadius: 6,
             padding: "8px 12px",
-            margin: "0 0 1rem",
+            margin: "1rem 0",
           }}
         >
           {error}
         </p>
       )}
 
-      <button type="submit" className="primary" style={{ width: "100%" }} disabled={loading}>
+      <button type="submit" className="composer-submit" disabled={loading}>
         {loading
           ? mode === "ai" ? "Generating…" : "Creating draft…"
           : mode === "ai" ? "Generate draft" : "Create draft"}

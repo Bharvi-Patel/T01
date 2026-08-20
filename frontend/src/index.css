@@ -1048,14 +1048,22 @@ input[type="number"] { -moz-appearance: textfield; }
   border-top: 1px solid #22332A;
 }
 .landing-footer-inner {
-  display: grid;
-  grid-template-columns: 1.4fr 1fr 1fr;
-  gap: 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 48px;
   text-align: left;
   padding-bottom: 2.5rem;
 }
+.landing-footer-nav {
+  display: flex;
+  gap: 64px;
+  flex-wrap: wrap;
+}
 @media (max-width: 640px) {
-  .landing-footer-inner { grid-template-columns: 1fr; gap: 24px; }
+  .landing-footer-inner { flex-direction: column; gap: 24px; }
+  .landing-footer-nav { gap: 32px; }
 }
 .landing-footer-brand p {
   font-size: 13px;
@@ -1093,3 +1101,202 @@ input[type="number"] { -moz-appearance: textfield; }
   color: #6E7E73;
   font-family: var(--font-mono);
 }
+/* ============================================================
+   COMPOSER — "Generate a new post" form
+   A typed sheet, not a stacked pile of boxed inputs: fields sit on
+   hairline dividers rather than each getting its own bordered box,
+   the mode switch is a document-tab underline rather than a filled
+   segmented-control pill, and the header wears the same .stamp chip
+   already defined for the landing page. Uses the app's own theme
+   vars throughout (not hardcoded hex) so it follows light/dark like
+   every other in-app surface, rather than being locked to one look.
+   ============================================================ */
+
+.composer {
+  position: relative;
+  background: var(--paper-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.75rem 1.5rem;
+  overflow: hidden;
+}
+.composer::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent 65%);
+}
+
+.composer-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 1.5rem;
+}
+.composer-title {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 19px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0;
+}
+.composer-stamp {
+  font-size: 10px;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+
+.composer-tabs {
+  display: flex;
+  gap: 10px;
+  padding-bottom: 1.25rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.composer-tab {
+  background: none;
+  border: 1px solid transparent;
+  height: auto;
+  width: auto;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  cursor: pointer;
+  position: relative;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.composer-tab:hover { color: var(--text-secondary); }
+.composer-tab.is-active {
+  color: var(--ink);
+  border-color: var(--accent);
+  background: none;
+}
+
+.composer-fields { display: flex; flex-direction: column; }
+.composer-field {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.composer-field:last-child { border-bottom: none; padding-bottom: 4px; }
+.composer-field > label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.composer-field input,
+.composer-field select {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  height: 30px;
+  padding: 0;
+  color: var(--ink);
+  font-size: 15px;
+  transition: border-color 0.12s ease;
+}
+.composer-field input:focus,
+.composer-field select:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+.composer-field select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23588157'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
+  padding-right: 18px;
+  cursor: pointer;
+}
+.composer-field select option { background: var(--paper-raised); color: var(--ink); }
+
+.composer-writer {
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.composer-writer textarea {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  color: var(--ink);
+  font-size: 15px;
+  resize: vertical;
+  margin-bottom: 12px;
+}
+.composer-writer textarea:focus { outline: none; }
+
+.composer-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 9px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+}
+.composer-toolbar-btn:hover { border-color: var(--accent); color: var(--ink); }
+.composer-toolbar-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.composer-dropzone {
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 12px 10px;
+  text-align: center;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.composer-dropzone.is-over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.composer-dropzone.has-media { padding: 10px; text-align: left; }
+
+.composer-network-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  margin: 1rem 0 1.5rem;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.composer-submit {
+  width: 100%;
+  height: 46px;
+  margin-top: 0.5rem;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: none;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.composer-submit:hover { opacity: 0.88; }
+.composer-submit:disabled { opacity: 0.5; cursor: not-allowed; }

@@ -6,17 +6,17 @@ const STEPS = [
   {
     n: "01",
     label: "Generate",
-    desc: "Give it a category and subtopic — the agent researches and drafts a full post, with sourced images.",
+    desc: "Give it a category and subtopic and it researches the topic, drafts the post, and finds real sourced images to match. Or skip the AI and write it yourself, images and video included.",
   },
   {
     n: "02",
     label: "Review",
-    desc: "Read it, approve it, or send it back with feedback. Nothing publishes without a human saying so.",
+    desc: "You read every draft before it goes anywhere. Approve it, or send it back with what to fix.",
   },
   {
     n: "03",
     label: "Publish",
-    desc: "Pick which connected platforms it goes to. One review, published everywhere at once.",
+    desc: "Pick which of your connected accounts it should go to. One click, live on all of them at once.",
   },
 ];
 
@@ -158,10 +158,10 @@ export default function Landing({ onGetStarted }) {
       {/* FEATURES — bento */}
       <section id="features" className="landing-section">
         {/* <Reveal as="span" className="landing-pill">☰ FEATURES</Reveal> */}
-        <Reveal as="h2" delay={80} className="landing-h2">Three steps, and a human in the loop</Reveal>
-        <Reveal as="p" delay={140} className="landing-subtext" style={{ margin: "0 auto 2.5rem" }}>
-          No content ever ships without your approval. Drafting is automated.
-          Approval isn't.
+        <Reveal as="h2" delay={80} className="landing-h2">You approve everything. It does the rest.</Reveal>
+        <Reveal as="p" delay={140} className="landing-subtext">
+          A researched draft or a post you wrote yourself — either way, nothing reaches
+          LinkedIn, Instagram, or anywhere else until you say so.
         </Reveal>
 
         <div className="landing-bento">
@@ -262,17 +262,19 @@ export default function Landing({ onGetStarted }) {
               <p>Draft with AI. Publish with approval.</p>
             </div>
 
-            <div className="landing-footer-col">
-              <p className="eyebrow" style={{ color: "#7FA687" }}>Product</p>
-              <button className="landing-footer-link" onClick={() => document.getElementById("features")?.scrollIntoView({ behavior: "smooth" })}>Features</button>
-              <button className="landing-footer-link" onClick={() => document.getElementById("platforms")?.scrollIntoView({ behavior: "smooth" })}>Platforms</button>
-              <span className="landing-footer-link landing-footer-link--soon">Pricing</span>
-            </div>
+            <div className="landing-footer-nav">
+              <div className="landing-footer-col">
+                <p className="eyebrow" style={{ color: "#7FA687" }}>Product</p>
+                <button className="landing-footer-link" onClick={() => document.getElementById("features")?.scrollIntoView({ behavior: "smooth" })}>Features</button>
+                <button className="landing-footer-link" onClick={() => document.getElementById("platforms")?.scrollIntoView({ behavior: "smooth" })}>Platforms</button>
+                <span className="landing-footer-link landing-footer-link--soon">Pricing</span>
+              </div>
 
-            <div className="landing-footer-col">
-              <p className="eyebrow" style={{ color: "#7FA687" }}>Account</p>
-              <button className="landing-footer-link" onClick={onGetStarted}>Log in</button>
-              <button className="landing-footer-link" onClick={onGetStarted}>Sign up</button>
+              <div className="landing-footer-col">
+                <p className="eyebrow" style={{ color: "#7FA687" }}>Account</p>
+                <button className="landing-footer-link" onClick={onGetStarted}>Log in</button>
+                <button className="landing-footer-link" onClick={onGetStarted}>Sign up</button>
+              </div>
             </div>
           </div>
           <div className="landing-section landing-footer-bottom">
