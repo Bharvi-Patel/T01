@@ -10,7 +10,7 @@ import Settings from "./components/settings";
 import Publish from "./components/Publish";
 import Calendar from "./components/Calendar";
 import Analytics from "./components/Analytics";
-import { login as apiLogin, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft } from "./api";
+import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft } from "./api";
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem("auth_token"));
@@ -151,6 +151,9 @@ export default function App() {
   }
 
   function handleLogout() {
+    // Best-effort - if this fails (offline, already-expired token) we still
+    // clear locally so the user isn't stuck on the logged-in state.
+    if (token) apiLogout({ token }).catch(() => {});
     localStorage.removeItem("auth_token");
     setToken(null);
     handleRestart();

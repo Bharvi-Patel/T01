@@ -66,6 +66,16 @@ export async function login({ identifier, password }) {
   return handle(res);
 }
 
+// invalidate the current session on the backend (best-effort - the frontend
+// clears its local token regardless of whether this succeeds)
+export async function logout({ token }) {
+  const res = await fetch(`${API_BASE}/logout`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
 /*
   Kick off a new draft.
   Expected backend response: { draft_id, draft: {...parsed draft json...} }
@@ -126,6 +136,49 @@ export async function createManualDraft({ token, category, subtopic, title, body
     method: "POST",
     headers: authHeaders(token),
     body: form,
+  });
+  return handle(res);
+}
+
+// Media library — backs the Publish page's "Media" tab. Photos/videos are
+// stored permanently on the backend under the user's account; text assets
+// are stored inline. Everything here persists across sessions.
+
+export async function getMediaAssets({ token }) {
+  const res = await fetch(`${API_BASE}/media`, {
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
+// `kind` is "photo" | "video"
+export async function uploadMediaAsset({ token, file, kind, name }) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("kind", kind);
+  if (name) form.append("name", name);
+
+  const res = await fetch(`${API_BASE}/media`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: form,
+  });
+  return handle(res);
+}
+
+export async function addMediaText({ token, name, content }) {
+  const res = await fetch(`${API_BASE}/media/text`, {
+    method: "POST",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ name, content }),
+  });
+  return handle(res);
+}
+
+export async function deleteMediaAsset({ token, mediaId }) {
+  const res = await fetch(`${API_BASE}/media/${mediaId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
   });
   return handle(res);
 }

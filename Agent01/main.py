@@ -53,6 +53,38 @@ MEDIA_DIR = Path(__file__).resolve().parent / "media"
 MEDIA_DIR.mkdir(exist_ok=True)
 EMAIL_VERIFICATION_TOKEN_TTL_HOURS = int(os.environ.get("EMAIL_VERIFICATION_TOKEN_TTL_HOURS", "24"))
 
+# Per-user media library (Publish page's "Media" tab). Each user's uploads
+# live under MEDIA_DIR/<user_id>/ so one person's files never collide with
+# another's and a whole account's media can be wiped by deleting one
+# directory. Served publicly through the same /media static mount as the
+# manual-draft video above.
+MEDIA_LIBRARY_MAX_BYTES = 50 * 1024 * 1024  # 50 MB per file
+
+
+def user_media_dir(user_id: uuid.UUID) -> Path:
+    d = MEDIA_DIR / str(user_id)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def media_asset_url(asset: "MediaAsset") -> str | None:
+    if not asset.file_path:
+        return None
+    return f"{BACKEND_BASE_URL}/media-files/{asset.file_path}"
+
+
+def serialize_media_asset(asset: "MediaAsset") -> dict:
+    return {
+        "id": str(asset.id),
+        "kind": asset.kind.value,
+        "name": asset.name,
+        "content_type": asset.content_type,
+        "url": media_asset_url(asset),
+        "text_content": asset.text_content,
+        "file_size": asset.file_size,
+        "created_at": asset.created_at.isoformat(),
+    }
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "Agent01"))
 
@@ -60,8 +92,11 @@ from Agent import agent01, revise_draft, approve_and_publish, clean_json_string,
 
 from db import (
     AsyncSessionLocal,
+    AuthSession,
     Draft,
     DraftStatus,
+    MediaAsset,
+    MediaKind,
     OAuthIdentity,
     Platform,
     PlatformConnection,
@@ -101,23 +136,54 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
+# Served at /media-files rather than /media - the latter is the media
+# library's API namespace (POST/GET/DELETE /media...) below. Starlette
+# matches routes in registration order and a Mount claims its whole prefix,
+# so a StaticFiles mount at "/media" would swallow every "/media" API
+# request before those route handlers ever ran (405/404s where a 200 was
+# expected) - hence the separate prefix instead of trying to register the
+# API routes first.
+app.mount("/media-files", StaticFiles(directory=MEDIA_DIR), name="media-files")
 
-# In-memory auth tokens issued by /login. Resets on server restart, which
-# just logs everyone out - fine for an internal single-admin tool. Real
-# multi-user accounts (against the `users` table) are a separate task -
-# for now every draft is attributed to one bootstrapped admin User row,
-# purely so drafts/platform_connections have a valid user_id FK to hang off.
-AUTH_TOKENS: dict[str, uuid.UUID] = {}
+# Auth sessions live in the `auth_sessions` table (db.py) - see create_session
+# / require_auth below. Nothing process-local here anymore, so a restart or
+# redeploy no longer logs everyone out.
+AUTH_TOKEN_TTL_DAYS = int(os.environ.get("AUTH_TOKEN_TTL_DAYS", "30"))
 ADMIN_USER_ID = None  # set on startup
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def require_auth(creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme)) -> uuid.UUID:
-    if creds is None or creds.credentials not in AUTH_TOKENS:
+async def create_session(db: AsyncSession, user_id: uuid.UUID) -> str:
+    """Issue a new bearer token for user_id and persist it so it survives
+    server restarts. Returns the raw token to hand back to the client."""
+    token = secrets.token_urlsafe(32)
+    db.add(AuthSession(
+        user_id=user_id,
+        token=token,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=AUTH_TOKEN_TTL_DAYS),
+    ))
+    await db.commit()
+    return token
+
+
+async def require_auth(
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> uuid.UUID:
+    if creds is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return AUTH_TOKENS[creds.credentials]
+
+    result = await db.execute(select(AuthSession).where(AuthSession.token == creds.credentials))
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if session.expires_at is not None and session.expires_at < datetime.now(timezone.utc):
+        await db.delete(session)
+        await db.commit()
+        raise HTTPException(status_code=401, detail="Session expired, please log in again")
+
+    return session.user_id
 
 
 
@@ -187,8 +253,7 @@ async def login_oauth_callback(provider: str, code: str | None = None, state: st
         return redirect_with("error", str(e))
 
     user_id = await _get_or_create_oauth_user(db, provider, identity)
-    token = secrets.token_urlsafe(32)
-    AUTH_TOKENS[token] = user_id
+    token = await create_session(db, user_id)
     return RedirectResponse(url=f"{FRONTEND_BASE_URL}/?login_token={token}")
 
     
@@ -354,9 +419,26 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
                    "or request a new one.",
         )
 
-    token = secrets.token_urlsafe(32)
-    AUTH_TOKENS[token] = user.id
+    token = await create_session(db, user.id)
     return {"token": token}
+
+
+@app.post("/logout")
+async def logout(
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+):
+    """Invalidate the current session server-side. Best-effort: if the
+    token's already gone (expired, already logged out elsewhere) this is
+    still a 200 - the end state the caller wants (no longer authenticated)
+    is already true."""
+    if creds is not None:
+        result = await db.execute(select(AuthSession).where(AuthSession.token == creds.credentials))
+        session = result.scalar_one_or_none()
+        if session is not None:
+            await db.delete(session)
+            await db.commit()
+    return {"logged_out": True}
 
 
 async def _get_or_create_admin_user(session: AsyncSession):
@@ -541,7 +623,7 @@ async def create_manual_draft(
             stored_name = f"{uuid.uuid4()}{ext}"
             (MEDIA_DIR / stored_name).write_bytes(video_bytes)
             video_field = {
-                "url": f"{BACKEND_BASE_URL}/media/{stored_name}",
+                "url": f"{BACKEND_BASE_URL}/media-files/{stored_name}",
                 "filename": video.filename,
             }
 
@@ -575,6 +657,104 @@ async def create_manual_draft(
     await db.refresh(draft)
 
     return {"draft_id": str(draft.id), "draft": draft.content}
+
+
+# Media library — backs the Publish page's "Media" tab. Photos/videos are
+# saved permanently to disk under MEDIA_DIR/<user_id>/ (see user_media_dir
+# above); text assets are stored inline. Unlike the AI draft pipeline's
+# imgbb hosting (temporary, third-party, used only to hand platforms a
+# fetchable URL) or the manual draft's flat MEDIA_DIR video (per-draft, not
+# revisitable), everything here belongs to the user's account and is listed
+# back to them on every visit until they delete it.
+
+@app.post("/media")
+async def upload_media(
+    file: UploadFile = File(...),
+    kind: str = Form(...),
+    name: str | None = Form(default=None),
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    if kind not in ("photo", "video"):
+        raise HTTPException(status_code=400, detail="kind must be 'photo' or 'video'")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="file is empty")
+    if len(file_bytes) > MEDIA_LIBRARY_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="file exceeds 50MB limit")
+
+    ext = Path(file.filename or "").suffix or (".jpg" if kind == "photo" else ".mp4")
+    stored_name = f"{uuid.uuid4()}{ext}"
+    (user_media_dir(user_id) / stored_name).write_bytes(file_bytes)
+
+    asset = MediaAsset(
+        user_id=user_id,
+        kind=MediaKind.PHOTO if kind == "photo" else MediaKind.VIDEO,
+        name=(name or file.filename or stored_name).strip() or stored_name,
+        content_type=file.content_type,
+        file_path=f"{user_id}/{stored_name}",
+        file_size=len(file_bytes),
+    )
+    db.add(asset)
+    await db.commit()
+    await db.refresh(asset)
+    return serialize_media_asset(asset)
+
+
+class MediaTextRequest(BaseModel):
+    name: str
+    content: str
+
+
+@app.post("/media/text")
+async def add_media_text(
+    req: MediaTextRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    if not req.content.strip():
+        raise HTTPException(status_code=400, detail="content must not be empty")
+
+    asset = MediaAsset(
+        user_id=user_id,
+        kind=MediaKind.TEXT,
+        name=req.name.strip() or "Untitled text",
+        text_content=req.content.strip(),
+    )
+    db.add(asset)
+    await db.commit()
+    await db.refresh(asset)
+    return serialize_media_asset(asset)
+
+
+@app.get("/media")
+async def list_media(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    result = await db.execute(
+        select(MediaAsset).where(MediaAsset.user_id == user_id).order_by(MediaAsset.created_at.desc())
+    )
+    assets = result.scalars().all()
+    return {"assets": [serialize_media_asset(a) for a in assets]}
+
+
+@app.delete("/media/{media_id}")
+async def delete_media(
+    media_id: uuid.UUID, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    result = await db.execute(
+        select(MediaAsset).where(MediaAsset.id == media_id, MediaAsset.user_id == user_id)
+    )
+    asset = result.scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Unknown media_id")
+
+    if asset.file_path:
+        file_on_disk = MEDIA_DIR / asset.file_path
+        file_on_disk.unlink(missing_ok=True)
+
+    await db.delete(asset)
+    await db.commit()
+    return {"deleted": True}
 
 
 @app.get("/analytics/summary")

@@ -1,6 +1,6 @@
 // Publish.jsx
 import { useState, useEffect, useRef } from "react";
-import { getDrafts } from "../api";
+import { getDrafts, getMediaAssets, uploadMediaAsset, addMediaText, deleteMediaAsset } from "../api";
 
 // Same feather-style stroke icon pattern used in Sidebar.jsx
 const MENU_ICON_PATHS = {
@@ -105,15 +105,43 @@ function DraftList({ token, status, excludeStatus, wasScheduled, onOpenDraft, em
   );
 }
 
-function MediaTab({ onSendToCompose }) {
+function MediaTab({ token, onSendToCompose }) {
   const photoRef = useRef(null);
   const videoRef = useRef(null);
-  const [assets, setAssets] = useState([]); // { type: "photo"|"video"|"text", name }
+  // { id, type: "photo"|"video"|"text", name, previewUrl?, content? } —
+  // loaded from and persisted to the user's media library on the backend,
+  // so it's the same list every time this tab is opened.
+  const [assets, setAssets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [textDraftOpen, setTextDraftOpen] = useState(false);
   const [textDraftName, setTextDraftName] = useState("");
   const [textDraft, setTextDraft] = useState("");
   const menuRef = useRef(null);
+
+  function fromBackend(a) {
+    return { id: a.id, type: a.kind, name: a.name, previewUrl: a.url, content: a.text_content };
+  }
+
+  async function loadAssets() {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const { assets: fetched } = await getMediaAssets({ token });
+      setAssets(fetched.map(fromBackend));
+    } catch (err) {
+      setLoadError(err.message || "Couldn't load your media library.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAssets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -123,51 +151,61 @@ function MediaTab({ onSendToCompose }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  function handleFiles(e, type) {
+  async function handleFiles(e, type) {
     const files = Array.from(e.target.files || []);
-    setAssets((prev) => [
-      ...prev,
-      ...files.map((f) => ({ type, name: f.name, file: f, previewUrl: URL.createObjectURL(f) })),
-    ]);
     e.target.value = "";
+    if (!files.length) return;
+    setUploading(true);
+    setLoadError("");
+    try {
+      for (const f of files) {
+        const asset = await uploadMediaAsset({ token, file: f, kind: type, name: f.name });
+        setAssets((prev) => [fromBackend(asset), ...prev]);
+      }
+    } catch (err) {
+      setLoadError(err.message || "Upload failed.");
+    } finally {
+      setUploading(false);
+    }
   }
 
-  function addTextAsset() {
+  async function addTextAsset() {
     if (!textDraft.trim()) return;
-    setAssets((prev) => [
-      ...prev,
-      { type: "text", name: textDraftName.trim() || "Untitled text", content: textDraft.trim() },
-    ]);
-    setTextDraftName("");
-    setTextDraft("");
-    setTextDraftOpen(false);
+    try {
+      const asset = await addMediaText({
+        token,
+        name: textDraftName.trim() || "Untitled text",
+        content: textDraft.trim(),
+      });
+      setAssets((prev) => [fromBackend(asset), ...prev]);
+      setTextDraftName("");
+      setTextDraft("");
+      setTextDraftOpen(false);
+    } catch (err) {
+      setLoadError(err.message || "Couldn't save that text.");
+    }
   }
 
-  function removeAsset(i) {
-    setAssets((prev) => {
-      const removed = prev[i];
-      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
-      return prev.filter((_, idx) => idx !== i);
-    });
+  async function removeAsset(i) {
+    const removed = assets[i];
+    setAssets((prev) => prev.filter((_, idx) => idx !== i));
+    try {
+      await deleteMediaAsset({ token, mediaId: removed.id });
+    } catch (err) {
+      setLoadError(err.message || "Couldn't delete that asset.");
+      loadAssets(); // out of sync with the backend - reload to be safe
+    }
   }
-
-  // Preview blob URLs are only valid for this tab's lifetime - release them
-  // on unmount so switching tabs doesn't leak memory.
-  useEffect(() => {
-    return () => {
-      assets.forEach((a) => { if (a.previewUrl) URL.revokeObjectURL(a.previewUrl); });
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const AddNewButton = (
     <div ref={menuRef} style={{ position: "relative", display: "inline-block" }}>
       <button
         className="primary"
-        style={{ width: "auto", padding: "0 18px", display: "inline-flex", alignItems: "center", gap: 8 }}
+        disabled={uploading}
+        style={{ width: "auto", padding: "0 18px", display: "inline-flex", alignItems: "center", gap: 8, opacity: uploading ? 0.6 : 1 }}
         onClick={() => setMenuOpen((o) => !o)}
       >
-        <span>+ Add New</span>
+        <span>{uploading ? "Uploading…" : "+ Add New"}</span>
       </button>
       {menuOpen && (
         <div
@@ -205,10 +243,13 @@ function MediaTab({ onSendToCompose }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-      <p style={{ fontSize: 12.5, color: "var(--text-muted)", margin: 0 }}>
-        Assets added here aren't uploaded anywhere yet — there's no media backend wired up. This is just the
-        selection UI for now; attaching media to a real draft still happens in the draft review step.
-      </p>
+      {/* <p style={{ fontSize: 12.5, color: "var(--text-muted)", margin: 0 }}>
+        Photos, videos, and text saved here are stored on your account permanently — they'll be here the next
+        time you visit, on any device you log in from.
+      </p> */}
+      {loadError && (
+        <p style={{ fontSize: 12.5, color: "var(--error, #d33)", margin: 0 }}>{loadError}</p>
+      )}
 
       <input ref={photoRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={(e) => handleFiles(e, "photo")} />
       <input ref={videoRef} type="file" accept="video/*" multiple style={{ display: "none" }} onChange={(e) => handleFiles(e, "video")} />
@@ -238,7 +279,11 @@ function MediaTab({ onSendToCompose }) {
         </div>
       )}
 
-      {assets.length === 0 ? (
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "3.5rem 0", color: "var(--text-muted)", fontSize: 13.5 }}>
+          Loading your media…
+        </div>
+      ) : assets.length === 0 ? (
         <div style={{ textAlign: "center", padding: "3.5rem 0" }}>
           <p style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
             No Media Found
@@ -253,16 +298,16 @@ function MediaTab({ onSendToCompose }) {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-              gap: "1.25rem",
+              gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+              gap: "0.85rem",
             }}
           >
             {assets.map((a, i) => (
-              <div key={i} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div key={a.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <div
                   style={{
-                    position: "relative", borderRadius: 14,
-                    aspectRatio: a.type === "text" ? "2.4 / 1" : "1 / 1",
+                    position: "relative", borderRadius: 10,
+                    aspectRatio: "1 / 1",
                     background: "var(--paper-raised)", border: "0.5px solid var(--border-strong)",
                     overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center",
                   }}
@@ -281,15 +326,15 @@ function MediaTab({ onSendToCompose }) {
                       muted
                     />
                   ) : (
-                    <MenuIcon name={a.type === "photo" ? "image" : a.type} size={a.type === "text" ? 20 : 32} />
+                    <MenuIcon name={a.type === "photo" ? "image" : a.type} size={a.type === "text" ? 16 : 24} />
                   )}
                   <button
                     onClick={() => removeAsset(i)}
                     aria-label="Remove"
                     style={{
-                      position: "absolute", top: 8, right: 8, width: 24, height: 24, padding: 0,
+                      position: "absolute", top: 6, right: 6, width: 20, height: 20, padding: 0,
                       borderRadius: "50%", background: "rgba(0,0,0,0.55)", border: "none",
-                      color: "#fff", fontSize: 12, lineHeight: "24px", display: "flex",
+                      color: "#fff", fontSize: 11, lineHeight: "20px", display: "flex",
                       alignItems: "center", justifyContent: "center",
                     }}
                   >
@@ -423,7 +468,7 @@ export default function Publish({ token, onNewPost, onOpenDraft, initialTab = "n
           emptyLabel="Nothing scheduled yet — schedule a draft to see it here."
         />
       )}
-      {tab === "media" && <MediaTab onSendToCompose={onSendMediaToCompose} />}
+      {tab === "media" && <MediaTab token={token} onSendToCompose={onSendMediaToCompose} />}
       {tab === "notifications" && <NotificationsTab />}
     </div>
   );

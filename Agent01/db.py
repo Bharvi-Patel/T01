@@ -108,6 +108,12 @@ class Platform(str, enum.Enum):
     THREADS = "threads"
 
 
+class MediaKind(str, enum.Enum):
+    PHOTO = "photo"
+    VIDEO = "video"
+    TEXT = "text"
+
+
 # Models
 
 class User(Base):
@@ -136,6 +142,12 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     oauth_identities: Mapped[list["OAuthIdentity"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    media_assets: Mapped[list["MediaAsset"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    auth_sessions: Mapped[list["AuthSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class OAuthIdentity(Base):
@@ -228,6 +240,49 @@ class PublishResult(Base):
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     draft: Mapped["Draft"] = relationship(back_populates="publish_results")
+
+
+class MediaAsset(Base):
+    """A user's permanent media library - backs the Publish page's "Media"
+    tab. Photos/videos are saved to disk under MEDIA_DIR/<user_id>/ (see
+    main.py) and stay there indefinitely until the user deletes them or
+    their account is removed; `file_path` is relative to MEDIA_DIR and
+    `file_url` (built in main.py) is what the frontend actually renders/
+    sends to the composer. Text assets have no file - just `text_content`.
+    """
+    __tablename__ = "media_assets"
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    kind: Mapped[MediaKind] = mapped_column(Enum(MediaKind, name="media_kind_enum"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    text_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    user: Mapped["User"] = relationship(back_populates="media_assets")
+
+
+class AuthSession(Base):
+    """A logged-in session, keyed by the bearer token handed to the
+    frontend. Previously these lived only in an in-memory dict on the
+    FastAPI process (AUTH_TOKENS in main.py), so every deploy or restart
+    silently logged out every user - the token their browser still held
+    just stopped existing anywhere. Persisting sessions here means a
+    restart no longer invalidates anyone's login; only an actual expiry
+    (or a future /logout deleting the row) does.
+    """
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="auth_sessions")
 
 
 

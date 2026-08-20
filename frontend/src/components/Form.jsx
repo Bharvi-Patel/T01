@@ -50,16 +50,34 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
 
   // A media/text asset handed off from the Media tab's "Send to composer" -
   // consumed once on mount only, then cleared in the parent so it doesn't
-  // reapply on a later, unrelated visit to this form.
+  // reapply on a later, unrelated visit to this form. Photo/video assets
+  // now live in the user's permanent media library on the backend, so
+  // there's no in-memory File object to reuse - fetch the stored file back
+  // as a blob and wrap it in a File so the rest of the composer (and the
+  // /drafts/manual upload) can treat it exactly like a fresh local upload.
   useEffect(() => {
     if (!initialManualAsset) return;
     setMode("manual");
-    if (initialManualAsset.type === "photo" && initialManualAsset.file) {
-      setImages((prev) => [...prev, initialManualAsset.file].slice(0, MAX_IMAGES));
-    } else if (initialManualAsset.type === "video" && initialManualAsset.file) {
-      setVideo(initialManualAsset.file);
-    } else if (initialManualAsset.type === "text" && initialManualAsset.content) {
-      setBody((prev) => (prev ? prev : initialManualAsset.content).slice(0, CHAR_LIMIT));
+    const { type, previewUrl, name, content } = initialManualAsset;
+
+    async function attachFromUrl(setter, mime) {
+      try {
+        const res = await fetch(previewUrl);
+        const blob = await res.blob();
+        const file = new File([blob], name || "media", { type: blob.type || mime });
+        setter(file);
+      } catch {
+        // media library asset couldn't be fetched (e.g. deleted, offline) -
+        // just skip attaching it rather than breaking the rest of the form
+      }
+    }
+
+    if (type === "photo" && previewUrl) {
+      attachFromUrl((file) => setImages((prev) => [...prev, file].slice(0, MAX_IMAGES)), "image/jpeg");
+    } else if (type === "video" && previewUrl) {
+      attachFromUrl((file) => setVideo(file), "video/mp4");
+    } else if (type === "text" && content) {
+      setBody((prev) => (prev ? prev : content).slice(0, CHAR_LIMIT));
     }
     onConsumeInitialAsset?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
