@@ -7,10 +7,19 @@ import { PLATFORMS, PlatformLogo } from "./platforms";
 // than showing a filter for a platform that can never have items.
 const INBOX_PLATFORMS = PLATFORMS.filter((p) => p.key !== "linkedin");
 
+const KIND_LABELS = {
+  comment: "Comment",
+  message: "Message",
+  mention: "Mention",
+  story_reply: "Story reply",
+};
+
 const KIND_TABS = [
   { key: "all", label: "All" },
   { key: "comment", label: "Comments" },
   { key: "message", label: "Messages" },
+  { key: "mention", label: "Mentions" },
+  { key: "story_reply", label: "Story replies" },
 ];
 
 function timeAgo(iso) {
@@ -62,7 +71,7 @@ function InboxItemCard({ item, onMarkRead }) {
               borderRadius: 4, padding: "1px 6px",
             }}
           >
-            {item.kind}
+            {KIND_LABELS[item.kind] || item.kind}
           </span>
           {!item.is_read && (
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", flexShrink: 0 }} />
@@ -80,13 +89,18 @@ function InboxItemCard({ item, onMarkRead }) {
   );
 }
 
-export default function Inbox({ token, onAuthError }) {
+export default function Inbox({ token, connections, onAuthError }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [kindFilter, setKindFilter] = useState("all");
   const [platformFilter, setPlatformFilter] = useState("all");
+  const [pendingOnly, setPendingOnly] = useState(false);
   const [search, setSearch] = useState("");
+
+  // Same segmented "All / [connected account]" pill bar Calendar uses,
+  // scoped to platforms that can actually appear in inbox data.
+  const connectedPlatforms = INBOX_PLATFORMS.filter((p) => connections?.[p.key]);
 
   function load() {
     setLoading(true);
@@ -113,10 +127,11 @@ export default function Inbox({ token, onAuthError }) {
     return items.filter((item) => {
       if (kindFilter !== "all" && item.kind !== kindFilter) return false;
       if (platformFilter !== "all" && item.platform !== platformFilter) return false;
+      if (pendingOnly && item.is_read) return false;
       if (q && !(item.body || "").toLowerCase().includes(q) && !(item.sender_name || "").toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [items, kindFilter, platformFilter, search]);
+  }, [items, kindFilter, platformFilter, pendingOnly, search]);
 
   const unreadCount = items.filter((i) => !i.is_read).length;
 
@@ -169,31 +184,64 @@ export default function Inbox({ token, onAuthError }) {
           ))}
         </div>
 
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <button
-            onClick={() => setPlatformFilter("all")}
-            style={{
-              width: "auto", padding: "5px 10px", fontSize: 12.5,
-              border: platformFilter === "all" ? "1.5px solid var(--accent)" : "0.5px solid var(--border-strong)",
-              background: platformFilter === "all" ? "var(--paper-raised)" : "transparent", color: "var(--ink)",
-            }}
-          >
-            All platforms
-          </button>
-          {INBOX_PLATFORMS.map((p) => (
+        {connectedPlatforms.length > 0 && (
+          <div style={{ display: "flex", alignItems: "stretch", border: "0.5px solid var(--border-strong)", borderRadius: 6, overflow: "hidden" }}>
             <button
-              key={p.key}
-              onClick={() => setPlatformFilter(p.key)}
-              title={p.label}
+              onClick={() => setPlatformFilter("all")}
               style={{
-                width: 30, height: 30, padding: 0, display: "flex", alignItems: "center", justifyContent: "center",
-                border: platformFilter === p.key ? "1.5px solid var(--accent)" : "0.5px solid var(--border-strong)",
-                background: platformFilter === p.key ? "var(--paper-raised)" : "transparent", borderRadius: 6,
+                width: "auto", padding: "0 12px", border: "none", borderRadius: 0,
+                background: platformFilter === "all" ? "var(--accent)" : "transparent",
+                color: platformFilter === "all" ? "#fff" : "var(--text-secondary)",
               }}
             >
-              <PlatformLogo platform={p} size={14} />
+              All
             </button>
-          ))}
+            {connectedPlatforms.map((p) => {
+              const accountName = connections?.[p.key]?.profile_name || p.label;
+              return (
+                <div key={p.key} style={{ display: "flex", alignItems: "center" }}>
+                  <span style={{ width: 1, alignSelf: "center", height: "60%", background: "var(--border-strong)", flexShrink: 0 }} />
+                  <button
+                    onClick={() => setPlatformFilter(p.key)}
+                    title={`${p.label} · ${accountName}`}
+                    style={{
+                      width: "auto", padding: "0 10px", border: "none", borderRadius: 0,
+                      display: "flex", alignItems: "center", gap: 6,
+                      background: platformFilter === p.key ? "var(--accent)" : "transparent",
+                      color: platformFilter === p.key ? "#fff" : "var(--text-secondary)",
+                    }}
+                  >
+                    <PlatformLogo platform={p} size={13} />
+                    {accountName}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div style={{ display: "flex", alignItems: "stretch", border: "0.5px solid var(--border-strong)", borderRadius: 6, overflow: "hidden" }}>
+          <button
+            onClick={() => setPendingOnly(false)}
+            style={{
+              width: "auto", padding: "0 12px", border: "none", borderRadius: 0,
+              background: !pendingOnly ? "var(--accent)" : "transparent",
+              color: !pendingOnly ? "#fff" : "var(--text-secondary)",
+            }}
+          >
+            All
+          </button>
+          <span style={{ width: 1, alignSelf: "center", height: "60%", background: "var(--border-strong)", flexShrink: 0 }} />
+          <button
+            onClick={() => setPendingOnly(true)}
+            style={{
+              width: "auto", padding: "0 12px", border: "none", borderRadius: 0,
+              background: pendingOnly ? "var(--accent)" : "transparent",
+              color: pendingOnly ? "#fff" : "var(--text-secondary)",
+            }}
+          >
+            Pending{unreadCount > 0 ? ` (${unreadCount})` : ""}
+          </button>
         </div>
       </div>
 

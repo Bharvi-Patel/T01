@@ -1648,9 +1648,12 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
     raw_body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256")
     if not _verify_meta_signature(raw_body, signature):
+        print(f"[webhooks/meta] signature verification failed - header present: {signature is not None}", file=sys.stderr)
         raise HTTPException(status_code=403, detail="Invalid signature")
 
     payload = json.loads(raw_body)
+    print(f"[webhooks/meta] received payload for object={payload.get('object')!r}, "
+          f"{len(payload.get('entry', []))} entr(y/ies)", file=sys.stderr)
 
     for entry in payload.get("entry", []):
         page_id = str(entry.get("id", ""))
@@ -1666,6 +1669,8 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
                 platform = Platform.INSTAGRAM if payload.get("object") == "instagram" else Platform.FACEBOOK
                 user_id = await _user_id_for_page(db, platform, page_id)
                 if user_id is None:
+                    print(f"[webhooks/meta] dropped comment - no PlatformConnection matches "
+                          f"platform={platform.value} page_id={page_id!r}", file=sys.stderr)
                     continue
                 await _upsert_inbox_item(
                     db, user_id=user_id, platform=platform, kind=InboxKind.COMMENT,
@@ -1685,15 +1690,19 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
                 # the page's stored access token fills that in.
                 connection = await _connection_for_page(db, Platform.INSTAGRAM, page_id)
                 if connection is None:
+                    print(f"[webhooks/meta] dropped mention - no PlatformConnection matches "
+                          f"platform=instagram page_id={page_id!r}", file=sys.stderr)
                     continue
                 credentials = connection.credentials or {}
                 page_access_token = credentials.get("page_access_token")
                 ig_page_id = credentials.get("ig_page_id")
                 if not page_access_token or not ig_page_id:
+                    print(f"[webhooks/meta] dropped mention - connection {connection.id} "
+                          f"missing page_access_token/ig_page_id in credentials", file=sys.stderr)
                     continue
                 context = await run_in_threadpool(_fetch_mention_context, page_access_token, ig_page_id, value)
                 await _upsert_inbox_item(
-                    db, user_id=connection.user_id, platform=Platform.INSTAGRAM, kind=InboxKind.COMMENT,
+                    db, user_id=connection.user_id, platform=Platform.INSTAGRAM, kind=InboxKind.MENTION,
                     external_id=str(value.get("comment_id") or value.get("media_id")),
                     thread_id=context.get("thread_id", str(value.get("media_id") or "")),
                     sender_name=context.get("sender_name"),
@@ -1702,10 +1711,15 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
                     raw_payload=change,
                 )
 
+            else:
+                print(f"[webhooks/meta] unhandled changes field={field!r} - ignoring", file=sys.stderr)
+
         for messaging_event in entry.get("messaging", []):
             platform = Platform.INSTAGRAM if payload.get("object") == "instagram" else Platform.FACEBOOK
             user_id = await _user_id_for_page(db, platform, page_id)
             if user_id is None:
+                print(f"[webhooks/meta] dropped messaging event - no PlatformConnection matches "
+                      f"platform={platform.value} page_id={page_id!r}", file=sys.stderr)
                 continue
             message = messaging_event.get("message", {})
             if message.get("is_echo"):
@@ -1717,14 +1731,14 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
             # story_mention-typed attachment rather than as a "changes"
             # field - Meta delivers "someone tagged you in their story" the
             # same way it delivers a DM, just with this attachment shape
-            # instead of message text. Recorded as a comment (public
-            # engagement), not a message, since there's no conversation to
-            # reply into the way a real DM has.
+            # instead of message text. Recorded as its own kind, not a
+            # message, since there's no conversation to reply into the way
+            # a real DM has.
             attachments = message.get("attachments", [])
             story_mention = next((a for a in attachments if a.get("type") == "story_mention"), None)
             if story_mention is not None:
                 await _upsert_inbox_item(
-                    db, user_id=user_id, platform=platform, kind=InboxKind.COMMENT,
+                    db, user_id=user_id, platform=platform, kind=InboxKind.STORY_REPLY,
                     external_id=str(message.get("mid") or f"story-{sender_id}-{messaging_event.get('timestamp')}"),
                     thread_id=str(sender_id or ""),
                     sender_name=None,  # not included in this event shape either
@@ -1744,7 +1758,12 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
                 raw_payload=messaging_event,
             )
 
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        print("[webhooks/meta] commit failed - event(s) from this payload were NOT saved:", file=sys.stderr)
+        traceback.print_exc()
+        raise
     return {"received": True}
 
 
@@ -1797,9 +1816,9 @@ async def mark_inbox_item_read(
 # gets its own callback path and its own handshake/signature verification,
 # even though the code is nearly identical to the /webhooks/meta routes
 # above. Threads has no DMs as a platform - only "replies" (someone replying
-# to your thread) and "mentions" (someone @-mentioning your account), both
-# recorded here as InboxKind.COMMENT since they're conceptually the same
-# "someone engaged with your post publicly" event as an IG/FB comment.
+# to your thread, recorded as InboxKind.COMMENT) and "mentions" (someone
+# @-mentioning your account, recorded as InboxKind.MENTION) - same kind
+# split as the Instagram comments/mentions handling above.
 #
 # Signing works the same way as the other Meta products - Threads payloads
 # are also signed with the app's secret via X-Hub-Signature-256, so
@@ -1823,23 +1842,29 @@ async def threads_webhook_receive(request: _Request, db: AsyncSession = Depends(
     raw_body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256")
     if not _verify_meta_signature(raw_body, signature):
+        print(f"[webhooks/threads] signature verification failed - header present: {signature is not None}", file=sys.stderr)
         raise HTTPException(status_code=403, detail="Invalid signature")
 
     payload = json.loads(raw_body)
+    print(f"[webhooks/threads] received payload, {len(payload.get('entry', []))} entr(y/ies)", file=sys.stderr)
 
     for entry in payload.get("entry", []):
         threads_user_id = str(entry.get("id", ""))
         user_id = await _user_id_for_threads_account(db, threads_user_id)
         if user_id is None:
+            print(f"[webhooks/threads] dropped entry - no PlatformConnection matches "
+                  f"threads_user_id={threads_user_id!r}", file=sys.stderr)
             continue
 
         for change in entry.get("changes", []):
             field = change.get("field")  # "replies" or "mentions"
             if field not in ("replies", "mentions"):
+                print(f"[webhooks/threads] unhandled changes field={field!r} - ignoring", file=sys.stderr)
                 continue
             value = change.get("value", {})
+            kind = InboxKind.COMMENT if field == "replies" else InboxKind.MENTION
             await _upsert_inbox_item(
-                db, user_id=user_id, platform=Platform.THREADS, kind=InboxKind.COMMENT,
+                db, user_id=user_id, platform=Platform.THREADS, kind=kind,
                 external_id=str(value.get("id")),
                 thread_id=str(value.get("root_post", {}).get("id") or value.get("replied_to", {}).get("id") or ""),
                 sender_name=(value.get("from") or {}).get("username"),
@@ -1848,5 +1873,10 @@ async def threads_webhook_receive(request: _Request, db: AsyncSession = Depends(
                 raw_payload=change,
             )
 
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        print("[webhooks/threads] commit failed - event(s) from this payload were NOT saved:", file=sys.stderr)
+        traceback.print_exc()
+        raise
     return {"received": True}

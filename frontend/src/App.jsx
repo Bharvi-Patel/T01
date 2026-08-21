@@ -381,7 +381,7 @@ export default function App() {
           )}
 
           {step === "inbox" && (
-            <Inbox token={token} onAuthError={handleLogout} />
+            <Inbox token={token} connections={connections} onAuthError={handleLogout} />
           )}
 
           {["billing", "notifications"].includes(step) && (

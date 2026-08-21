@@ -1,4 +1,5 @@
 import os
+import sys
 import requests
 from dotenv import load_dotenv
 
@@ -141,7 +142,33 @@ def _facebook_page_picture_url(page_id: str, page_access_token: str) -> str | No
         return None
 
 
+def _subscribe_page_to_webhooks(page_id: str, page_access_token: str, fields: str) -> None:
+    """Toggling fields on in the App Dashboard only tells Meta which events
+    your app is *capable* of receiving - it does not enroll any particular
+    Page/IG account to actually send them. That enrollment is this call,
+    and it has to happen once per connected account (safe to repeat -
+    resubscribing just overwrites the field list). Without it, webhooks
+    the app is otherwise correctly configured for will never fire, with no
+    error surfaced anywhere - the events are simply never sent.
+    Best-effort: the account connection itself has already succeeded by
+    the time this runs, so a failure here shouldn't undo that - it just
+    means comments/DMs/mentions won't reach the inbox until retried.
+    """
+    try:
+        resp = requests.post(
+            f"https://graph.facebook.com/v21.0/{page_id}/subscribed_apps",
+            params={"subscribed_fields": fields, "access_token": page_access_token},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        if not resp.json().get("success"):
+            print(f"[oauth_platforms] subscribed_apps for page {page_id} returned success=false: {resp.text}", file=sys.stderr)
+    except requests.RequestException as e:
+        print(f"[oauth_platforms] subscribed_apps failed for page {page_id}: {e}", file=sys.stderr)
+
+
 def facebook_credentials_from_page(page: dict) -> dict:
+    _subscribe_page_to_webhooks(page["id"], page["access_token"], "feed,messages")
     return {
         "page_access_token": page["access_token"],
         "page_id": page["id"],
@@ -164,6 +191,12 @@ def instagram_credentials_from_page(page: dict) -> dict:
     ig_account = ig_payload.get("instagram_business_account")
     if not ig_account:
         raise ValueError(f"The Page '{page.get('name', page['id'])}' has no linked Instagram Business account.")
+
+    # Instagram webhooks (comments/mentions/messages) route through the
+    # linked Facebook Page's subscription, same endpoint as the Facebook
+    # case above, just with IG-specific fields and the mentions field
+    # this app relies on for InboxKind.MENTION.
+    _subscribe_page_to_webhooks(page["id"], page["access_token"], "comments,mentions,messages")
 
     return {
         "page_access_token": page["access_token"],

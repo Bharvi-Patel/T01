@@ -117,6 +117,14 @@ class MediaKind(str, enum.Enum):
 class InboxKind(str, enum.Enum):
     COMMENT = "comment"
     MESSAGE = "message"
+    # Split out from COMMENT: someone @-mentioned the account in a comment
+    # or caption (Instagram "mentions" webhook field), rather than commenting
+    # on the account's own post.
+    MENTION = "mention"
+    # Split out from COMMENT: someone tagged the account in their story.
+    # Arrives via the "messaging" webhook (a story_mention attachment) even
+    # though it's not a DM - see meta_webhook_receive.
+    STORY_REPLY = "story_reply"
 
 
 # Models
