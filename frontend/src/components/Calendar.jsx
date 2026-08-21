@@ -8,6 +8,10 @@ import { PLATFORMS, PlatformLogo } from "./platforms";
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MAX_CHIPS_PER_DAY = 2;
+// Platforms the /connect/{platform}/history endpoint actually supports —
+// LinkedIn only grants this app publish-only access, so its pre-existing
+// posts can never be fetched (see main.py's platform_post_history).
+const HISTORY_SUPPORTED_PLATFORMS = ["instagram", "facebook", "threads"];
 
 
 function platformByKey(key) {
@@ -343,12 +347,24 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
       return list;
     });
 
-    // When filtered to one account, also pull that account's real post
-    // history straight from the platform — this is the only way to show
-    // posts made before the account was ever connected to T01, since those
-    // never had a T01 draft to begin with.
+    // Also pull real post history straight from each connected platform —
+    // this is the only way to show posts made before the account was ever
+    // connected to T01, since those never had a T01 draft to begin with.
+    // In the "All" view this runs for every connected, history-capable
+    // platform at once and failures are skipped quietly (one platform
+    // erroring shouldn't block the rest); filtered to one account, a
+    // failure is surfaced via historyNotice since it's the only thing
+    // that view is showing beyond T01's own drafts.
     const historyPromise = accountFilter === "all"
-      ? Promise.resolve([])
+      ? Promise.all(
+          connectedPlatforms
+            .filter((p) => HISTORY_SUPPORTED_PLATFORMS.includes(p.key))
+            .map((p) =>
+              getPlatformHistory({ token, platform: p.key })
+                .then((res) => (res.posts || []).map((post) => externalPostToDraft(p.key, post)))
+                .catch(() => [])
+            )
+        ).then((lists) => lists.flat())
       : getPlatformHistory({ token, platform: accountFilter })
           .then((res) => (res.posts || []).map((p) => externalPostToDraft(accountFilter, p)))
           .catch((e) => {
@@ -377,7 +393,18 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
             }
           });
         });
-        const newExternal = externalPosts.filter((p) => !knownPermalinks.has(p.permalink));
+        let newExternal = externalPosts.filter((p) => !knownPermalinks.has(p.permalink));
+        if (accountFilter === "all") {
+          const from = grid[0];
+          const to = new Date(grid[grid.length - 1]);
+          to.setDate(to.getDate() + 1); // cover the whole last day
+          newExternal = newExternal.filter((p) => {
+            const d = effectiveDate(p);
+            if (!d) return false;
+            const dt = new Date(d);
+            return dt >= from && dt < to;
+          });
+        }
         setDrafts([...t01Drafts, ...newExternal]);
       })
       .catch((e) => {
@@ -386,7 +413,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
       })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, accountFilter, viewMode, viewDate.getFullYear(), viewDate.getMonth(), viewDate.getDate()]);
+  }, [token, accountFilter, connections, viewMode, viewDate.getFullYear(), viewDate.getMonth(), viewDate.getDate()]);
 
   useEffect(refresh, [refresh]);
 
@@ -499,9 +526,10 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
         <p style={{ fontFamily: "var(--font-display)", fontSize: "clamp(20px, 3vw, 26px)", color: "var(--ink)", margin: 0 }}>
           {periodLabel}
         </p>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           {connectedPlatforms.length > 0 && (
-            <div style={{ display: "flex", border: "0.5px solid var(--border-strong)", borderRadius: 6, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "stretch", border: "0.5px solid var(--border-strong)", borderRadius: 6, overflow: "hidden" }}>
               <button
                 onClick={() => setAccountFilter("all")}
                 style={{
@@ -512,24 +540,36 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
               >
                 All
               </button>
-              {connectedPlatforms.map((p) => (
-                <button
-                  key={p.key}
-                  onClick={() => setAccountFilter(p.key)}
-                  title={connections?.[p.key]?.profile_name ? `${p.label} · ${connections[p.key].profile_name}` : p.label}
-                  style={{
-                    width: "auto", padding: "0 10px", border: "none", borderRadius: 0,
-                    display: "flex", alignItems: "center", gap: 6,
-                    background: accountFilter === p.key ? "var(--accent)" : "transparent",
-                    color: accountFilter === p.key ? "#fff" : "var(--text-secondary)",
-                  }}
-                >
-                  <PlatformLogo platform={p} size={13} />
-                  {p.label}
-                </button>
-              ))}
+              {connectedPlatforms.map((p) => {
+                const accountName = connections?.[p.key]?.profile_name || p.label;
+                return (
+                  <div key={p.key} style={{ display: "flex", alignItems: "center" }}>
+                    <span style={{ width: 1, alignSelf: "center", height: "60%", background: "var(--border-strong)", flexShrink: 0 }} />
+                    <button
+                      onClick={() => setAccountFilter(p.key)}
+                      title={`${p.label} · ${accountName}`}
+                      style={{
+                        width: "auto", padding: "0 10px", border: "none", borderRadius: 0,
+                        display: "flex", alignItems: "center", gap: 6,
+                        background: accountFilter === p.key ? "var(--accent)" : "transparent",
+                        color: accountFilter === p.key ? "#fff" : "var(--text-secondary)",
+                      }}
+                    >
+                      <PlatformLogo platform={p} size={13} />
+                      {accountName}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
+        </div>
+        <div style={{ display: "flex", flex: "1 1 260px", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button onClick={() => setViewDate(startOfDay(new Date()))} style={{ width: "auto", padding: "0 14px" }}>Today</button>
+            <button onClick={() => navigate(-1)} style={{ width: "auto", padding: "0 14px" }} aria-label={viewMode === "week" ? "Previous week" : "Previous month"}>‹</button>
+            <button onClick={() => navigate(1)} style={{ width: "auto", padding: "0 14px" }} aria-label={viewMode === "week" ? "Next week" : "Next month"}>›</button>
+          </div>
           <div style={{ display: "flex", border: "0.5px solid var(--border-strong)", borderRadius: 6, overflow: "hidden" }}>
             <button
               onClick={() => setViewMode("month")}
@@ -552,32 +592,12 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
               Week
             </button>
           </div>
-          <button onClick={() => setViewDate(startOfDay(new Date()))} style={{ width: "auto", padding: "0 14px" }}>Today</button>
-          <button onClick={() => navigate(-1)} style={{ width: "auto", padding: "0 14px" }} aria-label={viewMode === "week" ? "Previous week" : "Previous month"}>‹</button>
-          <button onClick={() => navigate(1)} style={{ width: "auto", padding: "0 14px" }} aria-label={viewMode === "week" ? "Next week" : "Next month"}>›</button>
+        </div>
         </div>
       </div>
 
       {error && (
         <p style={{ fontSize: 13, color: "var(--danger)", background: "var(--danger-bg)", borderRadius: "var(--radius)", padding: "8px 12px", marginBottom: 16 }}>          {error}
-        </p>
-      )}
-
-      {accountFilter !== "all" && (
-        <p style={{
-          fontSize: 12.5, color: "var(--text-secondary)", background: "var(--paper-raised)",
-          border: "0.5px solid var(--border)", borderRadius: "var(--radius)", padding: "8px 12px",
-          marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-        }}>
-          <span>
-            Showing every post ever scheduled or published on{" "}
-            <strong style={{ color: "var(--ink)" }}>{platformByKey(accountFilter)?.label}</strong>
-            {connections?.[accountFilter]?.profile_name ? ` (${connections[accountFilter].profile_name})` : ""} —
-            including posts made on the platform directly, before it was connected here. Use ‹ › to browse.
-          </span>
-          <button onClick={() => setAccountFilter("all")} style={{ width: "auto", padding: "0 12px", flexShrink: 0 }}>
-            Clear
-          </button>
         </p>
       )}
 

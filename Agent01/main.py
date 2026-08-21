@@ -1363,7 +1363,7 @@ async def platform_post_history(
         # approving that additional permission for the app.
         raise HTTPException(
             status_code=400,
-            detail="LinkedIn doesn't allow this app to read your past posts (only to publish new ones), "
+            detail="LinkedIn doesn't allow to read your past posts (only to publish new ones), "
                    "so pre-existing LinkedIn posts can't be shown here.",
         )
     if platform_enum not in (Platform.INSTAGRAM, Platform.FACEBOOK, Platform.THREADS):

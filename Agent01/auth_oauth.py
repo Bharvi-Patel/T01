@@ -1,4 +1,8 @@
+import base64
+import hashlib
 import os
+import secrets
+
 import requests
 from dotenv import load_dotenv
 
@@ -7,41 +11,81 @@ from dotenv import load_dotenv
 # caused every OAuth provider to read client_id as None).
 load_dotenv(override=False)
 
-LINKEDIN_CLIENT_ID = os.environ.get("LINKEDIN_CLIENT_ID")
-LINKEDIN_CLIENT_SECRET = os.environ.get("LINKEDIN_CLIENT_SECRET")
-META_APP_ID = os.environ.get("APP_ID") or os.environ.get("META_APP_ID")
-META_APP_SECRET = os.environ.get("APP_SECRET") or os.environ.get("META_APP_SECRET")
-THREADS_CLIENT_ID = os.environ.get("THREADS_APP_ID")
-THREADS_CLIENT_SECRET = os.environ.get("THREADS_APP_SECRET")
+# Reuse the same app credentials oauth_platforms.py already loads for the
+# publish connectors — Google is the only provider that needs its own app
+# registration; LinkedIn/Facebook already have one from the connector flow,
+# just with a second redirect URI (/auth/{provider}/callback) added to it.
+from oauth_platforms import (
+    LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET,
+    META_APP_ID, META_APP_SECRET,
+)
+
 BACKEND_BASE_URL = os.environ.get("BACKEND_BASE_URL", "http://localhost:8000")
-
-# Threads rejects non-HTTPS redirect_uris outright, even for localhost -
-# unlike LinkedIn/Facebook/Instagram, which tolerate plain http://localhost
-# for local dev. Rather than force every platform onto an HTTPS ngrok
-# tunnel (and having to re-register 4 dashboards every time ngrok restarts
-# with a new URL), Threads gets its own overridable base. Point
-# THREADS_BACKEND_BASE_URL at your current ngrok HTTPS URL and leave
-# BACKEND_BASE_URL alone for everything else.
-THREADS_BACKEND_BASE_URL = os.environ.get("THREADS_BACKEND_BASE_URL", BACKEND_BASE_URL)
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+X_CLIENT_ID = os.environ.get("X_CLIENT_ID")
+X_CLIENT_SECRET = os.environ.get("X_CLIENT_SECRET")
 
 
-def _redirect_uri(platform: str) -> str:
-    base = THREADS_BACKEND_BASE_URL if platform == "threads" else BACKEND_BASE_URL
-    return f"{base}/connect/{platform}/callback"
+def _redirect_uri(provider: str) -> str:
+    return f"{BACKEND_BASE_URL}/auth/{provider}/callback"
 
 
-# LinkedIn 
+# Google
 
-def linkedin_authorize_url(state: str) -> str:
+def google_authorize_url(state: str) -> str:
+    return (
+        "https://accounts.google.com/o/oauth2/v2/auth"
+        f"?response_type=code&client_id={GOOGLE_CLIENT_ID}"
+        f"&redirect_uri={_redirect_uri('google')}&state={state}"
+        "&scope=openid%20email%20profile&access_type=online"
+    )
+
+
+def google_finish(code: str) -> dict:
+    resp = requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": _redirect_uri("google"),
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    access_token = resp.json()["access_token"]
+
+    userinfo = requests.get(
+        "https://openidconnect.googleapis.com/v1/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=15,
+    )
+    userinfo.raise_for_status()
+    info = userinfo.json()
+    return {
+        "provider_user_id": info["sub"],
+        "email": info.get("email"),
+        "profile_name": info.get("name"),
+        "profile_picture_url": info.get("picture"),
+    }
+
+
+# LinkedIn (login only — just identifies the member via openid/profile/email;
+# the w_member_social publish scope is a separate authorization, requested by
+# oauth_platforms.py's connector flow, not this one)
+
+def linkedin_login_authorize_url(state: str) -> str:
     return (
         "https://www.linkedin.com/oauth/v2/authorization"
         f"?response_type=code&client_id={LINKEDIN_CLIENT_ID}"
         f"&redirect_uri={_redirect_uri('linkedin')}&state={state}"
-        "&scope=openid%20profile%20w_member_social"
+        "&scope=openid%20profile%20email"
     )
 
 
-def linkedin_finish(code: str) -> dict:
+def linkedin_login_finish(code: str) -> dict:
     resp = requests.post(
         "https://www.linkedin.com/oauth/v2/accessToken",
         data={
@@ -64,265 +108,107 @@ def linkedin_finish(code: str) -> dict:
     userinfo.raise_for_status()
     info = userinfo.json()
     return {
-        "access_token": access_token,
-        "member_id": info["sub"],
+        "provider_user_id": info["sub"],
+        "email": info.get("email"),
         "profile_name": info.get("name"),
         "profile_picture_url": info.get("picture"),
     }
 
 
-# Facebook 
+# Facebook (login only — public_profile + email, not the Page-publish scopes
+# oauth_platforms.py's connector flow requests)
 
-def facebook_authorize_url(state: str) -> str:
+def facebook_login_authorize_url(state: str) -> str:
     return (
         "https://www.facebook.com/v21.0/dialog/oauth"
         f"?client_id={META_APP_ID}&redirect_uri={_redirect_uri('facebook')}&state={state}"
-        "&scope=pages_manage_posts,pages_read_engagement,pages_show_list,business_management"
+        "&scope=public_profile,email"
     )
 
 
-def _meta_exchange_long_lived(short_token: str) -> str:
+def facebook_login_finish(code: str) -> dict:
     resp = requests.get(
         "https://graph.facebook.com/v21.0/oauth/access_token",
-        params={"grant_type": "fb_exchange_token", "client_id": META_APP_ID,
-                "client_secret": META_APP_SECRET, "fb_exchange_token": short_token},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-
-def list_pages(long_lived_user_token: str) -> list[dict]:
-    resp = requests.get(
-        "https://graph.facebook.com/v21.0/me/accounts",
-        params={"access_token": long_lived_user_token},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    pages = resp.json().get("data", [])
-    if not pages:
-        raise ValueError("No Facebook Pages found - a Page is required to publish.")
-    return pages  # each: {"id", "name", "access_token", ...}
-
-
-def facebook_exchange(code: str) -> str:
-    """Code -> long-lived user token. Shared first step for Facebook + Instagram."""
-    resp = requests.get(
-        "https://graph.facebook.com/v21.0/oauth/access_token",
-        params={"client_id": META_APP_ID, "redirect_uri": _redirect_uri("facebook"),
-                "client_secret": META_APP_SECRET, "code": code},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    return _meta_exchange_long_lived(resp.json()["access_token"])
-
-
-def instagram_exchange(code: str) -> str:
-    resp = requests.get(
-        "https://graph.facebook.com/v21.0/oauth/access_token",
-        params={"client_id": META_APP_ID, "redirect_uri": _redirect_uri("instagram"),
-                "client_secret": META_APP_SECRET, "code": code},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    return _meta_exchange_long_lived(resp.json()["access_token"])
-
-
-def _facebook_page_picture_url(page_id: str, page_access_token: str) -> str | None:
-    try:
-        resp = requests.get(
-            f"https://graph.facebook.com/v21.0/{page_id}/picture",
-            params={"redirect": "false", "access_token": page_access_token},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return resp.json().get("data", {}).get("url")
-    except requests.RequestException:
-        return None
-
-
-def facebook_credentials_from_page(page: dict) -> dict:
-    return {
-        "page_access_token": page["access_token"],
-        "page_id": page["id"],
-        "profile_name": page.get("name"),
-        "profile_picture_url": _facebook_page_picture_url(page["id"], page["access_token"]),
-    }
-
-
-def instagram_credentials_from_page(page: dict) -> dict:
-    ig_resp = requests.get(
-        f"https://graph.facebook.com/v21.0/{page['id']}",
         params={
-            "fields": "instagram_business_account{id,username,profile_picture_url}",
-            "access_token": page["access_token"],
+            "client_id": META_APP_ID,
+            "redirect_uri": _redirect_uri("facebook"),
+            "client_secret": META_APP_SECRET,
+            "code": code,
         },
         timeout=15,
     )
-    ig_resp.raise_for_status()
-    ig_payload = ig_resp.json()
-    ig_account = ig_payload.get("instagram_business_account")
-    if not ig_account:
-        raise ValueError(f"The Page '{page.get('name', page['id'])}' has no linked Instagram Business account.")
+    resp.raise_for_status()
+    access_token = resp.json()["access_token"]
 
+    profile = requests.get(
+        "https://graph.facebook.com/me",
+        params={"fields": "id,name,email,picture", "access_token": access_token},
+        timeout=15,
+    )
+    profile.raise_for_status()
+    info = profile.json()
     return {
-        "page_access_token": page["access_token"],
-        "ig_page_id": ig_account["id"],
-        "profile_name": ig_account.get("username"),
-        "profile_picture_url": ig_account.get("profile_picture_url"),
+        "provider_user_id": info["id"],
+        "email": info.get("email"),
+        "profile_name": info.get("name"),
+        "profile_picture_url": (info.get("picture") or {}).get("data", {}).get("url"),
     }
 
 
-def instagram_fetch_media(page_access_token: str, ig_page_id: str, limit: int = 50) -> list[dict]:
-    """Pull the account's real post history straight from Instagram, including
-    everything posted before this account was ever connected to T01 (there's
-    no local record of those - they only exist on Instagram's side)."""
-    posts, url = [], f"https://graph.facebook.com/v21.0/{ig_page_id}/media"
-    params = {
-        "fields": "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp",
-        "access_token": page_access_token,
-        "limit": min(limit, 100),
-    }
-    while url and len(posts) < limit:
-        resp = requests.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        payload = resp.json()
-        posts.extend(payload.get("data", []))
-        url = payload.get("paging", {}).get("next")
-        params = None  # `next` already carries every query param it needs
-    return posts[:limit]
+LOGIN_PROVIDERS = {
+    "google": {"authorize_url": google_authorize_url, "finish": google_finish},
+    "linkedin": {"authorize_url": linkedin_login_authorize_url, "finish": linkedin_login_finish},
+    "facebook": {"authorize_url": facebook_login_authorize_url, "finish": facebook_login_finish},
+}
 
 
-def facebook_fetch_posts(page_access_token: str, page_id: str, limit: int = 50) -> list[dict]:
-    """Same idea as instagram_fetch_media, but for a Facebook Page's feed."""
-    posts, url = [], f"https://graph.facebook.com/v21.0/{page_id}/posts"
-    params = {
-        "fields": "id,message,full_picture,permalink_url,created_time",
-        "access_token": page_access_token,
-        "limit": min(limit, 100),
-    }
-    while url and len(posts) < limit:
-        resp = requests.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        payload = resp.json()
-        posts.extend(payload.get("data", []))
-        url = payload.get("paging", {}).get("next")
-        params = None
-    return posts[:limit]
+# X / Twitter — special-cased (not folded into LOGIN_PROVIDERS) because X's
+# OAuth2 login flow requires PKCE: a code_verifier generated at authorize-url
+# time that must be handed back in at finish time. main.py stores it
+# server-side keyed by `state` between the two calls.
 
-
-def facebook_finish(code: str) -> dict:
-    long_token = facebook_exchange(code)
-    pages = list_pages(long_token)
-    return facebook_credentials_from_page(pages[0])
-
-
-# Instagram 
-
-def instagram_authorize_url(state: str) -> str:
-    return (
-        "https://www.facebook.com/v21.0/dialog/oauth"
-        f"?client_id={META_APP_ID}&redirect_uri={_redirect_uri('instagram')}&state={state}"
-        "&scope=pages_show_list,pages_read_engagement,business_management,instagram_basic,instagram_content_publish"
+def x_start(state: str) -> tuple[str, str]:
+    """Returns (authorize_url, code_verifier). Caller must persist
+    code_verifier (keyed by state) and pass it into x_finish later."""
+    code_verifier = secrets.token_urlsafe(64)[:128]
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest()).decode().rstrip("=")
+    url = (
+        "https://twitter.com/i/oauth2/authorize"
+        f"?response_type=code&client_id={X_CLIENT_ID}"
+        f"&redirect_uri={_redirect_uri('x')}&state={state}"
+        "&scope=tweet.read%20users.read"
+        f"&code_challenge={challenge}&code_challenge_method=S256"
     )
+    return url, code_verifier
 
 
-def instagram_finish(code: str) -> dict:
-    long_token = instagram_exchange(code)
-    pages = list_pages(long_token)
-    return instagram_credentials_from_page(pages[0])
-
-
-# Threads 
-
-def threads_authorize_url(state: str) -> str:
-    # Meta made the threads.net -> threads.com migration permanent and
-    # directional (.net now always bounces to .com). That's a bare
-    # domain-level redirect, and it drops the query string (client_id,
-    # redirect_uri, scope, state) along the way — landing on .com with no
-    # params, which Threads reports as a generic "unknown error". Point
-    # straight at threads.com so nothing gets lost in the hop.
-    return (
-        "https://www.threads.com/oauth/authorize"
-        f"?client_id={THREADS_CLIENT_ID}&redirect_uri={_redirect_uri('threads')}"
-        f"&scope=threads_basic,threads_content_publish&response_type=code&state={state}"
-    )
-
-
-def threads_finish(code: str) -> dict:
+def x_finish(code: str, code_verifier: str) -> dict:
     resp = requests.post(
-        "https://graph.threads.net/oauth/access_token",
-        data={"client_id": THREADS_CLIENT_ID, "client_secret": THREADS_CLIENT_SECRET,
-              "grant_type": "authorization_code", "redirect_uri": _redirect_uri("threads"), "code": code},
+        "https://api.twitter.com/2/oauth2/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": _redirect_uri("x"),
+            "code_verifier": code_verifier,
+            "client_id": X_CLIENT_ID,
+        },
+        auth=(X_CLIENT_ID, X_CLIENT_SECRET),
         timeout=15,
     )
     resp.raise_for_status()
-    short_token = resp.json()["access_token"]
+    access_token = resp.json()["access_token"]
 
-    long_resp = requests.get(
-        "https://graph.threads.net/access_token",
-        params={"grant_type": "th_exchange_token", "client_secret": THREADS_CLIENT_SECRET, "access_token": short_token},
+    profile = requests.get(
+        "https://api.twitter.com/2/users/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+        params={"user.fields": "profile_image_url"},
         timeout=15,
     )
-    long_resp.raise_for_status()
-    long_token = long_resp.json()["access_token"]
-
-    # The user id is required - the connection can't be saved without it, so
-    # that call stays unguarded. Username/profile picture are nice-to-have
-    # display data only, so a field-name or permissions hiccup there must
-    # never take down the whole connect flow.
-    me_resp = requests.get(
-        "https://graph.threads.net/v1.0/me",
-        params={"fields": "id", "access_token": long_token},
-        timeout=15,
-    )
-    me_resp.raise_for_status()
-    threads_user_id = me_resp.json()["id"]
-
-    profile_name, profile_picture_url = None, None
-    try:
-        profile_resp = requests.get(
-            "https://graph.threads.net/v1.0/me",
-            params={"fields": "username,threads_profile_picture_url", "access_token": long_token},
-            timeout=15,
-        )
-        profile_resp.raise_for_status()
-        profile = profile_resp.json()
-        profile_name = profile.get("username")
-        profile_picture_url = profile.get("threads_profile_picture_url")
-    except requests.RequestException:
-        pass
-
+    profile.raise_for_status()
+    data = profile.json()["data"]
     return {
-        "access_token": long_token,
-        "threads_user_id": threads_user_id,
-        "profile_name": profile_name,
-        "profile_picture_url": profile_picture_url,
+        "provider_user_id": data["id"],
+        "email": None,  # X's API doesn't expose email under this scope
+        "profile_name": data.get("name"),
+        "profile_picture_url": data.get("profile_image_url"),
     }
-
-
-def threads_fetch_posts(access_token: str, threads_user_id: str, limit: int = 50) -> list[dict]:
-    """Real Threads post history, including anything posted before this
-    account was connected to T01."""
-    posts, url = [], f"https://graph.threads.net/v1.0/{threads_user_id}/threads"
-    params = {
-        "fields": "id,text,media_type,media_url,permalink,timestamp",
-        "access_token": access_token,
-        "limit": min(limit, 100),
-    }
-    while url and len(posts) < limit:
-        resp = requests.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        payload = resp.json()
-        posts.extend(payload.get("data", []))
-        url = payload.get("paging", {}).get("next")
-        params = None
-    return posts[:limit]
-
-
-OAUTH_PROVIDERS = {
-    "linkedin": {"authorize_url": linkedin_authorize_url, "finish": linkedin_finish},
-    "facebook": {"authorize_url": facebook_authorize_url, "finish": facebook_finish},
-    "instagram": {"authorize_url": instagram_authorize_url, "finish": instagram_finish},
-    "threads": {"authorize_url": threads_authorize_url, "finish": threads_finish},
-}
