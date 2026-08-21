@@ -272,24 +272,42 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
   const [expandedContent, setExpandedContent] = useState({});
   const [expandLoadingId, setExpandLoadingId] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+  // Which connected account to show full post history for ("all" = normal,
+  // date-bounded calendar view). Picking a platform switches to loading every
+  // post ever scheduled/published on that account, regardless of the month/
+  // week currently in view.
+  const [accountFilter, setAccountFilter] = useState("all");
 
   const grid = buildGrid(viewDate, viewMode);
+  const connectedPlatforms = PLATFORMS.filter((p) => connections?.[p.key]);
 
   const refresh = useCallback(() => {
     setLoading(true);
     setError("");
-    const from = grid[0];
-    const to = new Date(grid[grid.length - 1]);
-    to.setDate(to.getDate() + 1); // cover the whole last day
-    getDrafts({ token, scheduledFrom: from.toISOString(), scheduledTo: to.toISOString() })
-      .then((res) => setDrafts(res.drafts.filter((d) => effectiveDate(d))))
+    const params = { token };
+    if (accountFilter === "all") {
+      const from = grid[0];
+      const to = new Date(grid[grid.length - 1]);
+      to.setDate(to.getDate() + 1); // cover the whole last day
+      params.scheduledFrom = from.toISOString();
+      params.scheduledTo = to.toISOString();
+    }
+    // else: no date bounds at all — pull the account's entire post history.
+    getDrafts(params)
+      .then((res) => {
+        let list = res.drafts.filter((d) => effectiveDate(d));
+        if (accountFilter !== "all") {
+          list = list.filter((d) => chipPlatforms(d).includes(accountFilter));
+        }
+        setDrafts(list);
+      })
       .catch((e) => {
         if (e.status === 401) return onAuthError?.();
         setError(e.message || "Could not load the calendar.");
       })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, viewMode, viewDate.getFullYear(), viewDate.getMonth(), viewDate.getDate()]);
+  }, [token, accountFilter, viewMode, viewDate.getFullYear(), viewDate.getMonth(), viewDate.getDate()]);
 
   useEffect(refresh, [refresh]);
 
@@ -402,7 +420,37 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
         <p style={{ fontFamily: "var(--font-display)", fontSize: "clamp(20px, 3vw, 26px)", color: "var(--ink)", margin: 0 }}>
           {periodLabel}
         </p>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {connectedPlatforms.length > 0 && (
+            <div style={{ display: "flex", border: "0.5px solid var(--border-strong)", borderRadius: 6, overflow: "hidden" }}>
+              <button
+                onClick={() => setAccountFilter("all")}
+                style={{
+                  width: "auto", padding: "0 12px", border: "none", borderRadius: 0,
+                  background: accountFilter === "all" ? "var(--accent)" : "transparent",
+                  color: accountFilter === "all" ? "#fff" : "var(--text-secondary)",
+                }}
+              >
+                All
+              </button>
+              {connectedPlatforms.map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => setAccountFilter(p.key)}
+                  title={connections?.[p.key]?.profile_name ? `${p.label} · ${connections[p.key].profile_name}` : p.label}
+                  style={{
+                    width: "auto", padding: "0 10px", border: "none", borderRadius: 0,
+                    display: "flex", alignItems: "center", gap: 6,
+                    background: accountFilter === p.key ? "var(--accent)" : "transparent",
+                    color: accountFilter === p.key ? "#fff" : "var(--text-secondary)",
+                  }}
+                >
+                  <PlatformLogo platform={p} size={13} />
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div style={{ display: "flex", border: "0.5px solid var(--border-strong)", borderRadius: 6, overflow: "hidden" }}>
             <button
               onClick={() => setViewMode("month")}
@@ -433,6 +481,24 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
 
       {error && (
         <p style={{ fontSize: 13, color: "var(--danger)", background: "var(--danger-bg)", borderRadius: "var(--radius)", padding: "8px 12px", marginBottom: 16 }}>          {error}
+        </p>
+      )}
+
+      {accountFilter !== "all" && (
+        <p style={{
+          fontSize: 12.5, color: "var(--text-secondary)", background: "var(--paper-raised)",
+          border: "0.5px solid var(--border)", borderRadius: "var(--radius)", padding: "8px 12px",
+          marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+        }}>
+          <span>
+            Showing every post ever scheduled or published on{" "}
+            <strong style={{ color: "var(--ink)" }}>{platformByKey(accountFilter)?.label}</strong>
+            {connections?.[accountFilter]?.profile_name ? ` (${connections[accountFilter].profile_name})` : ""} —
+            not just {viewMode === "week" ? "this week" : "this month"}. Use ‹ › to browse.
+          </span>
+          <button onClick={() => setAccountFilter("all")} style={{ width: "auto", padding: "0 12px", flexShrink: 0 }}>
+            Clear
+          </button>
         </p>
       )}
 
