@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -32,8 +34,8 @@ from emailer import send_verification_email
 import time
 from fastapi.responses import RedirectResponse
 from oauth_platforms import (
-    OAUTH_PROVIDERS, facebook_exchange, instagram_exchange, 
-    facebook_credentials_from_page, instagram_credentials_from_page, list_pages,  
+    META_APP_SECRET, OAUTH_PROVIDERS, facebook_exchange, instagram_exchange,
+    facebook_credentials_from_page, instagram_credentials_from_page, list_pages,
 )
 
 PENDING_PAGE_SELECTIONS: dict[str, dict] = {} # pending_id -> {"user_id","platform","pages","expires_at"}
@@ -95,6 +97,8 @@ from db import (
     AuthSession,
     Draft,
     DraftStatus,
+    InboxItem,
+    InboxKind,
     MediaAsset,
     MediaKind,
     OAuthIdentity,
@@ -1348,3 +1352,385 @@ async def disconnect_platform(platform: str, db: AsyncSession = Depends(get_db),
     await db.delete(connection)
     await db.commit()
     return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Meta webhooks (Instagram + Facebook Page comments & messages)
+#
+# Two routes, both at /webhooks/meta:
+#   GET  - the one-time handshake Meta sends when you save the callback URL
+#          in the App Dashboard. Must echo back hub.challenge as plain text
+#          if hub.verify_token matches ours, or the dashboard shows
+#          "couldn't be validated".
+#   POST - the actual event deliveries (new comment / new message). Verified
+#          via the X-Hub-Signature-256 header (HMAC-SHA256 of the raw body,
+#          signed with META_APP_SECRET) before we touch the payload, since
+#          this endpoint is public by necessity.
+#
+# Events are matched to a user by looking up PlatformConnection rows whose
+# credentials->>'page_id' (Facebook) or credentials->>'ig_page_id'
+# (Instagram) equal the id in the payload - see _user_id_for_page below.
+# Unmatched events (e.g. a stale/disconnected page) are logged and dropped
+# rather than raising, since Meta will keep retrying a failing webhook and
+# we don't want redelivery storms over an account someone already unlinked.
+# ---------------------------------------------------------------------------
+
+META_WEBHOOK_VERIFY_TOKEN = os.environ.get("META_WEBHOOK_VERIFY_TOKEN")
+
+# FastAPI needs the raw query param names (hub.mode, hub.verify_token,
+# hub.challenge) which aren't valid Python identifiers, so this route reads
+# them off the raw Request instead of declaring them as function params.
+from fastapi import Request as _Request
+from fastapi.responses import PlainTextResponse as _PlainTextResponse
+
+
+@app.get("/webhooks/meta", include_in_schema=False)
+async def meta_webhook_verify(request: _Request):
+    mode = request.query_params.get("hub.mode")
+    token = request.query_params.get("hub.verify_token")
+    challenge = request.query_params.get("hub.challenge")
+
+    if mode != "subscribe" or not META_WEBHOOK_VERIFY_TOKEN or token != META_WEBHOOK_VERIFY_TOKEN:
+        raise HTTPException(status_code=403, detail="Verification failed")
+
+    return _PlainTextResponse(challenge or "")
+
+
+def _verify_meta_signature(raw_body: bytes, signature_header: str | None) -> bool:
+    if not signature_header or not META_APP_SECRET:
+        return False
+    if not signature_header.startswith("sha256="):
+        return False
+    expected = hmac.new(META_APP_SECRET.encode(), raw_body, hashlib.sha256).hexdigest()
+    provided = signature_header.removeprefix("sha256=")
+    return hmac.compare_digest(expected, provided)
+
+
+async def _user_id_for_page(db: AsyncSession, platform: Platform, page_id: str) -> uuid.UUID | None:
+    field = "ig_page_id" if platform == Platform.INSTAGRAM else "page_id"
+    result = await db.execute(
+        select(PlatformConnection.user_id).where(
+            PlatformConnection.platform == platform,
+            PlatformConnection.credentials[field].as_string() == page_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def _connection_for_page(db: AsyncSession, platform: Platform, page_id: str) -> PlatformConnection | None:
+    """Like _user_id_for_page but returns the whole row - mentions need the
+    stored page_access_token to make a follow-up Graph API call, since the
+    webhook payload itself doesn't include the mentioning user's identity."""
+    field = "ig_page_id" if platform == Platform.INSTAGRAM else "page_id"
+    result = await db.execute(
+        select(PlatformConnection).where(
+            PlatformConnection.platform == platform,
+            PlatformConnection.credentials[field].as_string() == page_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _fetch_mention_context(page_access_token: str, ig_page_id: str, value: dict) -> dict:
+    """Runs in a threadpool (blocking `requests` call) - mentions webhooks
+    only give us a media_id (caption mention) or comment_id+media_id
+    (comment mention), never the mentioning user's identity directly, so we
+    have to look it up via a follow-up Graph API call. Best-effort: on any
+    error we return an empty dict and the inbox item is still recorded, just
+    without a sender name/body filled in - better than dropping the event.
+    """
+    import requests
+
+    comment_id = value.get("comment_id")
+    media_id = value.get("media_id")
+
+    if comment_id:
+        try:
+            resp = requests.get(
+                f"https://graph.facebook.com/v21.0/{comment_id}",
+                params={"fields": "text,username,timestamp", "access_token": page_access_token},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return {
+                "sender_name": data.get("username"),
+                "body": data.get("text"),
+                "thread_id": str(media_id or ""),
+            }
+        except Exception:
+            return {"thread_id": str(media_id or "")}
+
+    if media_id:
+        try:
+            resp = requests.get(
+                f"https://graph.facebook.com/v21.0/{ig_page_id}",
+                params={
+                    "fields": f"mentioned_media.media_id({media_id}){{caption,media_type}}",
+                    "access_token": page_access_token,
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("mentioned_media", {})
+            # Meta's mentioned_media edge returns the caption but not the
+            # author's username, so sender_name stays unset for caption
+            # mentions - the caption text itself is still useful context.
+            return {"body": data.get("caption"), "thread_id": str(media_id)}
+        except Exception:
+            return {"thread_id": str(media_id or "")}
+
+    return {}
+
+
+async def _user_id_for_threads_account(db: AsyncSession, threads_user_id: str) -> uuid.UUID | None:
+    result = await db.execute(
+        select(PlatformConnection.user_id).where(
+            PlatformConnection.platform == Platform.THREADS,
+            PlatformConnection.credentials["threads_user_id"].as_string() == threads_user_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def _upsert_inbox_item(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    platform: Platform,
+    kind: InboxKind,
+    external_id: str,
+    thread_id: str | None,
+    sender_name: str | None,
+    sender_external_id: str | None,
+    body: str | None,
+    raw_payload: dict,
+) -> None:
+    existing = await db.execute(
+        select(InboxItem.id).where(
+            InboxItem.platform == platform, InboxItem.external_id == external_id
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        return  # webhook redelivery of something we already recorded - no-op
+
+    db.add(InboxItem(
+        user_id=user_id,
+        platform=platform,
+        kind=kind,
+        external_id=external_id,
+        thread_id=thread_id,
+        sender_name=sender_name,
+        sender_external_id=sender_external_id,
+        body=body,
+        raw_payload=raw_payload,
+    ))
+
+
+@app.post("/webhooks/meta", include_in_schema=False)
+async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get_db)):
+    raw_body = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not _verify_meta_signature(raw_body, signature):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    payload = json.loads(raw_body)
+
+    for entry in payload.get("entry", []):
+        page_id = str(entry.get("id", ""))
+
+        # Instagram comments/mentions arrive under "changes"; DMs (both IG
+        # and Facebook Messenger) arrive under "messaging". Facebook Page
+        # feed comments also arrive under "changes" with a different field.
+        for change in entry.get("changes", []):
+            field = change.get("field")
+            value = change.get("value", {})
+
+            if field == "comments":
+                platform = Platform.INSTAGRAM if payload.get("object") == "instagram" else Platform.FACEBOOK
+                user_id = await _user_id_for_page(db, platform, page_id)
+                if user_id is None:
+                    continue
+                await _upsert_inbox_item(
+                    db, user_id=user_id, platform=platform, kind=InboxKind.COMMENT,
+                    external_id=str(value.get("id")),
+                    thread_id=str(value.get("media", {}).get("id") or value.get("post_id") or ""),
+                    sender_name=(value.get("from") or {}).get("username") or (value.get("from") or {}).get("name"),
+                    sender_external_id=(value.get("from") or {}).get("id"),
+                    body=value.get("text") or value.get("message"),
+                    raw_payload=change,
+                )
+
+            elif field == "mentions":
+                # Instagram-only - someone @-mentioned the connected account
+                # in a comment or caption on media the account doesn't own.
+                # The payload gives just comment_id/media_id, not who did
+                # it or what they said, so a follow-up Graph API call using
+                # the page's stored access token fills that in.
+                connection = await _connection_for_page(db, Platform.INSTAGRAM, page_id)
+                if connection is None:
+                    continue
+                credentials = connection.credentials or {}
+                page_access_token = credentials.get("page_access_token")
+                ig_page_id = credentials.get("ig_page_id")
+                if not page_access_token or not ig_page_id:
+                    continue
+                context = await run_in_threadpool(_fetch_mention_context, page_access_token, ig_page_id, value)
+                await _upsert_inbox_item(
+                    db, user_id=connection.user_id, platform=Platform.INSTAGRAM, kind=InboxKind.COMMENT,
+                    external_id=str(value.get("comment_id") or value.get("media_id")),
+                    thread_id=context.get("thread_id", str(value.get("media_id") or "")),
+                    sender_name=context.get("sender_name"),
+                    sender_external_id=None,
+                    body=context.get("body") or "Mentioned your account",
+                    raw_payload=change,
+                )
+
+        for messaging_event in entry.get("messaging", []):
+            platform = Platform.INSTAGRAM if payload.get("object") == "instagram" else Platform.FACEBOOK
+            user_id = await _user_id_for_page(db, platform, page_id)
+            if user_id is None:
+                continue
+            message = messaging_event.get("message", {})
+            if message.get("is_echo"):
+                continue  # our own outgoing message, echoed back - not an inbound item
+
+            sender_id = (messaging_event.get("sender") or {}).get("id")
+
+            # Story mentions arrive as a messaging event with a
+            # story_mention-typed attachment rather than as a "changes"
+            # field - Meta delivers "someone tagged you in their story" the
+            # same way it delivers a DM, just with this attachment shape
+            # instead of message text. Recorded as a comment (public
+            # engagement), not a message, since there's no conversation to
+            # reply into the way a real DM has.
+            attachments = message.get("attachments", [])
+            story_mention = next((a for a in attachments if a.get("type") == "story_mention"), None)
+            if story_mention is not None:
+                await _upsert_inbox_item(
+                    db, user_id=user_id, platform=platform, kind=InboxKind.COMMENT,
+                    external_id=str(message.get("mid") or f"story-{sender_id}-{messaging_event.get('timestamp')}"),
+                    thread_id=str(sender_id or ""),
+                    sender_name=None,  # not included in this event shape either
+                    sender_external_id=sender_id,
+                    body="Mentioned you in their story",
+                    raw_payload=messaging_event,
+                )
+                continue
+
+            await _upsert_inbox_item(
+                db, user_id=user_id, platform=platform, kind=InboxKind.MESSAGE,
+                external_id=str(message.get("mid") or f"{sender_id}-{messaging_event.get('timestamp')}"),
+                thread_id=str(sender_id or ""),
+                sender_name=None,  # Meta doesn't include a display name on the messaging event itself
+                sender_external_id=sender_id,
+                body=message.get("text"),
+                raw_payload=messaging_event,
+            )
+
+    await db.commit()
+    return {"received": True}
+
+
+@app.get("/inbox")
+async def list_inbox(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    result = await db.execute(
+        select(InboxItem)
+        .where(InboxItem.user_id == user_id)
+        .order_by(InboxItem.created_at.desc())
+        .limit(200)
+    )
+    items = result.scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(item.id),
+                "platform": item.platform.value,
+                "kind": item.kind.value,
+                "thread_id": item.thread_id,
+                "sender_name": item.sender_name,
+                "body": item.body,
+                "is_read": item.is_read,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in items
+        ]
+    }
+
+
+@app.patch("/inbox/{item_id}/read")
+async def mark_inbox_item_read(
+    item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    result = await db.execute(
+        select(InboxItem).where(InboxItem.id == item_id, InboxItem.user_id == user_id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Inbox item not found")
+    item.is_read = True
+    await db.commit()
+    return {"id": str(item.id), "is_read": True}
+
+
+# ---------------------------------------------------------------------------
+# Threads webhooks - separate product from Instagram/Facebook in Meta's
+# dashboard (Threads has its own "Subscribe to this object" screen), so it
+# gets its own callback path and its own handshake/signature verification,
+# even though the code is nearly identical to the /webhooks/meta routes
+# above. Threads has no DMs as a platform - only "replies" (someone replying
+# to your thread) and "mentions" (someone @-mentioning your account), both
+# recorded here as InboxKind.COMMENT since they're conceptually the same
+# "someone engaged with your post publicly" event as an IG/FB comment.
+#
+# Signing works the same way as the other Meta products - Threads payloads
+# are also signed with the app's secret via X-Hub-Signature-256, so
+# _verify_meta_signature is reused as-is.
+# ---------------------------------------------------------------------------
+
+@app.get("/webhooks/threads", include_in_schema=False)
+async def threads_webhook_verify(request: _Request):
+    mode = request.query_params.get("hub.mode")
+    token = request.query_params.get("hub.verify_token")
+    challenge = request.query_params.get("hub.challenge")
+
+    if mode != "subscribe" or not META_WEBHOOK_VERIFY_TOKEN or token != META_WEBHOOK_VERIFY_TOKEN:
+        raise HTTPException(status_code=403, detail="Verification failed")
+
+    return _PlainTextResponse(challenge or "")
+
+
+@app.post("/webhooks/threads", include_in_schema=False)
+async def threads_webhook_receive(request: _Request, db: AsyncSession = Depends(get_db)):
+    raw_body = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not _verify_meta_signature(raw_body, signature):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    payload = json.loads(raw_body)
+
+    for entry in payload.get("entry", []):
+        threads_user_id = str(entry.get("id", ""))
+        user_id = await _user_id_for_threads_account(db, threads_user_id)
+        if user_id is None:
+            continue
+
+        for change in entry.get("changes", []):
+            field = change.get("field")  # "replies" or "mentions"
+            if field not in ("replies", "mentions"):
+                continue
+            value = change.get("value", {})
+            await _upsert_inbox_item(
+                db, user_id=user_id, platform=Platform.THREADS, kind=InboxKind.COMMENT,
+                external_id=str(value.get("id")),
+                thread_id=str(value.get("root_post", {}).get("id") or value.get("replied_to", {}).get("id") or ""),
+                sender_name=(value.get("from") or {}).get("username"),
+                sender_external_id=(value.get("from") or {}).get("id"),
+                body=value.get("text"),
+                raw_payload=change,
+            )
+
+    await db.commit()
+    return {"received": True}

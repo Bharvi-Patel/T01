@@ -380,6 +380,29 @@ export async function getConnections({ token }) {
   return handle(res);
 }
 
+/*
+  Fetch the combined Social Inbox feed (Instagram/Facebook comments &
+  messages, Threads replies/mentions). Expected backend response:
+  { items: [{ id, platform, kind, thread_id, sender_name, body, is_read, created_at }] }
+ */
+export async function getInbox({ token }) {
+  const res = await fetch(`${API_BASE}/inbox`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+/*
+  Mark a single inbox item as read. Expected backend response:
+  { id, is_read: true }
+ */
+export async function markInboxItemRead({ token, itemId }) {
+  const res = await fetch(`${API_BASE}/inbox/${itemId}/read`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
+
 
 export async function getPendingPages({ token, platform, pendingId }) {
   const res = await fetch(`${API_BASE}/connect/${platform}/pending-pages/${pendingId}`, { headers: authHeaders(token) });

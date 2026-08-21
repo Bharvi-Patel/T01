@@ -114,6 +114,11 @@ class MediaKind(str, enum.Enum):
     TEXT = "text"
 
 
+class InboxKind(str, enum.Enum):
+    COMMENT = "comment"
+    MESSAGE = "message"
+
+
 # Models
 
 class User(Base):
@@ -284,6 +289,39 @@ class AuthSession(Base):
 
     user: Mapped["User"] = relationship(back_populates="auth_sessions")
 
+
+class InboxItem(Base):
+    """One comment or DM from a Meta webhook event (Instagram + Facebook
+    Page). `user_id` is resolved in the webhook handler by matching the
+    payload's page/ig_user id against PlatformConnection.credentials
+    (page_id / ig_page_id) - there's no FK to PlatformConnection itself
+    since one user can have both a Facebook and Instagram connection and
+    a single webhook entry belongs to whichever one the event was for.
+    `thread_id` groups a DM conversation (Meta's conversation id) or a
+    post's comment thread (the media/post id) so the frontend can list
+    conversations before expanding individual items. `raw_payload` is
+    kept as a debugging/replay escape hatch - the frontend should read
+    the normalized columns, not this.
+    """
+    __tablename__ = "inbox_items"
+    __table_args__ = (UniqueConstraint("platform", "external_id", name="uq_platform_external_id"),)
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    platform: Mapped[Platform] = mapped_column(Enum(Platform, name="platform_enum"))
+    kind: Mapped[InboxKind] = mapped_column(Enum(InboxKind, name="inbox_kind_enum"), nullable=False)
+    # Meta's id for this comment/message - the uniqueness guard above
+    # relies on this to make webhook redelivery a no-op instead of a dupe.
+    external_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    thread_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    sender_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sender_external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    raw_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    user: Mapped["User"] = relationship()
 
 
 # Init helper (dev convenience - use Alembic migrations once schema stabilizes)

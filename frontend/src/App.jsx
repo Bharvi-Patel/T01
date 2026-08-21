@@ -10,6 +10,7 @@ import Settings from "./components/settings";
 import Publish from "./components/Publish";
 import Calendar from "./components/Calendar";
 import Analytics from "./components/Analytics";
+import Inbox from "./components/Inbox";
 import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft } from "./api";
 
 export default function App() {
@@ -379,10 +380,14 @@ export default function App() {
             <Analytics token={token} onAuthError={handleLogout} />
           )}
 
-          {["inbox", "billing", "notifications"].includes(step) && (
+          {step === "inbox" && (
+            <Inbox token={token} onAuthError={handleLogout} />
+          )}
+
+          {["billing", "notifications"].includes(step) && (
             <div style={{ padding: "3rem 0", textAlign: "center", color: "var(--text-secondary)" }}>
               <p style={{ fontFamily: "var(--font-display)", fontSize: "22px", color: "var(--ink)", marginBottom: 8 }}>
-                {{ inbox: "Social Inbox", billing: "Billing", notifications: "Notifications" }[step]}
+                {{ billing: "Billing", notifications: "Notifications" }[step]}
               </p>
               <p>This section is coming soon.</p>
             </div>
