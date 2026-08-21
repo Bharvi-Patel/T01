@@ -102,19 +102,30 @@ export default function Inbox({ token, connections, onAuthError }) {
   // scoped to platforms that can actually appear in inbox data.
   const connectedPlatforms = INBOX_PLATFORMS.filter((p) => connections?.[p.key]);
 
-  function load() {
-    setLoading(true);
+  // showSpinner is false for background polls so the list doesn't flash a
+  // full loading state every 15s - only the very first load (and token
+  // changes) show the spinner.
+  function load(showSpinner = true) {
+    if (showSpinner) setLoading(true);
     setError(null);
     getInbox({ token })
       .then((res) => setItems(res.items || []))
       .catch((e) => {
         if (e.status === 401) return onAuthError?.();
-        setError(e.message || "Failed to load inbox");
+        // Background polls fail silently rather than replacing a working
+        // inbox view with an error banner over a transient network hiccup.
+        if (showSpinner) setError(e.message || "Failed to load inbox");
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (showSpinner) setLoading(false);
+      });
   }
 
-  useEffect(load, [token]);
+  useEffect(() => {
+    load(true);
+    const interval = setInterval(() => load(false), 15000);
+    return () => clearInterval(interval);
+  }, [token]);
 
   function handleMarkRead(itemId) {
     // Optimistic — flip locally right away, reconcile silently if it fails.
