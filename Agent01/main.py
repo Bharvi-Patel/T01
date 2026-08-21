@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import os
+import requests
 import secrets
 import sys
 import traceback
@@ -36,6 +37,7 @@ from fastapi.responses import RedirectResponse
 from oauth_platforms import (
     META_APP_SECRET, OAUTH_PROVIDERS, facebook_exchange, instagram_exchange,
     facebook_credentials_from_page, instagram_credentials_from_page, list_pages,
+    instagram_fetch_media, facebook_fetch_posts, threads_fetch_posts,
 )
 
 PENDING_PAGE_SELECTIONS: dict[str, dict] = {} # pending_id -> {"user_id","platform","pages","expires_at"}
@@ -1329,6 +1331,120 @@ async def list_connections(db: AsyncSession = Depends(get_db), user_id: uuid.UUI
         for platform, credentials in result.all()
     }
     return {"connections": connections}
+
+
+@app.get("/connect/{platform}/history")
+async def platform_post_history(
+    platform: str,
+    limit: int = 50,
+    debug: bool = False,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """The account's REAL post history, pulled live from the platform itself -
+    not from T01's own drafts table. This is the only way to surface posts
+    made before the account was ever connected here, since T01 has no local
+    record of those at all.
+
+    `debug=true` includes Meta's raw first-page response alongside the
+    normalized posts, so an unexpectedly-empty result can be diagnosed
+    without needing server log access.
+    """
+    try:
+        platform_enum = Platform(platform)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"platform must be one of: {', '.join(p.value for p in Platform)}")
+
+    if platform_enum == Platform.LINKEDIN:
+        # LinkedIn only grants this app w_member_social (publish-only) -
+        # reading a member's past posts needs r_member_social, which is a
+        # restricted, partner-only scope LinkedIn doesn't hand out to
+        # regular apps. There's no way around this without LinkedIn
+        # approving that additional permission for the app.
+        raise HTTPException(
+            status_code=400,
+            detail="LinkedIn doesn't allow this app to read your past posts (only to publish new ones), "
+                   "so pre-existing LinkedIn posts can't be shown here.",
+        )
+    if platform_enum not in (Platform.INSTAGRAM, Platform.FACEBOOK, Platform.THREADS):
+        raise HTTPException(status_code=400, detail=f"Post history isn't supported for {platform}.")
+
+    result = await db.execute(
+        select(PlatformConnection.credentials).where(
+            PlatformConnection.user_id == user_id, PlatformConnection.platform == platform_enum
+        )
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"{platform} isn't connected.")
+    credentials = dict(row[0] or {})
+    for field in SECRET_CREDENTIAL_FIELDS.get(platform_enum, []):
+        if field in credentials:
+            credentials[field] = decrypt_secret(credentials[field])
+
+    debug_raw = None
+    try:
+        if platform_enum == Platform.INSTAGRAM:
+            raw_posts, debug_raw = await run_in_threadpool(
+                instagram_fetch_media, credentials["page_access_token"], credentials["ig_page_id"], limit, debug
+            )
+            posts = [
+                {
+                    "id": p["id"],
+                    "text": p.get("caption") or "",
+                    "image": p.get("media_url") or p.get("thumbnail_url"),
+                    "permalink": p.get("permalink"),
+                    "published_at": p.get("timestamp"),
+                }
+                for p in raw_posts
+            ]
+        elif platform_enum == Platform.FACEBOOK:
+            raw_posts = await run_in_threadpool(
+                facebook_fetch_posts, credentials["page_access_token"], credentials["page_id"], limit
+            )
+            posts = [
+                {
+                    "id": p["id"],
+                    "text": p.get("message") or "",
+                    "image": p.get("full_picture"),
+                    "permalink": p.get("permalink_url"),
+                    "published_at": p.get("created_time"),
+                }
+                for p in raw_posts
+            ]
+        else:  # threads
+            raw_posts = await run_in_threadpool(
+                threads_fetch_posts, credentials["access_token"], credentials["threads_user_id"], limit
+            )
+            posts = [
+                {
+                    "id": p["id"],
+                    "text": p.get("text") or "",
+                    "image": p.get("media_url"),
+                    "permalink": p.get("permalink"),
+                    "published_at": p.get("timestamp"),
+                }
+                for p in raw_posts
+            ]
+    except requests.RequestException as e:
+        # Surface Meta/Threads' actual error body when debugging - that's
+        # usually exactly what explains an unexpectedly-empty result
+        # (wrong permission, wrong node id, app not in the right mode, etc).
+        detail = f"Couldn't reach {platform} to load post history: {e}"
+        if debug and e.response is not None:
+            try:
+                detail += f" | response body: {e.response.text}"
+            except Exception:
+                pass
+        raise HTTPException(status_code=502, detail=detail)
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"{platform} connection is missing required credentials - try reconnecting it.")
+
+    response = {"platform": platform, "posts": posts}
+    if debug:
+        response["debug_ig_page_id"] = credentials.get("ig_page_id") or credentials.get("page_id") or credentials.get("threads_user_id")
+        response["debug_raw_first_page"] = debug_raw
+    return response
 
 
 

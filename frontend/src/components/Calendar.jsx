@@ -3,7 +3,7 @@
 // click a chip to see details / reschedule / unschedule / open the draft;
 // drag a chip onto another day to reschedule it (same time of day, new date).
 import { useState, useEffect, useCallback } from "react";
-import { getDrafts, rescheduleDraft, unscheduleDraft, getDraft } from "../api";
+import { getDrafts, rescheduleDraft, unscheduleDraft, getDraft, getPlatformHistory } from "../api";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -106,8 +106,32 @@ function buildGrid(viewDate, viewMode) {
   return viewMode === "week" ? buildWeekGrid(viewDate) : buildMonthGrid(viewDate);
 }
 
+// Normalizes a platform-history entry (fetched live from Instagram/Facebook/
+// Threads, not from T01's own drafts table) into the same shape the chip/
+// panel rendering already expects, so it can slot into the calendar next to
+// T01-created drafts without any special-casing there.
+function externalPostToDraft(platform, post) {
+  const text = post.text || "";
+  return {
+    draft_id: `external:${platform}:${post.id}`,
+    is_external: true,
+    permalink: post.permalink,
+    category: "Posted on " + platform,
+    subtopic: text.slice(0, 80) || "(no caption)",
+    title: null,
+    meta_description: text,
+    featured_image: post.image ? { url: post.image } : null,
+    scheduled_at: null,
+    scheduled_platforms: null,
+    scheduled_live: null,
+    published_at: post.published_at || null,
+    publish_results: [{ platform, success: true, detail: null, published_at: post.published_at || null }],
+  };
+}
+
 function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, busy }) {
   const published = isPublished(draft);
+  const external = !!draft.is_external;
   const scheduledAt = draft.scheduled_at ? new Date(draft.scheduled_at) : null;
   const [date, setDate] = useState(scheduledAt ? dateKey(scheduledAt) : "");
   const [time, setTime] = useState(
@@ -146,7 +170,7 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
           {draft.title || draft.subtopic}
         </p>
         <p style={{ fontSize: 12, color: "#66716C", margin: "0 0 16px", textTransform: "capitalize" }}>
-          {draft.category} · {published ? "Published" : "Scheduled"}
+          {draft.category} · {external ? "Posted outside T01" : published ? "Published" : "Scheduled"}
         </p>
 
         {published ? (
@@ -211,15 +235,31 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={onClose} disabled={busy}>Close</button>
-          <button onClick={() => onOpen(draft.draft_id)} disabled={busy}>Open draft</button>
-          {!published && (
+          {external ? (
+            draft.permalink && (
+              <a
+                href={draft.permalink}
+                target="_blank"
+                rel="noreferrer"
+                className="primary"
+                style={{ width: "auto", padding: "0 16px", display: "inline-flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}
+              >
+                View on platform
+              </a>
+            )
+          ) : (
             <>
-              <button onClick={() => onUnschedule(draft.draft_id)} disabled={busy} style={{ color: "#E88A8A" }}>
-                Unschedule
-              </button>
-              <button className="primary" onClick={submitReschedule} disabled={busy} style={{ width: "auto", padding: "0 16px" }}>
-                {busy ? "Saving…" : "Save new time"}
-              </button>
+              <button onClick={() => onOpen(draft.draft_id)} disabled={busy}>Open draft</button>
+              {!published && (
+                <>
+                  <button onClick={() => onUnschedule(draft.draft_id)} disabled={busy} style={{ color: "#E88A8A" }}>
+                    Unschedule
+                  </button>
+                  <button className="primary" onClick={submitReschedule} disabled={busy} style={{ width: "auto", padding: "0 16px" }}>
+                    {busy ? "Saving…" : "Save new time"}
+                  </button>
+                </>
+              )}
             </>
           )}
         </div>
@@ -277,6 +317,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
   // post ever scheduled/published on that account, regardless of the month/
   // week currently in view.
   const [accountFilter, setAccountFilter] = useState("all");
+  const [historyNotice, setHistoryNotice] = useState("");
 
   const grid = buildGrid(viewDate, viewMode);
   const connectedPlatforms = PLATFORMS.filter((p) => connections?.[p.key]);
@@ -284,6 +325,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
   const refresh = useCallback(() => {
     setLoading(true);
     setError("");
+    setHistoryNotice("");
     const params = { token };
     if (accountFilter === "all") {
       const from = grid[0];
@@ -293,13 +335,50 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
       params.scheduledTo = to.toISOString();
     }
     // else: no date bounds at all — pull the account's entire post history.
-    getDrafts(params)
-      .then((res) => {
-        let list = res.drafts.filter((d) => effectiveDate(d));
-        if (accountFilter !== "all") {
-          list = list.filter((d) => chipPlatforms(d).includes(accountFilter));
-        }
-        setDrafts(list);
+    const draftsPromise = getDrafts(params).then((res) => {
+      let list = res.drafts.filter((d) => effectiveDate(d));
+      if (accountFilter !== "all") {
+        list = list.filter((d) => chipPlatforms(d).includes(accountFilter));
+      }
+      return list;
+    });
+
+    // When filtered to one account, also pull that account's real post
+    // history straight from the platform — this is the only way to show
+    // posts made before the account was ever connected to T01, since those
+    // never had a T01 draft to begin with.
+    const historyPromise = accountFilter === "all"
+      ? Promise.resolve([])
+      : getPlatformHistory({ token, platform: accountFilter })
+          .then((res) => (res.posts || []).map((p) => externalPostToDraft(accountFilter, p)))
+          .catch((e) => {
+            setHistoryNotice(
+              e.message || `Couldn't load ${accountFilter}'s post history from the platform directly — showing only what T01 knows about.`
+            );
+            return [];
+          });
+
+    Promise.all([draftsPromise, historyPromise])
+      .then(([t01Drafts, externalPosts]) => {
+        // Dedup: a post published through T01 shows up in both the drafts
+        // table AND the platform's own history. T01's publish_results[].detail
+        // is a JSON string (e.g. {"success": true, "url": "..."}) on success,
+        // not a bare URL, so it has to be parsed before comparing to the
+        // permalink the platform's history endpoint returns.
+        const knownPermalinks = new Set();
+        t01Drafts.forEach((d) => {
+          (d.publish_results || []).forEach((r) => {
+            if (!r.success || !r.detail) return;
+            try {
+              const parsed = JSON.parse(r.detail);
+              if (parsed?.url) knownPermalinks.add(parsed.url);
+            } catch {
+              knownPermalinks.add(r.detail); // wasn't JSON — treat as a bare URL
+            }
+          });
+        });
+        const newExternal = externalPosts.filter((p) => !knownPermalinks.has(p.permalink));
+        setDrafts([...t01Drafts, ...newExternal]);
       })
       .catch((e) => {
         if (e.status === 401) return onAuthError?.();
@@ -488,17 +567,23 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
         <p style={{
           fontSize: 12.5, color: "var(--text-secondary)", background: "var(--paper-raised)",
           border: "0.5px solid var(--border)", borderRadius: "var(--radius)", padding: "8px 12px",
-          marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+          marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
         }}>
           <span>
             Showing every post ever scheduled or published on{" "}
             <strong style={{ color: "var(--ink)" }}>{platformByKey(accountFilter)?.label}</strong>
             {connections?.[accountFilter]?.profile_name ? ` (${connections[accountFilter].profile_name})` : ""} —
-            not just {viewMode === "week" ? "this week" : "this month"}. Use ‹ › to browse.
+            including posts made on the platform directly, before it was connected here. Use ‹ › to browse.
           </span>
           <button onClick={() => setAccountFilter("all")} style={{ width: "auto", padding: "0 12px", flexShrink: 0 }}>
             Clear
           </button>
+        </p>
+      )}
+
+      {historyNotice && (
+        <p style={{ fontSize: 12.5, color: "var(--text-muted)", background: "var(--paper-raised)", border: "0.5px solid var(--border)", borderRadius: "var(--radius)", padding: "8px 12px", marginBottom: 16 }}>
+          {historyNotice}
         </p>
       )}
 
@@ -623,7 +708,16 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
 
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
                           <span style={{ fontSize: 13, color: "var(--text-muted)", letterSpacing: 1 }}>•••</span>
-                          {published && (
+                          {d.is_external ? (
+                            <span
+                              style={{
+                                fontSize: 10, fontWeight: 500, borderRadius: 4, padding: "2px 6px",
+                                color: "#9BA79E", background: "rgba(155,167,158,0.14)",
+                              }}
+                            >
+                              From {accountFilter}
+                            </span>
+                          ) : published && (
                             <span
                               style={{
                                 fontSize: 10, fontWeight: 500, borderRadius: 4, padding: "2px 6px",

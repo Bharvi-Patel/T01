@@ -173,6 +173,50 @@ def instagram_credentials_from_page(page: dict) -> dict:
     }
 
 
+def instagram_fetch_media(page_access_token: str, ig_page_id: str, limit: int = 50, debug: bool = False) -> tuple[list[dict], dict | None]:
+    """Pull the account's real post history straight from Instagram, including
+    everything posted before this account was ever connected to T01 (there's
+    no local record of those - they only exist on Instagram's side).
+    Returns (posts, first_raw_response) — the raw response is only populated
+    when debug=True, for troubleshooting an unexpectedly-empty result.
+    """
+    posts, url = [], f"https://graph.facebook.com/v21.0/{ig_page_id}/media"
+    params = {
+        "fields": "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp",
+        "access_token": page_access_token,
+        "limit": min(limit, 100),
+    }
+    first_raw = None
+    while url and len(posts) < limit:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        payload = resp.json()
+        if first_raw is None and debug:
+            first_raw = payload
+        posts.extend(payload.get("data", []))
+        url = payload.get("paging", {}).get("next")
+        params = None
+    return posts[:limit], first_raw
+
+
+def facebook_fetch_posts(page_access_token: str, page_id: str, limit: int = 50) -> list[dict]:
+    """Same idea as instagram_fetch_media, but for a Facebook Page's feed."""
+    posts, url = [], f"https://graph.facebook.com/v21.0/{page_id}/posts"
+    params = {
+        "fields": "id,message,full_picture,permalink_url,created_time",
+        "access_token": page_access_token,
+        "limit": min(limit, 100),
+    }
+    while url and len(posts) < limit:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        payload = resp.json()
+        posts.extend(payload.get("data", []))
+        url = payload.get("paging", {}).get("next")
+        params = None
+    return posts[:limit]
+
+
 def facebook_finish(code: str) -> dict:
     long_token = facebook_exchange(code)
     pages = list_pages(long_token)
@@ -261,6 +305,25 @@ def threads_finish(code: str) -> dict:
         "profile_name": profile_name,
         "profile_picture_url": profile_picture_url,
     }
+
+
+def threads_fetch_posts(access_token: str, threads_user_id: str, limit: int = 50) -> list[dict]:
+    """Real Threads post history, including anything posted before this
+    account was connected to T01."""
+    posts, url = [], f"https://graph.threads.net/v1.0/{threads_user_id}/threads"
+    params = {
+        "fields": "id,text,media_type,media_url,permalink,timestamp",
+        "access_token": access_token,
+        "limit": min(limit, 100),
+    }
+    while url and len(posts) < limit:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        payload = resp.json()
+        posts.extend(payload.get("data", []))
+        url = payload.get("paging", {}).get("next")
+        params = None
+    return posts[:limit]
 
 
 OAUTH_PROVIDERS = {

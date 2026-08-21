@@ -293,6 +293,21 @@ export async function disconnectPlatform({ token, platform }) {
 }
 
 /*
+  The account's real post history, fetched live from the platform itself
+  (not from T01's drafts table) — this is what surfaces posts made before
+  the account was ever connected here. Supported for instagram, facebook,
+  threads; linkedin isn't supported (see backend for why).
+  Expected backend response: { platform, posts: [{ id, text, image, permalink, published_at }] }
+ */
+export async function getPlatformHistory({ token, platform, limit, debug }) {
+  const url = new URL(`${API_BASE}/connect/${platform}/history`);
+  if (limit) url.searchParams.set("limit", limit);
+  if (debug) url.searchParams.set("debug", "true");
+  const res = await fetch(url, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+/*
   List the current user's drafts, optionally filtered by status
   ("pending_review" | "scheduled" | "published" | "publish_failed" | "rejected"),
   by exclude_status (comma-separated statuses to leave out), by was_scheduled
