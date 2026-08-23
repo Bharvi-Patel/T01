@@ -135,6 +135,9 @@ body::before {
 .page-container.is-wide {
   max-width: 1100px;
 }
+.page-container.is-wider-calendar {
+  max-width: 900px;
+}
 @media (max-width: 640px) {
   .page-container { padding: 1.5rem 1rem; }
 }

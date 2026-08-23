@@ -9,9 +9,11 @@ import Sidebar from "./components/Sidebar";
 import Settings from "./components/settings";
 import Publish from "./components/Publish";
 import PublishNav from "./components/PublishNav";
+import SidePanel from "./components/SidePanel";
 import Calendar from "./components/Calendar";
-import Analytics from "./components/Analytics";
-import Inbox from "./components/Inbox";
+import Analytics, { RANGE_OPTIONS } from "./components/Analytics";
+import Inbox, { KIND_TABS } from "./components/Inbox";
+import { MODE_TABS } from "./components/Form";
 import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft } from "./api";
 
 export default function App() {
@@ -40,6 +42,9 @@ export default function App() {
   const [pagePicker, setPagePicker] = useState(null); // { platform, pendingId }
   const [publishTab, setPublishTab] = useState("new");
   const [publishNavCollapsed, setPublishNavCollapsed] = useState(false);
+  const [composeMode, setComposeMode] = useState("ai");
+  const [analyticsDays, setAnalyticsDays] = useState(30);
+  const [inboxKindFilter, setInboxKindFilter] = useState("all");
   const [composeHandoffAsset, setComposeHandoffAsset] = useState(null); // { type, name, file, content } from Media tab, consumed once by Form
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -292,6 +297,20 @@ export default function App() {
     return <Landing onGetStarted={() => setShowAuth(true)} />;
   }
 
+  // Every non-excluded page (all except calendar/dashboard/settings) gets a
+  // left side panel matching Publish's own PublishNav look, driving that
+  // page's existing tabs/filters instead of an in-page tab row.
+  const sidePanelConfig = {
+    generate: { title: "Compose", tabs: MODE_TABS, activeKey: composeMode, onSelect: setComposeMode },
+    analytics: {
+      title: "Analytics",
+      tabs: RANGE_OPTIONS.map((r) => ({ key: String(r.days), label: r.label })),
+      activeKey: String(analyticsDays),
+      onSelect: (k) => setAnalyticsDays(Number(k)),
+    },
+    inbox: { title: "Inbox", tabs: KIND_TABS, activeKey: inboxKindFilter, onSelect: setInboxKindFilter },
+  }[step];
+
   return (
     <div style={{ display: "flex", minHeight: "100vh", width: "100%" }}>
       <Sidebar
@@ -314,6 +333,17 @@ export default function App() {
         />
       )}
 
+      {step !== "publish" && sidePanelConfig && (
+        <SidePanel
+          title={sidePanelConfig.title}
+          tabs={sidePanelConfig.tabs}
+          activeKey={sidePanelConfig.activeKey}
+          onSelect={sidePanelConfig.onSelect}
+          collapsed={publishNavCollapsed}
+          onToggleCollapsed={() => setPublishNavCollapsed((c) => !c)}
+        />
+      )}
+
       <div className="main-panel" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <button
           className="mobile-menu-button"
@@ -324,17 +354,17 @@ export default function App() {
           ☰
         </button>
 
-        {step === "publish" && publishNavCollapsed && (
+        {(step === "publish" || sidePanelConfig) && publishNavCollapsed && (
           <button
             onClick={() => setPublishNavCollapsed(false)}
             style={{ width: "auto", padding: "0 12px", margin: "1rem 0 0 1rem", alignSelf: "flex-start" }}
-            aria-label="Expand publishing panel"
+            aria-label="Expand panel"
           >
-            ⬜ Publishing
+            ⬜ {step === "publish" ? "Publishing" : sidePanelConfig.title}
           </button>
         )}
 
-        <div className={`page-container${step === "publish" ? " is-wide" : ""}`}>
+        <div className={`page-container${step === "publish" ? " is-wide" : step === "calendar" ? " is-wider-calendar" : ""}`}>
           {step === "dashboard" && (
             <div style={{ padding: "2rem 0" }}>
               <p style={{ fontFamily: "var(--font-display)", fontSize: "clamp(24px, 4vw, 32px)", color: "var(--ink)", marginBottom: 8 }}>
@@ -357,6 +387,8 @@ export default function App() {
                 token={token}
                 initialManualAsset={composeHandoffAsset}
                 onConsumeInitialAsset={() => setComposeHandoffAsset(null)}
+                mode={composeMode}
+                onModeChange={setComposeMode}
               />
 
           )}
@@ -398,11 +430,11 @@ export default function App() {
           )}
 
           {step === "analytics" && (
-            <Analytics token={token} onAuthError={handleLogout} />
+            <Analytics token={token} onAuthError={handleLogout} days={analyticsDays} onDaysChange={setAnalyticsDays} />
           )}
 
           {step === "inbox" && (
-            <Inbox token={token} connections={connections} onAuthError={handleLogout} />
+            <Inbox token={token} connections={connections} onAuthError={handleLogout} kindFilter={inboxKindFilter} onKindFilterChange={setInboxKindFilter} />
           )}
 
           {["billing", "notifications"].includes(step) && (

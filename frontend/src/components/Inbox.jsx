@@ -14,7 +14,7 @@ const KIND_LABELS = {
   story_reply: "Story reply",
 };
 
-const KIND_TABS = [
+export const KIND_TABS = [
   { key: "all", label: "All" },
   { key: "comment", label: "Comments" },
   { key: "message", label: "Messages" },
@@ -89,11 +89,13 @@ function InboxItemCard({ item, onMarkRead }) {
   );
 }
 
-export default function Inbox({ token, connections, onAuthError }) {
+export default function Inbox({ token, connections, onAuthError, kindFilter: kindFilterProp, onKindFilterChange }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [kindFilter, setKindFilter] = useState("all");
+  const [kindFilterState, setKindFilterState] = useState("all");
+  const kindFilter = kindFilterProp ?? kindFilterState;
+  const setKindFilter = onKindFilterChange ?? setKindFilterState;
   const [platformFilter, setPlatformFilter] = useState("all");
   const [pendingOnly, setPendingOnly] = useState(false);
   const [search, setSearch] = useState("");
@@ -179,22 +181,6 @@ export default function Inbox({ token, connections, onAuthError }) {
       </div>
 
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 18 }}>
-        <div style={{ display: "flex", gap: 6 }}>
-          {KIND_TABS.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setKindFilter(t.key)}
-              style={{
-                width: "auto", padding: "5px 12px", fontSize: 12.5,
-                border: kindFilter === t.key ? "1.5px solid var(--accent)" : "0.5px solid var(--border-strong)",
-                background: kindFilter === t.key ? "var(--paper-raised)" : "transparent", color: "var(--ink)",
-              }}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
         {connectedPlatforms.length > 0 && (
           <div style={{ display: "flex", alignItems: "stretch", border: "0.5px solid var(--border-strong)", borderRadius: 6, overflow: "hidden" }}>
             <button

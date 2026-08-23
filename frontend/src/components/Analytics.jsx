@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getAnalyticsSummary } from "../api";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
-const RANGE_OPTIONS = [
+export const RANGE_OPTIONS = [
   { label: "Last 7 days", days: 7 },
   { label: "Last 30 days", days: 30 },
   { label: "Last 90 days", days: 90 },
@@ -113,8 +113,10 @@ function PlatformReliabilityRow({ platformKey, entries }) {
   );
 }
 
-export default function Analytics({ token, onAuthError }) {
-  const [days, setDays] = useState(30);
+export default function Analytics({ token, onAuthError, days: daysProp, onDaysChange }) {
+  const [daysState, setDaysState] = useState(30);
+  const days = daysProp ?? daysState;
+  const setDays = onDaysChange ?? setDaysState;
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -149,21 +151,6 @@ export default function Analytics({ token, onAuthError }) {
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <p style={{ fontFamily: "var(--font-display)", fontSize: 22, color: "var(--ink)", margin: 0 }}>Analytics</p>
-        <div style={{ display: "flex", gap: 6 }}>
-          {RANGE_OPTIONS.map((r) => (
-            <button
-              key={r.days}
-              onClick={() => setDays(r.days)}
-              style={{
-                width: "auto", padding: "5px 10px", fontSize: 12.5,
-                border: days === r.days ? "1.5px solid var(--accent)" : "0.5px solid var(--border-strong)",
-                background: days === r.days ? "var(--paper-raised)" : "transparent", color: "var(--ink)",
-              }}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
       </div>
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>

@@ -31,8 +31,15 @@ const NETWORKS = [
   { key: "threads", label: "Threads" },
 ];
 
-export default function Form({ onSubmit, loading, error, token, initialManualAsset, onConsumeInitialAsset }) {
-  const [mode, setMode] = useState("ai"); // "ai" | "manual"
+export const MODE_TABS = [
+  { key: "ai", label: "Generate with AI" },
+  { key: "manual", label: "Write it myself" },
+];
+
+export default function Form({ onSubmit, loading, error, token, initialManualAsset, onConsumeInitialAsset, mode: modeProp, onModeChange }) {
+  const [modeState, setModeState] = useState("ai"); // "ai" | "manual" — used when mode isn't controlled from outside
+  const mode = modeProp ?? modeState;
+  const setMode = onModeChange ?? setModeState;
 
   const [category, setCategory] = useState("Business");
   const [subtopic, setSubtopic] = useState("");
@@ -248,27 +255,6 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
       <div className="composer-head">
         <h2 className="composer-title">Generate a new post</h2>
         {/* <span className="stamp composer-stamp">{mode === "ai" ? "AI Draft" : "Manual Draft"}</span> */}
-      </div>
-
-      <div className="composer-tabs" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "ai"}
-          onClick={() => setMode("ai")}
-          className={`composer-tab ${mode === "ai" ? "is-active" : ""}`}
-        >
-          Generate with AI
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "manual"}
-          onClick={() => setMode("manual")}
-          className={`composer-tab ${mode === "manual" ? "is-active" : ""}`}
-        >
-          Write it myself
-        </button>
       </div>
 
       {mode === "ai" ? (
