@@ -17,7 +17,7 @@ function MenuIcon({ name, size = 15 }) {
   );
 }
 
-const TABS = [
+export const TABS = [
   { key: "new", label: "New Post" },
   { key: "drafts", label: "Drafts" },
   { key: "scheduled", label: "Scheduled" },
@@ -427,32 +427,13 @@ function NotificationsTab() {
   );
 }
 
-export default function Publish({ token, onNewPost, onOpenDraft, initialTab = "new", onSendMediaToCompose }) {
-  const [tab, setTab] = useState(initialTab);
-
+export default function Publish({ token, tab, onNewPost, onOpenDraft, onSendMediaToCompose }) {
   return (
     <div>
-      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", borderBottom: "0.5px solid var(--border)", marginBottom: "1.5rem" }}>
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            style={{
-              width: "auto", background: "transparent", border: "none", borderRadius: 0,
-              padding: "10px 14px", fontSize: 13.5, fontWeight: 500,
-              color: tab === t.key ? "var(--ink)" : "var(--text-secondary)",
-              borderBottom: tab === t.key ? "2px solid var(--accent)" : "2px solid transparent",
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
       {tab === "new" && (
         <div style={{ padding: "1.5rem 0", textAlign: "center" }}>
           <p style={{ fontFamily: "var(--font-display)", fontSize: 20, margin: "0 0 8px" }}>Create a new post</p>
-          
+
           <button className="primary" style={{ width: "auto", padding: "0 24px" }} onClick={onNewPost}>+ New</button>
         </div>
       )}

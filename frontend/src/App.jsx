@@ -8,6 +8,7 @@ import Landing from "./components/Landing";
 import Sidebar from "./components/Sidebar";
 import Settings from "./components/settings";
 import Publish from "./components/Publish";
+import PublishNav from "./components/PublishNav";
 import Calendar from "./components/Calendar";
 import Analytics from "./components/Analytics";
 import Inbox from "./components/Inbox";
@@ -37,7 +38,8 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [pagePicker, setPagePicker] = useState(null); // { platform, pendingId }
-  const [publishInitialTab, setPublishInitialTab] = useState("new");
+  const [publishTab, setPublishTab] = useState("new");
+  const [publishNavCollapsed, setPublishNavCollapsed] = useState(false);
   const [composeHandoffAsset, setComposeHandoffAsset] = useState(null); // { type, name, file, content } from Media tab, consumed once by Form
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -233,7 +235,7 @@ export default function App() {
     setDraft(null);
     setResult(null);
     setError("");
-    setPublishInitialTab("drafts");
+    setPublishTab("drafts");
     setStep("publish");
   }
 
@@ -294,7 +296,7 @@ export default function App() {
     <div style={{ display: "flex", minHeight: "100vh", width: "100%" }}>
       <Sidebar
         activeStep={step === "generate" || step === "draft" || step === "done" ? null : step}
-        onNavigate={(key) => { setPublishInitialTab("new"); setStep(key); setMobileMenuOpen(false); }}
+        onNavigate={(key) => { setPublishTab("new"); setStep(key); setMobileMenuOpen(false); }}
         onNewPost={() => { handleRestart(); setMobileMenuOpen(false); }}
         onLogout={handleLogout}
         mobileOpen={mobileMenuOpen}
@@ -302,6 +304,15 @@ export default function App() {
         collapsed={sidebarCollapsed}
         onToggleCollapsed={toggleSidebarCollapsed}
       />
+
+      {step === "publish" && (
+        <PublishNav
+          tab={publishTab}
+          onSelectTab={setPublishTab}
+          collapsed={publishNavCollapsed}
+          onToggleCollapsed={() => setPublishNavCollapsed((c) => !c)}
+        />
+      )}
 
       <div className="main-panel" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <button
@@ -313,7 +324,17 @@ export default function App() {
           ☰
         </button>
 
-        <div className="page-container">
+        {step === "publish" && publishNavCollapsed && (
+          <button
+            onClick={() => setPublishNavCollapsed(false)}
+            style={{ width: "auto", padding: "0 12px", margin: "1rem 0 0 1rem", alignSelf: "flex-start" }}
+            aria-label="Expand publishing panel"
+          >
+            ⬜ Publishing
+          </button>
+        )}
+
+        <div className={`page-container${step === "publish" ? " is-wide" : ""}`}>
           {step === "dashboard" && (
             <div style={{ padding: "2rem 0" }}>
               <p style={{ fontFamily: "var(--font-display)", fontSize: "clamp(24px, 4vw, 32px)", color: "var(--ink)", marginBottom: 8 }}>
@@ -369,7 +390,7 @@ export default function App() {
           )}
 
           {step === "publish" && (
-            <Publish token={token} onNewPost={handleRestart} onOpenDraft={handleOpenDraft} onAuthError={handleLogout} initialTab={publishInitialTab} onSendMediaToCompose={handleSendMediaToCompose} />
+            <Publish token={token} tab={publishTab} onNewPost={handleRestart} onOpenDraft={handleOpenDraft} onAuthError={handleLogout} onSendMediaToCompose={handleSendMediaToCompose} />
           )}
 
           {step === "calendar" && (
