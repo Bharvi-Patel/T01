@@ -161,6 +161,9 @@ class User(Base):
     auth_sessions: Mapped[list["AuthSession"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    custom_ideas: Mapped[list["CustomIdea"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class OAuthIdentity(Base):
@@ -379,6 +382,47 @@ class PushSubscription(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     user: Mapped["User"] = relationship()
+
+
+class CustomIdea(Base):
+    """A user's own post idea, entered from the Dashboard's Ideas "+ New"
+    button rather than pulled from Calendarific. Shares the same
+    {name, date, description} shape as the festival ideas so the frontend
+    can render both kinds with IdeaCard, merged and sorted by date in
+    /dashboard/ideas. date/description are legacy-optional - the "+ New"
+    form only collects a name and optional media attachments now."""
+    __tablename__ = "custom_ideas"
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    user: Mapped["User"] = relationship(back_populates="custom_ideas")
+    attachments: Mapped[list["IdeaAttachment"]] = relationship(
+        back_populates="idea", cascade="all, delete-orphan"
+    )
+
+
+class IdeaAttachment(Base):
+    """A photo or video attached to a CustomIdea, uploaded from the
+    Dashboard's "+ New" idea modal. Stored on disk the same way as the
+    Publish page's per-user MediaAsset library (MEDIA_DIR/<user_id>/), but
+    scoped to a single idea rather than the shared library - an idea's
+    reference images aren't meant to double as reusable Media tab assets."""
+    __tablename__ = "idea_attachments"
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    idea_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("custom_ideas.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    file_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    idea: Mapped["CustomIdea"] = relationship(back_populates="attachments")
 
 
 # Init helper (dev convenience - use Alembic migrations once schema stabilizes)

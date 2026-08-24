@@ -346,6 +346,53 @@ export async function getDashboardIdeas({ token }) {
   return handle(res);
 }
 
+/*
+  Save a user-entered idea from the Dashboard Ideas "+ New" button.
+  description is optional free-text notes. Expected backend response:
+  the saved idea as { id, name, date, description, types, custom: true, media: [] }.
+ */
+export async function createDashboardIdea({ token, name, description }) {
+  const res = await fetch(`${API_BASE}/dashboard/ideas`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ name, description }),
+  });
+  return handle(res);
+}
+
+// Remove a previously saved custom idea.
+export async function deleteDashboardIdea({ token, ideaId }) {
+  const res = await fetch(`${API_BASE}/dashboard/ideas/${ideaId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
+/*
+  Attach a photo/video to a saved idea. Expected backend response:
+  { id, name, content_type, url, file_size }.
+ */
+export async function addIdeaMedia({ token, ideaId, file }) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_BASE}/dashboard/ideas/${ideaId}/media`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: formData,
+  });
+  return handle(res);
+}
+
+// Remove a media attachment from a saved idea.
+export async function deleteIdeaMedia({ token, ideaId, attachmentId }) {
+  const res = await fetch(`${API_BASE}/dashboard/ideas/${ideaId}/media/${attachmentId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
 export async function getAnalyticsSummary({ token, days = 30 }) {
   const url = new URL(`${API_BASE}/analytics/summary`);
   url.searchParams.set("days", days);

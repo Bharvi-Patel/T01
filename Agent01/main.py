@@ -28,6 +28,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 from auth_oauth import LOGIN_PROVIDERS, x_start, x_finish
@@ -98,8 +99,10 @@ from Agent import agent01, revise_draft, approve_and_publish, clean_json_string,
 from db import (
     AsyncSessionLocal,
     AuthSession,
+    CustomIdea,
     Draft,
     DraftStatus,
+    IdeaAttachment,
     InboxItem,
     InboxKind,
     MediaAsset,
@@ -1443,15 +1446,56 @@ def _fetch_calendarific_holidays_sync(year: int, month: int) -> list[dict]:
         return []
 
 
+def idea_attachment_url(attachment: "IdeaAttachment") -> str:
+    return f"{BACKEND_BASE_URL}/media-files/{attachment.file_path}"
+
+
+def serialize_idea_attachment(attachment: "IdeaAttachment") -> dict:
+    return {
+        "id": str(attachment.id),
+        "name": attachment.name,
+        "content_type": attachment.content_type,
+        "url": idea_attachment_url(attachment),
+        "file_size": attachment.file_size,
+    }
+
+
+def serialize_custom_idea(idea: "CustomIdea") -> dict:
+    return {
+        "id": str(idea.id),
+        "name": idea.name,
+        "date": idea.date,
+        "description": idea.description or "",
+        "types": ["custom"],
+        "custom": True,
+        "media": [serialize_idea_attachment(a) for a in idea.attachments],
+    }
+
+
+class CreateIdeaRequest(BaseModel):
+    name: str
+    date: str | None = None  # ISO "YYYY-MM-DD"; legacy/optional, no longer collected by the form
+    description: str | None = None  # legacy/optional, no longer collected by the form
+
+
 @app.get("/dashboard/ideas")
-async def get_dashboard_ideas(user_id: uuid.UUID = Depends(require_auth)):
+async def get_dashboard_ideas(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
     """Upcoming festivals/observances for the Dashboard's Ideas section,
-    each turned into a lightweight content suggestion. Auth-gated like the
-    rest of the dashboard even though the underlying data isn't
-    user-specific, so an unauthenticated caller can't use this as a free
-    Calendarific proxy."""
+    each turned into a lightweight content suggestion, merged with any
+    ideas the user has entered themselves via the "+ New" button
+    (POST /dashboard/ideas). Auth-gated like the rest of the dashboard
+    even though the Calendarific data isn't user-specific, so an
+    unauthenticated caller can't use this as a free Calendarific proxy."""
+    result = await db.execute(
+        select(CustomIdea)
+        .where(CustomIdea.user_id == user_id)
+        .options(selectinload(CustomIdea.attachments))
+        .order_by(CustomIdea.created_at.desc())
+    )
+    custom_ideas = [serialize_custom_idea(i) for i in result.scalars().all()]
+
     if not CALENDARIFIC_API_KEY:
-        return {"configured": False, "ideas": []}
+        return {"configured": False, "ideas": custom_ideas}
 
     today = datetime.now(timezone.utc).date()
     months_to_fetch = {(today.year, today.month)}
@@ -1484,10 +1528,133 @@ async def get_dashboard_ideas(user_id: uuid.UUID = Depends(require_auth)):
             "date": iso_date[:10],
             "description": h.get("description") or "",
             "types": h.get("type") or [],
+            "custom": False,
         })
 
     ideas.sort(key=lambda i: i["date"])
-    return {"configured": True, "ideas": ideas[:12]}
+    # User-entered ideas always surface first, regardless of date, since
+    # they're the ones the person just told us they care about.
+    return {"configured": True, "ideas": custom_ideas + ideas[:12]}
+
+
+@app.post("/dashboard/ideas")
+async def create_dashboard_idea(
+    req: CreateIdeaRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """Save a user-entered idea from the Dashboard's "+ New" button. Attach
+    media afterward via POST /dashboard/ideas/{idea_id}/media."""
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name must not be empty")
+
+    date_str = None
+    if req.date:
+        date_str = req.date.strip()
+        try:
+            datetime.fromisoformat(date_str[:10])
+        except ValueError:
+            raise HTTPException(status_code=400, detail="date must be an ISO date (YYYY-MM-DD)")
+        date_str = date_str[:10]
+
+    idea = CustomIdea(
+        user_id=user_id,
+        name=name,
+        date=date_str,
+        description=(req.description or "").strip() or None,
+    )
+    db.add(idea)
+    await db.commit()
+    await db.refresh(idea, attribute_names=["attachments"])
+    return serialize_custom_idea(idea)
+
+
+@app.post("/dashboard/ideas/{idea_id}/media")
+async def add_idea_media(
+    idea_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """Attach a photo or video to a saved idea (Dashboard "+ New" modal)."""
+    result = await db.execute(
+        select(CustomIdea).where(CustomIdea.id == idea_id, CustomIdea.user_id == user_id)
+    )
+    idea = result.scalar_one_or_none()
+    if idea is None:
+        raise HTTPException(status_code=404, detail="Unknown idea_id")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="file is empty")
+    if len(file_bytes) > MEDIA_LIBRARY_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="file exceeds 50MB limit")
+
+    ext = Path(file.filename or "").suffix or ".bin"
+    stored_name = f"{uuid.uuid4()}{ext}"
+    (user_media_dir(user_id) / stored_name).write_bytes(file_bytes)
+
+    attachment = IdeaAttachment(
+        idea_id=idea.id,
+        name=(file.filename or stored_name).strip() or stored_name,
+        content_type=file.content_type,
+        file_path=f"{user_id}/{stored_name}",
+        file_size=len(file_bytes),
+    )
+    db.add(attachment)
+    await db.commit()
+    await db.refresh(attachment)
+    return serialize_idea_attachment(attachment)
+
+
+@app.delete("/dashboard/ideas/{idea_id}/media/{attachment_id}")
+async def delete_idea_media(
+    idea_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    result = await db.execute(
+        select(IdeaAttachment)
+        .join(CustomIdea, CustomIdea.id == IdeaAttachment.idea_id)
+        .where(
+            IdeaAttachment.id == attachment_id,
+            IdeaAttachment.idea_id == idea_id,
+            CustomIdea.user_id == user_id,
+        )
+    )
+    attachment = result.scalar_one_or_none()
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Unknown attachment_id")
+
+    file_on_disk = MEDIA_DIR / attachment.file_path
+    file_on_disk.unlink(missing_ok=True)
+
+    await db.delete(attachment)
+    await db.commit()
+    return {"deleted": True}
+
+
+@app.delete("/dashboard/ideas/{idea_id}")
+async def delete_dashboard_idea(
+    idea_id: uuid.UUID, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    result = await db.execute(
+        select(CustomIdea)
+        .where(CustomIdea.id == idea_id, CustomIdea.user_id == user_id)
+        .options(selectinload(CustomIdea.attachments))
+    )
+    idea = result.scalar_one_or_none()
+    if idea is None:
+        raise HTTPException(status_code=404, detail="Unknown idea_id")
+
+    for attachment in idea.attachments:
+        (MEDIA_DIR / attachment.file_path).unlink(missing_ok=True)
+
+    await db.delete(idea)
+    await db.commit()
+    return {"deleted": True}
 
 
 @app.get("/notifications/vapid-public-key")

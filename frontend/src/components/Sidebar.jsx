@@ -126,7 +126,8 @@ export default function Sidebar({
           </button>
 
           <button
-            className="sidebar-help-btn"
+            className={`sidebar-help-btn${activeStep === "help" ? " active" : ""}`}
+            onClick={() => onNavigate("help")}
             data-tooltip="Help center"
             aria-label="Help center"
           >
