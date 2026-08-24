@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import os
 import requests
 import secrets
@@ -140,6 +141,13 @@ LOGIN_OAUTH_STATES: dict[str, dict] = {}
 
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
+
+# Powers the Dashboard's "Ideas" section - upcoming festivals/observances
+# pulled from Calendarific (https://calendarific.com). Optional: if unset,
+# /dashboard/ideas returns an empty list with a "not configured" flag rather
+# than failing the whole dashboard load.
+CALENDARIFIC_API_KEY = os.environ.get("CALENDARIFIC_API_KEY")
+CALENDARIFIC_COUNTRY = os.environ.get("CALENDARIFIC_COUNTRY", "IN")
 
 app = FastAPI(title="Content Agent API")
 
@@ -1411,6 +1419,75 @@ async def list_connections(db: AsyncSession = Depends(get_db), user_id: uuid.UUI
         for platform, credentials in result.all()
     }
     return {"connections": connections}
+
+
+def _fetch_calendarific_holidays_sync(year: int, month: int) -> list[dict]:
+    """Blocking Calendarific call - run via run_in_threadpool. Returns []
+    on any error (bad key, rate limit, network) rather than raising, so a
+    flaky third-party API never takes down the rest of the dashboard."""
+    try:
+        resp = requests.get(
+            "https://calendarific.com/api/v2/holidays",
+            params={
+                "api_key": CALENDARIFIC_API_KEY,
+                "country": CALENDARIFIC_COUNTRY,
+                "year": year,
+                "month": month,
+            },
+            timeout=8,
+        )
+        resp.raise_for_status()
+        return resp.json().get("response", {}).get("holidays", [])
+    except Exception:
+        logging.getLogger("dashboard").warning("Calendarific fetch failed for %s-%s", year, month, exc_info=True)
+        return []
+
+
+@app.get("/dashboard/ideas")
+async def get_dashboard_ideas(user_id: uuid.UUID = Depends(require_auth)):
+    """Upcoming festivals/observances for the Dashboard's Ideas section,
+    each turned into a lightweight content suggestion. Auth-gated like the
+    rest of the dashboard even though the underlying data isn't
+    user-specific, so an unauthenticated caller can't use this as a free
+    Calendarific proxy."""
+    if not CALENDARIFIC_API_KEY:
+        return {"configured": False, "ideas": []}
+
+    today = datetime.now(timezone.utc).date()
+    months_to_fetch = {(today.year, today.month)}
+    next_month_date = (today.replace(day=28) + timedelta(days=4)).replace(day=1)
+    months_to_fetch.add((next_month_date.year, next_month_date.month))
+
+    raw_holidays: list[dict] = []
+    for year, month in months_to_fetch:
+        raw_holidays.extend(await run_in_threadpool(_fetch_calendarific_holidays_sync, year, month))
+
+    ideas = []
+    seen = set()
+    for h in raw_holidays:
+        iso_date = (h.get("date") or {}).get("iso")
+        name = h.get("name")
+        if not iso_date or not name:
+            continue
+        try:
+            event_date = datetime.fromisoformat(iso_date[:10]).date()
+        except ValueError:
+            continue
+        if event_date < today:
+            continue
+        key = (name, iso_date[:10])
+        if key in seen:
+            continue
+        seen.add(key)
+        ideas.append({
+            "name": name,
+            "date": iso_date[:10],
+            "description": h.get("description") or "",
+            "types": h.get("type") or [],
+        })
+
+    ideas.sort(key=lambda i: i["date"])
+    return {"configured": True, "ideas": ideas[:12]}
 
 
 @app.get("/notifications/vapid-public-key")

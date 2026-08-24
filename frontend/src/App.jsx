@@ -6,6 +6,7 @@ import DraftReview from "./components/DraftReview";
 import Done from "./components/Done";
 import Landing from "./components/Landing";
 import Sidebar from "./components/Sidebar";
+import Dashboard from "./components/Dashboard";
 import Settings from "./components/settings";
 import Publish from "./components/Publish";
 import PublishNav from "./components/PublishNav";
@@ -366,17 +367,13 @@ export default function App() {
 
         <div className={`page-container${step === "publish" ? " is-wide" : step === "calendar" ? " is-wider-calendar" : ""}`}>
           {step === "dashboard" && (
-            <div style={{ padding: "2rem 0" }}>
-              <p style={{ fontFamily: "var(--font-display)", fontSize: "clamp(24px, 4vw, 32px)", color: "var(--ink)", marginBottom: 8 }}>
-                Welcome back
-              </p>
-              <p style={{ color: "var(--text-secondary)", marginBottom: 28 }}>
-                Start a new draft, or check in on your connected accounts.
-              </p>
-              <button className="primary" onClick={handleRestart} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                <span>+ New</span>
-              </button>
-            </div>
+            <Dashboard
+              token={token}
+              onNewPost={handleRestart}
+              onNavigate={(key) => { setPublishTab("new"); setStep(key); }}
+              onOpenDraft={handleOpenDraft}
+              onAuthError={handleLogout}
+            />
           )}
 
           {step === "generate" && (

@@ -334,6 +334,18 @@ export async function getDrafts({ token, status, excludeStatus, wasScheduled, sc
   cadence_by_weekday: [{weekday, count}], platform_reliability_daily: {platform: [{date, success, total}]},
   top_categories: [{category, count}], recent_failures: [{platform, detail, published_at}] }
  */
+/*
+  Upcoming festivals/observances for the Dashboard's Ideas section, pulled
+  server-side from Calendarific.
+  Expected backend response: { configured: bool, ideas: [{ name, date, description, types }] }
+  configured is false when the backend has no CALENDARIFIC_API_KEY set - the
+  frontend should show a "not set up" state rather than an empty-forever list.
+ */
+export async function getDashboardIdeas({ token }) {
+  const res = await fetch(`${API_BASE}/dashboard/ideas`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
 export async function getAnalyticsSummary({ token, days = 30 }) {
   const url = new URL(`${API_BASE}/analytics/summary`);
   url.searchParams.set("days", days);
