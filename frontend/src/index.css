@@ -1366,10 +1366,10 @@ input[type="number"] { -moz-appearance: textfield; }
   color: var(--text-secondary);
 }
 
-.composer-submit {
-  width: 100%;
-  height: 46px;
-  margin-top: 0.5rem;
+.composer-submit {            
+  width: 100%;               
+  height: 46px;            
+  margin-top: 0.5rem;       
   background: var(--accent);
   color: var(--accent-ink);
   border: none;
