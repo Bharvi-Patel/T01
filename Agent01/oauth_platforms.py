@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import requests
 from dotenv import load_dotenv
@@ -78,7 +79,8 @@ def facebook_authorize_url(state: str) -> str:
     return (
         "https://www.facebook.com/v21.0/dialog/oauth"
         f"?client_id={META_APP_ID}&redirect_uri={_redirect_uri('facebook')}&state={state}"
-        "&scope=pages_manage_posts,pages_read_engagement,pages_show_list,business_management"
+        "&scope=pages_manage_posts,pages_read_engagement,pages_show_list,business_management,"
+        "pages_messaging,pages_manage_metadata"
     )
 
 
@@ -150,21 +152,67 @@ def _subscribe_page_to_webhooks(page_id: str, page_access_token: str, fields: st
     resubscribing just overwrites the field list). Without it, webhooks
     the app is otherwise correctly configured for will never fire, with no
     error surfaced anywhere - the events are simply never sent.
+
+    Meta validates subscribed_fields as one atomic list: if ANY field name
+    in the request isn't in the account's currently-permitted set (e.g.
+    "comments"/"mentions" plural aren't valid here even though the
+    matching webhook payload later arrives under those same names - Meta's
+    Page-level subscription endpoint wants "mention" singular, and some
+    fields simply aren't grantable until the right permission/product is
+    approved), the WHOLE call is rejected with a 400 - including fields
+    that would have been perfectly valid on their own, e.g. "messages".
+    So a single bad field name silently blocks every other field too. To
+    avoid that, on a "must be one of {...}" 400 we parse the allowed set
+    Meta just told us about, keep only our requested fields that are in
+    it, and retry once with that trimmed list rather than giving up
+    entirely on a single typo/unsupported field.
+
     Best-effort: the account connection itself has already succeeded by
     the time this runs, so a failure here shouldn't undo that - it just
     means comments/DMs/mentions won't reach the inbox until retried.
     """
-    try:
-        resp = requests.post(
-            f"https://graph.facebook.com/v21.0/{page_id}/subscribed_apps",
-            params={"subscribed_fields": fields, "access_token": page_access_token},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        if not resp.json().get("success"):
-            print(f"[oauth_platforms] subscribed_apps for page {page_id} returned success=false: {resp.text}", file=sys.stderr)
-    except requests.RequestException as e:
-        print(f"[oauth_platforms] subscribed_apps failed for page {page_id}: {e}", file=sys.stderr)
+    requested = [f.strip() for f in fields.split(",") if f.strip()]
+
+    def _attempt(field_list: list[str]) -> bool:
+        """Returns True on success, False on failure (already logged)."""
+        if not field_list:
+            print(f"[oauth_platforms] subscribed_apps for page {page_id}: no valid fields left to subscribe, giving up", file=sys.stderr)
+            return False
+        try:
+            resp = requests.post(
+                f"https://graph.facebook.com/v21.0/{page_id}/subscribed_apps",
+                params={"subscribed_fields": ",".join(field_list), "access_token": page_access_token},
+                timeout=15,
+            )
+            if resp.ok and resp.json().get("success"):
+                print(f"[oauth_platforms] subscribed_apps for page {page_id} succeeded with fields: {field_list}", file=sys.stderr)
+                return True
+            if not resp.ok:
+                print(f"[oauth_platforms] subscribed_apps for page {page_id} failed "
+                      f"({resp.status_code}): {resp.text}", file=sys.stderr)
+                # Meta's error spells out the full valid set in single
+                # quotes inside a {comma, separated, list} - extract it and
+                # keep only our requested fields that are actually in it.
+                try:
+                    err_msg = resp.json().get("error", {}).get("message", "")
+                    m = re.search(r"must be one of \{([^}]*)\}", err_msg)
+                    if m:
+                        allowed = {f.strip() for f in m.group(1).split(",")}
+                        retry_fields = [f for f in field_list if f in allowed]
+                        if retry_fields and retry_fields != field_list:
+                            print(f"[oauth_platforms] retrying page {page_id} subscribed_apps "
+                                  f"with only Meta-accepted fields: {retry_fields}", file=sys.stderr)
+                            return _attempt(retry_fields)
+                except (ValueError, KeyError):
+                    pass
+            else:
+                print(f"[oauth_platforms] subscribed_apps for page {page_id} returned success=false: {resp.text}", file=sys.stderr)
+            return False
+        except requests.RequestException as e:
+            print(f"[oauth_platforms] subscribed_apps failed for page {page_id}: {e}", file=sys.stderr)
+            return False
+
+    _attempt(requested)
 
 
 def facebook_credentials_from_page(page: dict) -> dict:
@@ -194,9 +242,17 @@ def instagram_credentials_from_page(page: dict) -> dict:
 
     # Instagram webhooks (comments/mentions/messages) route through the
     # linked Facebook Page's subscription, same endpoint as the Facebook
-    # case above, just with IG-specific fields and the mentions field
-    # this app relies on for InboxKind.MENTION.
-    _subscribe_page_to_webhooks(page["id"], page["access_token"], "comments,mentions,messages")
+    # case above, just with IG-specific fields. Note this endpoint's
+    # accepted field names don't always match the names Meta uses in the
+    # actual delivered webhook payload - "mention" (singular) is what this
+    # call accepts to enable it, even though the event itself later
+    # arrives tagged field="mentions" (see meta_webhook_receive). "comments"
+    # isn't in this account's currently-permitted set at all yet (Meta
+    # rejects it outright), so it's left out here for now - the
+    # auto-retry in _subscribe_page_to_webhooks will still salvage
+    # "mention"/"messages" even if this list is ever widened again and one
+    # entry turns out to be invalid for a given account.
+    _subscribe_page_to_webhooks(page["id"], page["access_token"], "mention,messages")
 
     return {
         "page_access_token": page["access_token"],
@@ -262,7 +318,8 @@ def instagram_authorize_url(state: str) -> str:
     return (
         "https://www.facebook.com/v21.0/dialog/oauth"
         f"?client_id={META_APP_ID}&redirect_uri={_redirect_uri('instagram')}&state={state}"
-        "&scope=pages_show_list,pages_read_engagement,business_management,instagram_basic,instagram_content_publish"
+        "&scope=pages_show_list,pages_read_engagement,business_management,instagram_basic,"
+        "instagram_content_publish,instagram_manage_messages,pages_messaging,pages_manage_metadata"
     )
 
 
