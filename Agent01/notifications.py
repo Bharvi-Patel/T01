@@ -67,7 +67,9 @@ def _send_push_sync(subscription: PushSubscription, title: str, body: str, url: 
     """Blocking pywebpush call - run via run_in_threadpool. Returns False if
     the push service says this subscription no longer exists (404/410),
     which the caller uses to delete the row; returns True in every other
-    case (sent, or a transient failure worth keeping the subscription for)."""
+    case (sent, or a transient failure worth keeping the subscription for -
+    including network errors, which pywebpush surfaces as a plain requests
+    exception rather than WebPushException)."""
     if not VAPID_PRIVATE_KEY:
         logger.warning("VAPID_PRIVATE_KEY not set - skipping push send (%r)", title)
         return True
@@ -88,12 +90,20 @@ def _send_push_sync(subscription: PushSubscription, title: str, body: str, url: 
             return False
         logger.warning("push send failed (status=%s): %s", status, e)
         return True
+    except Exception:
+        # Network errors (DNS failure, timeout, connection refused, etc.)
+        # come through as plain requests exceptions, not WebPushException -
+        # treat the same as "transient, keep the subscription".
+        logger.warning("push send failed for endpoint=%s", subscription.endpoint, exc_info=True)
+        return True
 
 
 async def notify_user(db: AsyncSession, user_id, kind: str, title: str, body: str, url: str | None = None) -> None:
     """Send `title`/`body` to `user_id` via push + email, if they have
     `kind` enabled. Never raises - a notification failure should never take
-    down the /generate or publish flow that triggered it."""
+    down the /generate or publish flow that triggered it. One dead/
+    unreachable push subscription is isolated to itself: it never blocks
+    delivery to the user's other devices or to email."""
     try:
         field = PREFERENCE_FIELD[kind]
         prefs = await get_or_create_notification_prefs(db, user_id)
@@ -104,17 +114,24 @@ async def notify_user(db: AsyncSession, user_id, kind: str, title: str, body: st
         subscriptions = result.scalars().all()
         any_dead = False
         for sub in subscriptions:
-            alive = await run_in_threadpool(_send_push_sync, sub, title, body, url)
+            try:
+                alive = await run_in_threadpool(_send_push_sync, sub, title, body, url)
+            except Exception:
+                logger.exception("push send raised unexpectedly for endpoint=%s", sub.endpoint)
+                continue
             if not alive:
                 await db.delete(sub)
                 any_dead = True
         if any_dead:
             await db.commit()
 
-        user_result = await db.execute(select(User.email).where(User.id == user_id))
-        email = user_result.scalar_one_or_none()
-        if email:
-            await run_in_threadpool(send_email, email, title, body)
+        try:
+            user_result = await db.execute(select(User.email).where(User.id == user_id))
+            email = user_result.scalar_one_or_none()
+            if email:
+                await run_in_threadpool(send_email, email, title, body)
+        except Exception:
+            logger.exception("email send failed for user_id=%s kind=%s", user_id, kind)
     except Exception:
         logger.exception("notify_user failed for user_id=%s kind=%s", user_id, kind)
 

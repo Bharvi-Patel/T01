@@ -24,37 +24,50 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _inspector():
+    return sa.inspect(op.get_bind())
+
+
 def upgrade() -> None:
-    """Upgrade schema."""
-    op.add_column(
-        'drafts',
-        sa.Column('reminder_sent', sa.Boolean(), nullable=False, server_default=sa.false()),
-    )
-    op.alter_column('drafts', 'reminder_sent', server_default=None)
-    op.create_table(
-        'notification_preferences',
-        sa.Column('user_id', sa.UUID(), nullable=False),
-        sa.Column('before_publish', sa.Boolean(), nullable=False),
-        sa.Column('needs_approval', sa.Boolean(), nullable=False),
-        sa.Column('publish_failed', sa.Boolean(), nullable=False),
-        sa.Column('weekly_digest', sa.Boolean(), nullable=False),
-        sa.Column('weekly_digest_last_sent', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('user_id'),
-    )
-    op.create_table(
-        'push_subscriptions',
-        sa.Column('id', sa.UUID(), nullable=False),
-        sa.Column('user_id', sa.UUID(), nullable=False),
-        sa.Column('endpoint', sa.Text(), nullable=False),
-        sa.Column('p256dh', sa.String(length=255), nullable=False),
-        sa.Column('auth', sa.String(length=255), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('endpoint'),
-    )
+    """Upgrade schema (idempotent: app startup may have run metadata.create_all)."""
+    insp = _inspector()
+
+    if 'reminder_sent' not in {c['name'] for c in insp.get_columns('drafts')}:
+        op.add_column(
+            'drafts',
+            sa.Column('reminder_sent', sa.Boolean(), nullable=False, server_default=sa.false()),
+        )
+        op.alter_column('drafts', 'reminder_sent', server_default=None)
+
+    tables = set(insp.get_table_names())
+
+    if 'notification_preferences' not in tables:
+        op.create_table(
+            'notification_preferences',
+            sa.Column('user_id', sa.UUID(), nullable=False),
+            sa.Column('before_publish', sa.Boolean(), nullable=False),
+            sa.Column('needs_approval', sa.Boolean(), nullable=False),
+            sa.Column('publish_failed', sa.Boolean(), nullable=False),
+            sa.Column('weekly_digest', sa.Boolean(), nullable=False),
+            sa.Column('weekly_digest_last_sent', sa.DateTime(timezone=True), nullable=True),
+            sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
+            sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+            sa.PrimaryKeyConstraint('user_id'),
+        )
+
+    if 'push_subscriptions' not in tables:
+        op.create_table(
+            'push_subscriptions',
+            sa.Column('id', sa.UUID(), nullable=False),
+            sa.Column('user_id', sa.UUID(), nullable=False),
+            sa.Column('endpoint', sa.Text(), nullable=False),
+            sa.Column('p256dh', sa.String(length=255), nullable=False),
+            sa.Column('auth', sa.String(length=255), nullable=False),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+            sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+            sa.PrimaryKeyConstraint('id'),
+            sa.UniqueConstraint('endpoint'),
+        )
 
 
 def downgrade() -> None:
