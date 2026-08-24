@@ -236,6 +236,12 @@ class Draft(Base):
     # never scheduled" once scheduled_at has been wiped.
     was_scheduled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # Guards the "remind me 15 minutes before a scheduled post goes live"
+    # notification against firing on every scheduler poll cycle between
+    # T-15min and T-0 - set True the moment the reminder is sent, reset to
+    # False whenever the draft is (re)scheduled to a new time.
+    reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     user: Mapped["User"] = relationship(back_populates="drafts")
     publish_results: Mapped[list["PublishResult"]] = relationship(
         back_populates="draft", cascade="all, delete-orphan"
@@ -327,6 +333,49 @@ class InboxItem(Base):
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     raw_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    user: Mapped["User"] = relationship()
+
+
+class NotificationPreference(Base):
+    """One row per user, created lazily (see get_or_create_notification_prefs
+    in notifications.py) the first time preferences are read or written.
+    Each column gates one notification kind - see notifications.py's
+    PREFERENCE_FIELD map for how a `kind` string resolves to a column here.
+    weekly_digest_last_sent guards the digest job against re-sending on every
+    scheduler poll within the same Monday - it's date-only, not datetime.
+    """
+    __tablename__ = "notification_preferences"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    before_publish: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    needs_approval: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    publish_failed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    weekly_digest: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    weekly_digest_last_sent: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    user: Mapped["User"] = relationship()
+
+
+class PushSubscription(Base):
+    """A single browser/device's Web Push subscription (one user can have
+    several - e.g. phone + laptop). `endpoint` is the push service URL the
+    browser gave us and is globally unique per registration; p256dh/auth are
+    the subscription's encryption keys, both required by pywebpush. Rows are
+    deleted automatically by notifications.py when the push service reports
+    the subscription as gone (HTTP 404/410), which happens whenever the user
+    revokes notification permission or uninstalls/clears the site."""
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    endpoint: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    p256dh: Mapped[str] = mapped_column(String(255), nullable=False)
+    auth: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     user: Mapped["User"] = relationship()

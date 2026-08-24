@@ -103,9 +103,11 @@ from db import (
     InboxKind,
     MediaAsset,
     MediaKind,
+    NotificationPreference,
     OAuthIdentity,
     Platform,
     PlatformConnection,
+    PushSubscription,
     PublishResult,
     User,
     decrypt_secret,
@@ -114,6 +116,12 @@ from db import (
     verify_password,
     get_db,
     init_db,
+)
+from notifications import (
+    VAPID_PUBLIC_KEY,
+    get_or_create_notification_prefs,
+    maybe_send_weekly_digests,
+    notify_user,
 )
 
 # Which credential fields must be Fernet-encrypted before hitting the DB,
@@ -297,10 +305,41 @@ async def _run_due_scheduled_drafts():
                 await db.commit()
 
 
+async def _send_due_publish_reminders():
+    """One poll cycle: notify the owner of every scheduled draft whose
+    publish time is <=15 minutes away and hasn't been reminded about yet.
+    Runs alongside _run_due_scheduled_drafts on the same poll - a draft
+    typically gets one reminder cycle hit, then the actual publish, both
+    within the same SCHEDULER_POLL_SECONDS-spaced loop."""
+    async with AsyncSessionLocal() as db:
+        now = datetime.now(timezone.utc)
+        soon = now + timedelta(minutes=15)
+        result = await db.execute(
+            select(Draft).where(
+                Draft.status == DraftStatus.SCHEDULED,
+                Draft.reminder_sent.is_(False),
+                Draft.scheduled_at.isnot(None),
+                Draft.scheduled_at <= soon,
+            )
+        )
+        for draft in result.scalars().all():
+            minutes = max(0, round((draft.scheduled_at - now).total_seconds() / 60))
+            await notify_user(
+                db, draft.user_id, "before_publish",
+                title="Scheduled post going live soon",
+                body=f'"{draft.category}: {draft.subtopic}" publishes in about {minutes} minute(s).',
+            )
+            draft.reminder_sent = True
+        await db.commit()
+
+
 async def _scheduler_loop():
     while True:
         try:
             await _run_due_scheduled_drafts()
+            await _send_due_publish_reminders()
+            async with AsyncSessionLocal() as db:
+                await maybe_send_weekly_digests(db)
         except Exception:
             # Keep polling even if a whole cycle throws unexpectedly, but
             # don't go silent about it — a swallowed exception here is how
@@ -381,6 +420,27 @@ class ScheduleRequest(BaseModel):
 
 class RescheduleRequest(BaseModel):
     scheduled_at: datetime
+
+
+class NotificationPreferencesRequest(BaseModel):
+    before_publish: bool
+    needs_approval: bool
+    publish_failed: bool
+    weekly_digest: bool
+
+
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscriptionRequest(BaseModel):
+    endpoint: str
+    keys: PushSubscriptionKeys
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str
 
 
 def _parse_draft(content: str) -> dict:
@@ -562,6 +622,12 @@ async def generate(req: GenerateRequest, db: AsyncSession = Depends(get_db), use
     db.add(draft)
     await db.commit()
     await db.refresh(draft)
+
+    await notify_user(
+        db, user_id, "needs_approval",
+        title="A draft is ready for review",
+        body=f'"{draft.category}: {draft.subtopic}" was generated and is waiting for your approval.',
+    )
 
     return {"draft_id": str(draft.id), "draft": draft.content}
 
@@ -1036,6 +1102,7 @@ async def schedule_draft(
     draft.scheduled_live = req.live
     draft.status = DraftStatus.SCHEDULED
     draft.was_scheduled = True
+    draft.reminder_sent = False
     await db.commit()
     await db.refresh(draft)
     return {
@@ -1063,6 +1130,7 @@ async def reschedule_draft(
         raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
 
     draft.scheduled_at = scheduled_at
+    draft.reminder_sent = False
     await db.commit()
     return {"draft_id": str(draft.id), "scheduled_at": draft.scheduled_at.isoformat()}
 
@@ -1220,6 +1288,7 @@ async def _publish_to_platforms(db: AsyncSession, draft: Draft, platforms: list[
     """
     results = {}
     any_success = False
+    failed_platforms: list[str] = []
     for platform in platforms:
         conn_result = await db.execute(
             select(PlatformConnection).where(
@@ -1232,6 +1301,7 @@ async def _publish_to_platforms(db: AsyncSession, draft: Draft, platforms: list[
             error = f"No {platform.value} connection found - connect that platform first."
             results[platform.value] = {"success": False, "error": error}
             db.add(PublishResult(draft_id=draft.id, platform=platform, success=False, detail=error))
+            failed_platforms.append(platform.value)
             continue
 
         user_credentials = dict(connection.credentials)
@@ -1254,6 +1324,8 @@ async def _publish_to_platforms(db: AsyncSession, draft: Draft, platforms: list[
 
         results[platform.value] = publish_result if success else {"success": False, "error": detail}
         any_success = any_success or success
+        if not success:
+            failed_platforms.append(platform.value)
         db.add(PublishResult(draft_id=draft.id, platform=platform, success=success, detail=detail))
 
     draft.status = DraftStatus.PUBLISHED if any_success else DraftStatus.PUBLISH_FAILED
@@ -1261,6 +1333,14 @@ async def _publish_to_platforms(db: AsyncSession, draft: Draft, platforms: list[
     draft.scheduled_platforms = None
     draft.scheduled_live = False
     await db.commit()
+
+    if failed_platforms:
+        await notify_user(
+            db, user_id, "publish_failed",
+            title="A publish attempt failed",
+            body=f'"{draft.category}: {draft.subtopic}" failed to publish to: {", ".join(failed_platforms)}.',
+        )
+
     return results
 
 
@@ -1331,6 +1411,84 @@ async def list_connections(db: AsyncSession = Depends(get_db), user_id: uuid.UUI
         for platform, credentials in result.all()
     }
     return {"connections": connections}
+
+
+@app.get("/notifications/vapid-public-key")
+def get_vapid_public_key():
+    """Public - the frontend needs this to call pushManager.subscribe()
+    before the user is necessarily authenticated in a persisted-session
+    sense (though in practice this is only called from the logged-in
+    Publish page). Returns null if VAPID isn't configured yet, which the
+    frontend treats as "push isn't available on this server"."""
+    return {"publicKey": VAPID_PUBLIC_KEY}
+
+
+@app.get("/notifications/preferences")
+async def get_notification_preferences(
+    db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    prefs = await get_or_create_notification_prefs(db, user_id)
+    return {
+        "before_publish": prefs.before_publish,
+        "needs_approval": prefs.needs_approval,
+        "publish_failed": prefs.publish_failed,
+        "weekly_digest": prefs.weekly_digest,
+    }
+
+
+@app.put("/notifications/preferences")
+async def update_notification_preferences(
+    req: NotificationPreferencesRequest,
+    db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    prefs = await get_or_create_notification_prefs(db, user_id)
+    prefs.before_publish = req.before_publish
+    prefs.needs_approval = req.needs_approval
+    prefs.publish_failed = req.publish_failed
+    prefs.weekly_digest = req.weekly_digest
+    await db.commit()
+    return {"ok": True}
+
+
+@app.post("/notifications/push-subscription")
+async def register_push_subscription(
+    req: PushSubscriptionRequest,
+    db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    """Upsert by endpoint - re-subscribing the same browser (e.g. after a
+    key rotation Chrome does periodically) updates the existing row instead
+    of creating a duplicate that would double-send pushes to one device."""
+    result = await db.execute(select(PushSubscription).where(PushSubscription.endpoint == req.endpoint))
+    sub = result.scalar_one_or_none()
+    if sub is None:
+        sub = PushSubscription(
+            user_id=user_id, endpoint=req.endpoint,
+            p256dh=req.keys.p256dh, auth=req.keys.auth,
+        )
+        db.add(sub)
+    else:
+        sub.user_id = user_id
+        sub.p256dh = req.keys.p256dh
+        sub.auth = req.keys.auth
+    await db.commit()
+    return {"ok": True}
+
+
+@app.delete("/notifications/push-subscription")
+async def remove_push_subscription(
+    req: PushUnsubscribeRequest,
+    db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    result = await db.execute(
+        select(PushSubscription).where(
+            PushSubscription.endpoint == req.endpoint, PushSubscription.user_id == user_id,
+        )
+    )
+    sub = result.scalar_one_or_none()
+    if sub is not None:
+        await db.delete(sub)
+        await db.commit()
+    return {"ok": True}
 
 
 @app.get("/connect/{platform}/history")

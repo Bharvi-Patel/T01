@@ -1,6 +1,20 @@
 // Publish.jsx
 import { useState, useEffect, useRef } from "react";
-import { getDrafts, getMediaAssets, uploadMediaAsset, addMediaText, deleteMediaAsset } from "../api";
+import {
+  getDrafts, getMediaAssets, uploadMediaAsset, addMediaText, deleteMediaAsset,
+  getVapidPublicKey, getNotificationPreferences, updateNotificationPreferences,
+  registerPushSubscription, removePushSubscription,
+} from "../api";
+
+// Web Push wants the VAPID public key as a Uint8Array, but the backend
+// hands it over base64url-encoded (the form browsers/servers exchange it
+// in) - this is the standard conversion for pushManager.subscribe().
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+}
 
 // Same feather-style stroke icon pattern used in Sidebar.jsx
 const MENU_ICON_PATHS = {
@@ -371,38 +385,143 @@ function MediaTab({ token, onSendToCompose }) {
   );
 }
 
-function NotificationsTab() {
-  const [reminders, setReminders] = useState({
-    beforePublish: true,
-    needsApproval: true,
-    publishFailed: true,
-    weeklyDigest: false,
-  });
+const NOTIFICATION_ITEMS = [
+  { key: "beforePublish", label: "Remind me before a scheduled post goes live", hint: "15 minutes ahead" },
+  { key: "needsApproval", label: "Notify me when a draft needs approval", hint: "As soon as it's generated" },
+  { key: "publishFailed", label: "Notify me if a publish attempt fails", hint: "Immediately" },
+  { key: "weeklyDigest", label: "Weekly performance digest", hint: "Every Monday morning" },
+];
 
-  function toggle(key) {
-    setReminders((prev) => ({ ...prev, [key]: !prev[key] }));
+function NotificationsTab({ token }) {
+  const [reminders, setReminders] = useState(null); // null while loading
+  const [saving, setSaving] = useState(null); // key currently being toggled
+  const [pushStatus, setPushStatus] = useState("checking"); // checking | unsupported | unconfigured | off | on | busy
+  const [pushError, setPushError] = useState(null);
+  const [vapidKey, setVapidKey] = useState(null);
+
+  useEffect(() => {
+    getNotificationPreferences({ token })
+      .then((prefs) =>
+        setReminders({
+          beforePublish: prefs.before_publish,
+          needsApproval: prefs.needs_approval,
+          publishFailed: prefs.publish_failed,
+          weeklyDigest: prefs.weekly_digest,
+        })
+      )
+      .catch(() =>
+        setReminders({ beforePublish: true, needsApproval: true, publishFailed: true, weeklyDigest: false })
+      );
+  }, [token]);
+
+  useEffect(() => {
+    async function checkPushState() {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        setPushStatus("unsupported");
+        return;
+      }
+      const { publicKey } = await getVapidPublicKey().catch(() => ({ publicKey: null }));
+      if (!publicKey) {
+        setPushStatus("unconfigured");
+        return;
+      }
+      setVapidKey(publicKey);
+      const reg = await navigator.serviceWorker.getRegistration();
+      const existing = reg ? await reg.pushManager.getSubscription() : null;
+      setPushStatus(existing ? "on" : "off");
+    }
+    checkPushState();
+  }, []);
+
+  async function toggle(key) {
+    const next = { ...reminders, [key]: !reminders[key] };
+    setReminders(next);
+    setSaving(key);
+    try {
+      await updateNotificationPreferences({ token, ...next });
+    } finally {
+      setSaving(null);
+    }
   }
 
-  const ITEMS = [
-    { key: "beforePublish", label: "Remind me before a scheduled post goes live", hint: "15 minutes ahead" },
-    { key: "needsApproval", label: "Notify me when a draft needs approval", hint: "As soon as it's generated" },
-    { key: "publishFailed", label: "Notify me if a publish attempt fails", hint: "Immediately" },
-    { key: "weeklyDigest", label: "Weekly performance digest", hint: "Every Monday morning" },
-  ];
+  async function enablePush() {
+    setPushError(null);
+    setPushStatus("busy");
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setPushError("Notification permission was denied in the browser.");
+        setPushStatus("off");
+        return;
+      }
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.ready;
+      const subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidKey),
+      });
+      await registerPushSubscription({ token, subscription });
+      setPushStatus("on");
+    } catch (e) {
+      setPushError(e.message || "Couldn't enable push notifications on this device.");
+      setPushStatus("off");
+    }
+  }
+
+  async function disablePush() {
+    setPushError(null);
+    setPushStatus("busy");
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const subscription = reg ? await reg.pushManager.getSubscription() : null;
+      if (subscription) {
+        await removePushSubscription({ token, endpoint: subscription.endpoint });
+        await subscription.unsubscribe();
+      }
+      setPushStatus("off");
+    } catch (e) {
+      setPushError(e.message || "Couldn't disable push notifications.");
+      setPushStatus("on");
+    }
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+      <div style={{ background: "var(--paper-raised)", borderRadius: 12, border: "0.5px solid var(--border-strong)", padding: "14px 1.25rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>Push notifications on this device</p>
+          <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>
+            {pushStatus === "unsupported" && "Not supported in this browser."}
+            {pushStatus === "unconfigured" && "Not yet configured on the server."}
+            {pushStatus === "checking" && "Checking…"}
+            {pushStatus === "busy" && "Working…"}
+            {pushStatus === "off" && "Off — you'll only get these by email."}
+            {pushStatus === "on" && "On — enabled for this browser."}
+            {pushError && <span style={{ color: "var(--danger, #c0392b)" }}> {pushError}</span>}
+          </p>
+        </div>
+        {(pushStatus === "on" || pushStatus === "off") && (
+          <button
+            className={pushStatus === "on" ? "" : "primary"}
+            style={{ width: "auto", padding: "0 16px", flexShrink: 0 }}
+            onClick={pushStatus === "on" ? disablePush : enablePush}
+          >
+            {pushStatus === "on" ? "Disable" : "Enable"}
+          </button>
+        )}
+      </div>
+
       <p style={{ fontSize: 12.5, color: "var(--text-muted)", margin: 0 }}>
-        These are mobile push reminders. Toggling them here just previews the setting — nothing is sent yet since
-        there's no notification/scheduling backend behind it.
+        These preferences apply to both push (if enabled above) and email. They're saved to your account.
       </p>
       <div style={{ background: "var(--paper-raised)", borderRadius: 12, border: "0.5px solid var(--border-strong)", padding: "0.5rem 1.25rem" }}>
-        {ITEMS.map((item, i) => (
+        {NOTIFICATION_ITEMS.map((item, i) => (
           <div
             key={item.key}
             style={{
               display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-              padding: "14px 0", borderBottom: i < ITEMS.length - 1 ? "0.5px solid var(--border-strong)" : "none",
+              padding: "14px 0", borderBottom: i < NOTIFICATION_ITEMS.length - 1 ? "0.5px solid var(--border-strong)" : "none",
+              opacity: reminders ? 1 : 0.5,
             }}
           >
             <div>
@@ -410,12 +529,13 @@ function NotificationsTab() {
               <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>{item.hint}</p>
             </div>
             <button
-              onClick={() => toggle(item.key)}
-              aria-pressed={reminders[item.key]}
+              onClick={() => reminders && toggle(item.key)}
+              disabled={!reminders || saving === item.key}
+              aria-pressed={!!reminders?.[item.key]}
               style={{
                 flexShrink: 0, width: 40, height: 22, borderRadius: 11, border: "none", padding: 2,
-                background: reminders[item.key] ? "var(--accent)" : "var(--border)",
-                display: "flex", justifyContent: reminders[item.key] ? "flex-end" : "flex-start",
+                background: reminders?.[item.key] ? "var(--accent)" : "var(--border)",
+                display: "flex", justifyContent: reminders?.[item.key] ? "flex-end" : "flex-start",
               }}
             >
               <span style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", display: "block" }} />
@@ -450,7 +570,7 @@ export default function Publish({ token, tab, onNewPost, onOpenDraft, onSendMedi
         />
       )}
       {tab === "media" && <MediaTab token={token} onSendToCompose={onSendMediaToCompose} />}
-      {tab === "notifications" && <NotificationsTab />}
+      {tab === "notifications" && <NotificationsTab token={token} />}
     </div>
   );
 }

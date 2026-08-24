@@ -432,3 +432,48 @@ export async function selectPage({ token, platform, pendingId, pageId }) {
   });
   return handle(res);
 }
+
+// --- Mobile notifications (Publish page's "Notifications" tab) ---
+
+// Public - null publicKey means push isn't configured on this server yet.
+export async function getVapidPublicKey() {
+  const res = await fetch(`${API_BASE}/notifications/vapid-public-key`);
+  return handle(res);
+}
+
+export async function getNotificationPreferences({ token }) {
+  const res = await fetch(`${API_BASE}/notifications/preferences`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+export async function updateNotificationPreferences({ token, beforePublish, needsApproval, publishFailed, weeklyDigest }) {
+  const res = await fetch(`${API_BASE}/notifications/preferences`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({
+      before_publish: beforePublish,
+      needs_approval: needsApproval,
+      publish_failed: publishFailed,
+      weekly_digest: weeklyDigest,
+    }),
+  });
+  return handle(res);
+}
+
+export async function registerPushSubscription({ token, subscription }) {
+  const res = await fetch(`${API_BASE}/notifications/push-subscription`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(subscription.toJSON ? subscription.toJSON() : subscription),
+  });
+  return handle(res);
+}
+
+export async function removePushSubscription({ token, endpoint }) {
+  const res = await fetch(`${API_BASE}/notifications/push-subscription`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ endpoint }),
+  });
+  return handle(res);
+}
