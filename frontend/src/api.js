@@ -76,6 +76,54 @@ export async function logout({ token }) {
   return handle(res);
 }
 
+// --- Profile settings (bottom-left account popup) ---------------------
+// The user's own login identity - username/email/avatar/timezone/password -
+// as opposed to getConnections()/connectX(), which are the social accounts
+// a draft can be published to.
+
+export async function getProfile({ token }) {
+  const res = await fetch(`${API_BASE}/me`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+export async function updateProfile({ token, username, email, timezone }) {
+  const res = await fetch(`${API_BASE}/me`, {
+    method: "PATCH",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ username, email, timezone }),
+  });
+  return handle(res);
+}
+
+export async function uploadAvatar({ token, file }) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/me/avatar`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: form,
+  });
+  return handle(res);
+}
+
+export async function changePassword({ token, currentPassword, newPassword }) {
+  const res = await fetch(`${API_BASE}/me/change-password`, {
+    method: "POST",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  return handle(res);
+}
+
+export async function deleteAccount({ token, password }) {
+  const res = await fetch(`${API_BASE}/me`, {
+    method: "DELETE",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  return handle(res);
+}
+
 /*
   Kick off a new draft.
   Expected backend response: { draft_id, draft: {...parsed draft json...} }

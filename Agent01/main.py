@@ -382,6 +382,21 @@ class SignupRequest(BaseModel):
 class ResendVerificationRequest(BaseModel):
     email: str
 
+class UpdateProfileRequest(BaseModel):
+    username: str | None = None
+    email: str | None = None
+    timezone: str | None = None
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+class DeleteAccountRequest(BaseModel):
+    # Required whenever the account has a password set (see /me DELETE) so a
+    # hijacked/left-open session can't wipe the account with one click.
+    # OAuth-only accounts (no password_hash) may omit this.
+    password: str | None = None
+
 class VerifyEmailRequest(BaseModel):
     token: str
 
@@ -516,6 +531,144 @@ async def logout(
             await db.delete(session)
             await db.commit()
     return {"logged_out": True}
+
+
+def serialize_profile(user: User) -> dict:
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "email": user.email,
+        "avatar_url": user.avatar_url,
+        "timezone": user.timezone,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "has_password": bool(user.password_hash),
+    }
+
+
+# --- Profile settings (bottom-left account popup) --------------------------
+# Separate from PlatformConnection (social accounts to publish to) - this is
+# the user's own login identity: username/email, avatar, timezone, password,
+# and account deletion.
+
+@app.get("/me")
+async def get_me(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return serialize_profile(user)
+
+
+@app.patch("/me")
+async def update_me(
+    req: UpdateProfileRequest, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if req.username is not None:
+        username = req.username.strip()
+        if len(username) < 3:
+            raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+        if username != user.username:
+            existing = await db.execute(select(User).where(User.username == username, User.id != user_id))
+            if existing.scalar_one_or_none() is not None:
+                raise HTTPException(status_code=409, detail="Username already taken")
+            user.username = username
+
+    if req.email is not None:
+        email = req.email.strip().lower()
+        if "@" not in email or "." not in email.split("@")[-1]:
+            raise HTTPException(status_code=400, detail="Enter a valid email address")
+        if email != user.email:
+            existing = await db.execute(select(User).where(User.email == email, User.id != user_id))
+            if existing.scalar_one_or_none() is not None:
+                raise HTTPException(status_code=409, detail="An account with that email already exists")
+            user.email = email
+
+    if req.timezone is not None:
+        user.timezone = req.timezone.strip() or "UTC"
+
+    await db.commit()
+    await db.refresh(user)
+    return serialize_profile(user)
+
+
+AVATAR_MAX_BYTES = 5 * 1024 * 1024  # 5MB
+
+
+@app.post("/me/avatar")
+async def upload_avatar(
+    file: UploadFile = File(...), db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="file is empty")
+    if len(file_bytes) > AVATAR_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="Image exceeds 5MB limit")
+
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    # Remove the previous avatar file so uploads don't pile up on disk.
+    if user.avatar_url:
+        old_relative = user.avatar_url.split("/media-files/", 1)[-1]
+        old_path = MEDIA_DIR / old_relative
+        if old_path.is_file():
+            old_path.unlink(missing_ok=True)
+
+    ext = Path(file.filename or "").suffix or ".jpg"
+    stored_name = f"avatar_{uuid.uuid4()}{ext}"
+    (user_media_dir(user_id) / stored_name).write_bytes(file_bytes)
+
+    user.avatar_url = f"{BACKEND_BASE_URL}/media-files/{user_id}/{stored_name}"
+    await db.commit()
+    await db.refresh(user)
+    return serialize_profile(user)
+
+
+@app.post("/me/change-password")
+async def change_password(
+    req: ChangePasswordRequest, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if not user.password_hash:
+        raise HTTPException(status_code=400, detail="This account signed in via a connected provider and has no password to change")
+    if not verify_password(req.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    if len(req.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+
+    user.password_hash = hash_password(req.new_password)
+    await db.commit()
+    return {"status": "ok"}
+
+
+@app.delete("/me")
+async def delete_account(
+    req: DeleteAccountRequest, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if user.password_hash:
+        if not req.password or not verify_password(req.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Password is incorrect")
+
+    # Invalidate every session for this account, then delete the user row -
+    # cascades (platform_connections, drafts, oauth_identities, media_assets,
+    # auth_sessions, custom_ideas) are already declared on the User model.
+    await db.execute(AuthSession.__table__.delete().where(AuthSession.user_id == user_id))
+    await db.delete(user)
+    await db.commit()
+    return {"status": "deleted"}
 
 
 async def _get_or_create_admin_user(session: AsyncSession):

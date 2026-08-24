@@ -16,7 +16,7 @@ import Analytics, { RANGE_OPTIONS } from "./components/Analytics";
 import Inbox, { KIND_TABS } from "./components/Inbox";
 import HelpCenter from "./components/HelpCenter";
 import { MODE_TABS } from "./components/Form";
-import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft } from "./api";
+import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft, getProfile } from "./api";
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem("auth_token"));
@@ -31,6 +31,7 @@ export default function App() {
   const [resendMessage, setResendMessage] = useState("");
 
   const [connections, setConnections] = useState({}); // { linkedin: { profile_name, profile_picture_url }, ... } — key present means connected
+  const [profile, setProfile] = useState(null); // { username, email, avatar_url, timezone, ... } — the logged-in user's own account, from GET /me
 
   const [showAuth, setShowAuth] = useState(false);
   
@@ -62,6 +63,16 @@ export default function App() {
     });
   }
 
+  // Appearance (light/dark) - index.css keys every color var off the
+  // document's data-theme attribute, so this just needs to set that and
+  // persist the choice; nothing else has driven it until now.
+  const [theme, setThemeState] = useState(() => localStorage.getItem("theme") || "dark");
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -88,6 +99,13 @@ export default function App() {
   }
 
   useEffect(refreshConnections, [token, step]);
+
+  function refreshProfile() {
+    if (!token) { setProfile(null); return; }
+    getProfile({ token }).then(setProfile).catch(() => {});
+  }
+
+  useEffect(refreshProfile, [token]);
 
 
   useEffect(() => {
@@ -166,6 +184,17 @@ export default function App() {
     if (token) apiLogout({ token }).catch(() => {});
     localStorage.removeItem("auth_token");
     setToken(null);
+    setProfile(null);
+    handleRestart();
+  }
+
+  // Account was just deleted server-side (DELETE /me already invalidated
+  // every session) - clear local state directly rather than calling
+  // apiLogout, which would just fail against a token that's already gone.
+  function handleAccountDeleted() {
+    localStorage.removeItem("auth_token");
+    setToken(null);
+    setProfile(null);
     handleRestart();
   }
 
@@ -324,6 +353,12 @@ export default function App() {
         onCloseMobile={() => setMobileMenuOpen(false)}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={toggleSidebarCollapsed}
+        token={token}
+        profile={profile}
+        onProfileUpdated={setProfile}
+        onAccountDeleted={handleAccountDeleted}
+        theme={theme}
+        onSetTheme={setThemeState}
       />
 
       {step === "publish" && (
@@ -370,6 +405,7 @@ export default function App() {
           {step === "dashboard" && (
             <Dashboard
               token={token}
+              profile={profile}
               onNewPost={handleRestart}
               onNavigate={(key) => { setPublishTab("new"); setStep(key); }}
               onOpenDraft={handleOpenDraft}

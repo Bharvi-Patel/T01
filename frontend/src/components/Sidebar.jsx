@@ -1,5 +1,6 @@
 // Sidebar.jsx
 import { useState, useRef, useEffect } from "react";
+import ProfileSettingsModal from "./ProfileSettingsModal";
 
 // "generate" and "settings" are real, wired-up screens (the create/review/
 // publish flow, and the social accounts connector page). Everything else
@@ -39,6 +40,28 @@ function Icon({ name, size = 16 }) {
   );
 }
 
+function initials(name) {
+  return (name || "?").trim().slice(0, 2).toUpperCase();
+}
+
+// Rendered inline rather than through the single-<path> Icon component
+// above, since a sun needs a circle plus separate rays - not one path.
+function SunIcon({ size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </svg>
+  );
+}
+function MoonIcon({ size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+    </svg>
+  );
+}
+
 export default function Sidebar({
   activeStep,
   onNavigate,
@@ -49,8 +72,15 @@ export default function Sidebar({
   collapsed,
   onToggleCollapsed,
   workspaceName = "startTrack",
+  token,
+  profile,
+  onProfileUpdated,
+  onAccountDeleted,
+  theme,
+  onSetTheme,
 }) {
   const [accountOpen, setAccountOpen] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
   const accountRef = useRef(null);
 
   useEffect(() => {
@@ -143,13 +173,65 @@ export default function Sidebar({
               aria-label="Account"
             >
               <span className="sidebar-account-avatar">
-                <Icon name="user" size={14} />
+                {profile?.avatar_url
+                  ? <img src={profile.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
+                  : <Icon name="user" size={14} />}
               </span>
-              {!collapsed && <span>Account</span>}
+              {!collapsed && <span>{profile?.username || "Account"}</span>}
             </button>
 
             {accountOpen && (
               <div className={`sidebar-account-menu${collapsed ? " sidebar-account-menu--collapsed" : ""}`}>
+                {profile && (
+                  <div className="sidebar-account-menu-header">
+                    <span className="sidebar-account-menu-avatar">
+                      {profile.avatar_url
+                        ? <img src={profile.avatar_url} alt="" />
+                        : <span>{initials(profile.username)}</span>}
+                    </span>
+                    <div className="sidebar-account-menu-header-text">
+                      <div className="sidebar-account-menu-name">{profile.username}</div>
+                      {profile.email && <div className="sidebar-account-menu-email">{profile.email}</div>}
+                    </div>
+                  </div>
+                )}
+                <button
+                  className="sidebar-account-menu-item"
+                  onClick={() => { setProfileModalOpen(true); setAccountOpen(false); }}
+                >
+                  <Icon name="user" size={15} />
+                  Profile settings
+                </button>
+                <button
+                  className="sidebar-account-menu-item"
+                  onClick={() => { onNavigate("settings"); setAccountOpen(false); }}
+                >
+                  <Icon name="link" size={15} />
+                  Integrations
+                </button>
+                <div className="sidebar-account-menu-item sidebar-account-menu-appearance">
+                  <span>Appearance</span>
+                  <span className="appearance-toggle">
+                    <button
+                      type="button"
+                      className={theme === "light" ? "active" : ""}
+                      onClick={() => onSetTheme("light")}
+                      aria-label="Light appearance"
+                      aria-pressed={theme === "light"}
+                    >
+                      <SunIcon size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className={theme === "dark" ? "active" : ""}
+                      onClick={() => onSetTheme("dark")}
+                      aria-label="Dark appearance"
+                      aria-pressed={theme === "dark"}
+                    >
+                      <MoonIcon size={13} />
+                    </button>
+                  </span>
+                </div>
                 <button className="sidebar-account-menu-item" onClick={onLogout}>
                   <Icon name="logout" size={15} />
                   Log out
@@ -159,6 +241,16 @@ export default function Sidebar({
           </div>
         </div>
       </div>
+
+      {profileModalOpen && (
+        <ProfileSettingsModal
+          token={token}
+          profile={profile}
+          onClose={() => setProfileModalOpen(false)}
+          onProfileUpdated={onProfileUpdated}
+          onAccountDeleted={onAccountDeleted}
+        />
+      )}
     </>
   );
 }

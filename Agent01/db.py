@@ -146,6 +146,12 @@ class User(Base):
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     verification_token: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     verification_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Profile settings (bottom-left account popup in the sidebar). avatar_url
+    # points at a file under MEDIA_DIR/<user_id>/ served via /media-files,
+    # same convention as MediaAsset - see save_avatar in main.py. timezone is
+    # an IANA name (e.g. "America/New_York"); "UTC" until the user picks one.
+    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC", server_default="UTC")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     platform_connections: Mapped[list["PlatformConnection"]] = relationship(

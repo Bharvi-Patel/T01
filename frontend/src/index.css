@@ -538,6 +538,190 @@ body::before {
 }
 .sidebar-account-menu-item:hover { background: var(--paper); }
 
+/* Appearance row: not a button itself (label + toggle), so it doesn't get
+   the hover/click behavior of the other menu items around it. */
+.sidebar-account-menu-appearance {
+  justify-content: space-between;
+  cursor: default;
+}
+.sidebar-account-menu-appearance:hover { background: transparent; }
+.appearance-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px;
+}
+.appearance-toggle button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.appearance-toggle button:hover { border-color: transparent; color: var(--ink); }
+.appearance-toggle button.active {
+  background: var(--paper-raised);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+/* profile popup: name/email header above the menu items, matching the
+   account button but non-interactive */
+.sidebar-account-menu-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-account-menu-avatar {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--accent);
+  color: var(--accent-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+.sidebar-account-menu-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.sidebar-account-menu-header-text { min-width: 0; }
+.sidebar-account-menu-name {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-account-menu-email {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============================================================
+   PROFILE SETTINGS MODAL
+   ============================================================ */
+.profile-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  z-index: 100;
+}
+.profile-modal {
+  width: 100%;
+  max-width: 440px;
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+  background: var(--paper-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--ink);
+}
+.profile-modal-header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  background: var(--paper-raised);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 15px;
+}
+.profile-modal-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.profile-modal-close:hover { color: var(--ink); border-color: transparent; }
+.profile-modal-body {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.profile-modal-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.profile-modal-avatar {
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--accent);
+  color: var(--accent-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 600;
+}
+.profile-modal-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.profile-modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+.profile-modal-body > .profile-modal-avatar-row + .profile-modal-section { border-top: none; padding-top: 0; }
+.profile-modal-section-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.profile-modal-error { color: var(--danger); font-size: 13px; margin: 0; }
+.profile-modal-success { color: var(--accent); font-size: 13px; margin: 0; }
+.profile-modal-danger { border-top: 1px solid var(--danger-bg); }
+button.danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger-bg);
+}
+button.danger:hover { border-color: var(--danger); }
+.profile-modal-delete-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--danger-bg);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.profile-modal-delete-confirm p { margin: 0; font-size: 13px; color: var(--ink); }
+
 /* --- collapsed-sidebar hover tooltips (name pops up beside the icon) --- */
 .sidebar.collapsed [data-tooltip] { position: relative; }
 .sidebar.collapsed [data-tooltip]:hover::after,

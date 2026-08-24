@@ -24,6 +24,34 @@ function platformByKey(key) {
   return PLATFORMS.find((p) => p.key === key);
 }
 
+// Rotating, time-of-day-aware greeting (the Dashboard equivalent of
+// Claude's "Good afternoon" welcome) - a handful of phrasings per time
+// bucket so it doesn't say the exact same line on every visit, picked once
+// per mount rather than re-rolled on every re-render.
+const GREETINGS = {
+  morning: ["Good morning", "Morning", "Rise and shine", "Top of the morning to you"],
+  afternoon: ["Good afternoon", "Hope your day's going well", "Afternoon"],
+  evening: ["Good evening", "Evening", "Winding down the day"],
+  night: ["Burning the midnight oil", "Good night", "Still up"],
+};
+
+function timeBucket(hour) {
+  if (hour < 5) return "night";
+  if (hour < 12) return "morning";
+  if (hour < 17) return "afternoon";
+  if (hour < 21) return "evening";
+  return "night";
+}
+
+function useGreeting() {
+  const [greeting] = useState(() => {
+    const bucket = timeBucket(new Date().getHours());
+    const options = GREETINGS[bucket];
+    return options[Math.floor(Math.random() * options.length)];
+  });
+  return greeting;
+}
+
 function IdeaCard({ idea, onDelete }) {
   const [hover, setHover] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -421,11 +449,12 @@ function RecentPostsSection({ token, onOpenDraft, onAuthError }) {
   );
 }
 
-export default function Dashboard({ token, onNewPost, onNavigate, onOpenDraft, onAuthError }) {
+export default function Dashboard({ token, profile, onNewPost, onNavigate, onOpenDraft, onAuthError }) {
+  const greeting = useGreeting();
   return (
     <div style={{ padding: "2rem 0" }}>
       <p style={{ fontFamily: "var(--font-display)", fontSize: "clamp(24px, 4vw, 32px)", color: "var(--ink)", marginBottom: 24 }}>
-        Welcome back
+        {greeting}{profile?.username ? `, ${profile.username}` : ""}.
       </p>
       <IdeasSection token={token} />
       <ToDoSection onNavigate={onNavigate} />
