@@ -1,9 +1,11 @@
-from py_vapid import Vapid02
-from cryptography.hazmat.primitives import serialization
-import base64
+import os, re
+from dotenv import load_dotenv, find_dotenv
 
-v = Vapid02.from_file('private_key.pem')
-pub_raw = v.public_key.public_bytes(
-    serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
-)
-print(base64.urlsafe_b64encode(pub_raw).rstrip(b'=').decode())
+print("dotenv file found at:", find_dotenv())
+load_dotenv(override=True)
+
+val = os.environ.get("VAPID_CLAIMS_EMAIL", "mailto:no-reply@starttrack.app")
+print("repr(value):", repr(val))
+
+pattern = r"^(mailto:.+@((localhost|[%\w-]+(\.[%\w-]+)+|([0-9a-f]{1,4}):+([0-9a-f]{1,4})?)))|https:\/\/(localhost|[\w-]+\.[\w\.-]+|([0-9a-f]{1,4}:+)+([0-9a-f]{1,4})?)$"
+print("passes _check_sub regex:", re.match(pattern, val, re.IGNORECASE) is not None)
