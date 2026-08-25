@@ -86,11 +86,11 @@ export async function getProfile({ token }) {
   return handle(res);
 }
 
-export async function updateProfile({ token, username, email, timezone }) {
+export async function updateProfile({ token, username, fullName, email, timezone }) {
   const res = await fetch(`${API_BASE}/me`, {
     method: "PATCH",
     headers: { ...authHeaders(token), "Content-Type": "application/json" },
-    body: JSON.stringify({ username, email, timezone }),
+    body: JSON.stringify({ username, full_name: fullName, email, timezone }),
   });
   return handle(res);
 }

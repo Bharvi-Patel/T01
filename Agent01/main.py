@@ -4,6 +4,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import requests
 import secrets
 import sys
@@ -11,6 +12,7 @@ import traceback
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 
@@ -232,7 +234,9 @@ def get_login_authorize_url(provider: str):
     return {"authorize_url": entry["authorize_url"](state)}
 
 
-async def _get_or_create_oauth_user(db: AsyncSession, provider: str, identity: dict) -> uuid.UUID:
+async def _get_or_create_oauth_user(db: AsyncSession, provider: str, identity: dict) -> tuple[uuid.UUID, bool]:
+    """Returns (user_id, is_verified). Caller must not issue a session token
+    when is_verified is False - see login_oauth_callback."""
     result = await db.execute(
         select(OAuthIdentity).where(
             OAuthIdentity.provider == provider,
@@ -241,16 +245,53 @@ async def _get_or_create_oauth_user(db: AsyncSession, provider: str, identity: d
     )
     existing = result.scalar_one_or_none()
     if existing is not None:
-        return existing.user_id
+        user = await db.get(User, existing.user_id)
+        if user is not None:
+            # Repair pass for rows created under an earlier version of this
+            # flow (or any other reason full_name/email ended up empty) -
+            # backfill from the provider's latest payload rather than only
+            # ever setting these at creation time.
+            changed = False
+            provider_full_name = identity.get("profile_name")
+            if provider_full_name and not user.full_name:
+                user.full_name = provider_full_name
+                changed = True
+
+            provider_email = identity.get("email")
+            if provider_email and not user.email:
+                collision = (await db.execute(
+                    select(User).where(User.email == provider_email, User.id != user.id)
+                )).scalar_one_or_none()
+                if collision is None:
+                    user.email = provider_email
+                    changed = True
+                    if not user.is_verified and not user.verification_token:
+                        user.verification_token = secrets.token_urlsafe(32)
+                        user.verification_token_expires_at = (
+                            datetime.now(timezone.utc) + timedelta(hours=EMAIL_VERIFICATION_TOKEN_TTL_HOURS)
+                        )
+                        await db.commit()
+                        await run_in_threadpool(
+                            send_verification_email, provider_email, user.verification_token, FRONTEND_BASE_URL
+                        )
+                        return existing.user_id, False
+
+            if changed:
+                await db.commit()
+        return existing.user_id, bool(user and user.is_verified)
 
     # Prefer the provider's real display name (e.g. Google's "name" field)
     # over the raw email/provider-id fallback, so a first-time OAuth login
     # doesn't leave someone greeted by their email address everywhere the
     # app shows their username. Still falls back to email/provider_id for
     # providers that don't return a display name (X, or Google scopes that
-    # omit "profile").
-    base_username = identity.get("profile_name") or identity.get("email") or f"{provider}_{identity['provider_user_id']}"
-    base_username = base_username[:64]
+    # omit "profile"). The raw name (not slugified) is kept as full_name -
+    # username itself must stay slug-style (see USERNAME_RE), so "Bharvi
+    # Patel" becomes username "bharvi_patel" / full_name "Bharvi Patel"
+    # instead of colliding on the literal string with a space in it.
+    full_name = identity.get("profile_name")
+    slug_source = full_name or identity.get("email") or f"{provider}_{identity['provider_user_id']}"
+    base_username = _slugify_username(slug_source)
     username = base_username
     suffix = 1
     while (await db.execute(select(User).where(User.username == username))).scalar_one_or_none() is not None:
@@ -265,12 +306,40 @@ async def _get_or_create_oauth_user(db: AsyncSession, provider: str, identity: d
     if email and (await db.execute(select(User).where(User.email == email))).scalar_one_or_none() is not None:
         email = None
 
-    user = User(username=username, email=email, password_hash=None, is_verified=True)
+    # Every account goes through the same in-app email-verification step
+    # before it can log in - password signup or OAuth. Most providers do
+    # confirm the address on their end, but the app's own verification
+    # link is still required for consistency (and so a Google/LinkedIn/
+    # Facebook account can't skip the check password signups go through).
+    # Providers that expose no email at all (X) have nothing to verify,
+    # so those accounts start verified since there's no link to send.
+    verification_token = None
+    verification_token_expires_at = None
+    is_verified = True
+    if email:
+        is_verified = False
+        verification_token = secrets.token_urlsafe(32)
+        verification_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=EMAIL_VERIFICATION_TOKEN_TTL_HOURS)
+
+    user = User(
+        username=username,
+        username_is_set=False,
+        full_name=full_name,
+        email=email,
+        password_hash=None,
+        is_verified=is_verified,
+        verification_token=verification_token,
+        verification_token_expires_at=verification_token_expires_at,
+    )
     db.add(user)
     await db.flush()  # get user.id without a full commit yet
     db.add(OAuthIdentity(user_id=user.id, provider=provider, provider_user_id=identity["provider_user_id"], email=identity.get("email")))
     await db.commit()
-    return user.id
+
+    if email:
+        await run_in_threadpool(send_verification_email, email, verification_token, FRONTEND_BASE_URL)
+
+    return user.id, is_verified
 
 
 @app.get("/auth/{provider}/callback")
@@ -297,7 +366,14 @@ async def login_oauth_callback(provider: str, code: str | None = None, state: st
     except Exception as e:
         return redirect_with("error", str(e))
 
-    user_id = await _get_or_create_oauth_user(db, provider, identity)
+    user_id, is_verified = await _get_or_create_oauth_user(db, provider, identity)
+    if not is_verified:
+        # Same "check your inbox" screen password signup lands on - the
+        # frontend's existing resend-verification flow (by email) covers
+        # this address regardless of which provider created the account.
+        email = identity.get("email") or ""
+        return RedirectResponse(url=f"{FRONTEND_BASE_URL}/?verify_pending={quote(email)}")
+
     token = await create_session(db, user_id)
     return RedirectResponse(url=f"{FRONTEND_BASE_URL}/?login_token={token}")
 
@@ -390,12 +466,43 @@ async def on_startup():
 
 
 
+# Username is the unique login handle - kept deliberately restrictive
+# (lowercase letters, digits, underscore, 3-64 chars, no spaces) so it's
+# always safe to use in URLs/mentions and never collides on casing. The
+# free-text display name (spaces, capitals, anything) lives in full_name
+# instead - see User.full_name in db.py.
+USERNAME_RE = re.compile(r"^[a-z0-9_]{3,64}$")
+USERNAME_RULE_MESSAGE = (
+    "Username can only contain lowercase letters, numbers, and underscores "
+    "(no spaces) - 3 to 64 characters"
+)
+
+
+def _validate_username(username: str) -> str:
+    username = username.strip()
+    if not USERNAME_RE.match(username):
+        raise HTTPException(status_code=400, detail=USERNAME_RULE_MESSAGE)
+    return username
+
+
+def _slugify_username(raw: str) -> str:
+    """Turn a free-text display name (or email local-part) into a valid
+    slug-style username base: lowercase, spaces/punctuation collapsed to a
+    single underscore, leading/trailing underscores trimmed. Callers still
+    append a numeric suffix on collision - this only makes the base sane."""
+    slug = re.sub(r"[^a-z0-9]+", "_", raw.strip().lower()).strip("_")
+    if len(slug) < 3:
+        slug = (slug + "_user")[:64] if slug else "user"
+    return slug[:64]
+
+
 class LoginRequest(BaseModel):
     identifier: str  # username or email
     password: str
 
 class SignupRequest(BaseModel):
     username: str
+    full_name: str | None = None
     email: str
     password: str
 
@@ -404,6 +511,7 @@ class ResendVerificationRequest(BaseModel):
 
 class UpdateProfileRequest(BaseModel):
     username: str | None = None
+    full_name: str | None = None
     email: str | None = None
     timezone: str | None = None
 
@@ -557,6 +665,8 @@ def serialize_profile(user: User) -> dict:
     return {
         "id": str(user.id),
         "username": user.username,
+        "username_is_set": user.username_is_set,
+        "full_name": user.full_name,
         "email": user.email,
         "avatar_url": user.avatar_url,
         "timezone": user.timezone,
@@ -587,14 +697,17 @@ async def update_me(
         raise HTTPException(status_code=404, detail="Account not found")
 
     if req.username is not None:
-        username = req.username.strip()
-        if len(username) < 3:
-            raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+        username = _validate_username(req.username)
         if username != user.username:
             existing = await db.execute(select(User).where(User.username == username, User.id != user_id))
             if existing.scalar_one_or_none() is not None:
                 raise HTTPException(status_code=409, detail="Username already taken")
             user.username = username
+        user.username_is_set = True
+
+    if req.full_name is not None:
+        full_name = req.full_name.strip()
+        user.full_name = full_name or None
 
     if req.email is not None:
         email = req.email.strip().lower()
@@ -706,15 +819,15 @@ async def _get_or_create_admin_user(session: AsyncSession):
 
 @app.post("/signup")
 async def signup(req: SignupRequest, db: AsyncSession = Depends(get_db)):
-    if len(req.username.strip()) < 3:
-        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+    username = _validate_username(req.username)
+    full_name = req.full_name.strip() if req.full_name else None
     email = req.email.strip().lower()
     if "@" not in email or "." not in email.split("@")[-1]:
         raise HTTPException(status_code=400, detail="Enter a valid email address")
     if len(req.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
-    existing_username = await db.execute(select(User).where(User.username == req.username))
+    existing_username = await db.execute(select(User).where(User.username == username))
     if existing_username.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="Username already taken")
 
@@ -724,7 +837,8 @@ async def signup(req: SignupRequest, db: AsyncSession = Depends(get_db)):
 
     verification_token = secrets.token_urlsafe(32)
     user = User(
-        username=req.username,
+        username=username,
+        full_name=full_name,
         email=email,
         password_hash=hash_password(req.password),
         is_verified=False,

@@ -3,7 +3,7 @@
 // email, timezone, password change, and account deletion. Distinct from
 // settings.jsx, which manages social accounts (LinkedIn/Facebook/etc) a
 // draft can be published to.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { updateProfile, uploadAvatar, changePassword, deleteAccount } from "../api";
 
 // A reasonably short, curated list rather than every IANA zone - covers the
@@ -23,10 +23,23 @@ function initials(name) {
 
 export default function ProfileSettingsModal({ token, profile, onClose, onProfileUpdated, onAccountDeleted }) {
   const [username, setUsername] = useState(profile?.username || "");
+  const [fullName, setFullName] = useState(profile?.full_name || "");
   const [email, setEmail] = useState(profile?.email || "");
   const [tz, setTz] = useState(profile?.timezone || "UTC");
   const [infoSaving, setInfoSaving] = useState(false);
   const [infoMessage, setInfoMessage] = useState(null); // { type, text }
+
+  // profile is fetched async (GET /me) and can still be null/stale on the
+  // first render if this modal mounts before that resolves - useState's
+  // initial value only applies once, so without this the fields would stay
+  // blank forever even after profile shows up. Re-sync whenever it changes.
+  useEffect(() => {
+    if (!profile) return;
+    setUsername(profile.username || "");
+    setFullName(profile.full_name || "");
+    setEmail(profile.email || "");
+    setTz(profile.timezone || "UTC");
+  }, [profile]);
 
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [avatarError, setAvatarError] = useState("");
@@ -65,7 +78,7 @@ export default function ProfileSettingsModal({ token, profile, onClose, onProfil
     setInfoSaving(true);
     setInfoMessage(null);
     try {
-      const updated = await updateProfile({ token, username, email, timezone: tz });
+      const updated = await updateProfile({ token, username, fullName, email, timezone: tz });
       onProfileUpdated(updated);
       setInfoMessage({ type: "success", text: "Saved." });
     } catch (err) {
@@ -126,7 +139,7 @@ export default function ProfileSettingsModal({ token, profile, onClose, onProfil
             <span className="profile-modal-avatar">
               {profile?.avatar_url
                 ? <img src={profile.avatar_url} alt="" />
-                : <span>{initials(profile?.username)}</span>}
+                : <span>{initials(profile?.full_name || profile?.username)}</span>}
             </span>
             <div>
               <button type="button" onClick={() => fileInputRef.current?.click()} disabled={avatarUploading}>
@@ -146,8 +159,18 @@ export default function ProfileSettingsModal({ token, profile, onClose, onProfil
           {/* Basic info */}
           <form onSubmit={handleSaveInfo} className="profile-modal-section">
             <div>
+              <label>Name</label>
+              <input value={fullName} onChange={(e) => setFullName(e.target.value)} />
+            </div>
+            <div>
               <label>Username</label>
-              <input value={username} onChange={(e) => setUsername(e.target.value)} />
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value.toLowerCase())}
+                pattern="[a-z0-9_]{3,64}"
+                title="Lowercase letters, numbers, and underscores only - no spaces"
+              />
+              <p className="profile-modal-hint">Lowercase letters, numbers, and underscores only - no spaces</p>
             </div>
             <div>
               <label>Email</label>

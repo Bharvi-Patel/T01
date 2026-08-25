@@ -134,7 +134,16 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = _uuid_col()
+    # The unique login handle - slug-style only (lowercase letters, digits,
+    # underscore, no spaces). See USERNAME_RE in main.py for the enforced
+    # pattern. Free-text display name lives separately in full_name below,
+    # so a display name like "Bharvi Patel" never has to be mangled to fit
+    # a unique-username constraint.
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    # Free-text display name (spaces/capitals/anything allowed, not unique).
+    # Populated from the OAuth provider's "name" field on first login, or
+    # settable directly in profile settings. Nullable for older rows.
+    full_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     # Nullable at the DB level because OAuth-login users may not expose an
     # email (e.g. X/Twitter). Required and validated at the /signup endpoint
     # for password-based accounts — see SignupRequest in main.py.

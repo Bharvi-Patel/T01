@@ -71,7 +71,11 @@ function PasswordField({ id, autoComplete, value, onChange, minLength }) {
 }
 
 
-export default function Login({ onLogin, onSignUp, loading, error }) {
+export default function Login({
+  onLogin, onSignUp, loading, error,
+  verifyMessage, pendingVerificationEmail, onResendVerification,
+  resendLoading, resendMessage, onBackToSignIn,
+}) {
   const [mode, setMode] = useState("login"); // "login" | "signup"
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -103,6 +107,31 @@ export default function Login({ onLogin, onSignUp, loading, error }) {
 
   const displayError = mismatchError || error;
 
+  // A signup - password or OAuth - isn't done until the emailed link is
+  // clicked. Show that instead of the form until it's resolved.
+  if (pendingVerificationEmail) {
+    return (
+      <div style={{ width: "100%", maxWidth: 380 }}>
+        <h1 className="masthead">Check your email</h1>
+        <hr className="masthead-rule" />
+        <div style={{ background: "var(--paper-raised)", borderRadius: "var(--radius)", border: "1px solid var(--border)", padding: "1.5rem" }}>
+          <p style={{ margin: "0 0 1rem" }}>
+            We sent a verification link to <strong>{pendingVerificationEmail}</strong>. Click it to activate your account, then sign in.
+          </p>
+          {resendMessage && (
+            <p style={{ fontSize: 13, color: "var(--text-muted)", margin: "0 0 1rem" }}>{resendMessage}</p>
+          )}
+          <button type="button" className="primary" style={{ width: "100%", marginBottom: 8 }} onClick={onResendVerification} disabled={resendLoading}>
+            {resendLoading ? "Sending…" : "Resend verification email"}
+          </button>
+          <button type="button" className="text-link" style={{ display: "block", width: "100%", textAlign: "center" }} onClick={onBackToSignIn}>
+            Back to sign in
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ width: "100%", maxWidth: 380 }}>
       {/* <p className="eyebrow" style={{ margin: "0 0 6px" }}>hehe</p> */}
@@ -110,6 +139,16 @@ export default function Login({ onLogin, onSignUp, loading, error }) {
         {mode === "login" ? "Sign in" : "Create account"}
       </h1>
       <hr className="masthead-rule" key={mode} />
+
+      {verifyMessage && (
+        <p style={{
+          fontSize: 13, margin: "0 0 1rem", padding: "8px 12px", borderRadius: "var(--radius)",
+          color: verifyMessage.type === "error" ? "var(--danger)" : "var(--success, var(--text))",
+          background: verifyMessage.type === "error" ? "var(--danger-bg)" : "var(--paper-raised)",
+        }}>
+          {verifyMessage.text}
+        </p>
+      )}
 
       <form
         onSubmit={handleSubmit}

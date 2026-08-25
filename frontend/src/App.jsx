@@ -1,6 +1,7 @@
 // App.jsx
 import { useState, useEffect } from "react";
 import Login from "./components/Login";
+import ChooseUsernameModal from "./components/ChooseUsernameModal";
 import Form from "./components/Form";
 import DraftReview from "./components/DraftReview";
 import Done from "./components/Done";
@@ -127,6 +128,21 @@ export default function App() {
       localStorage.setItem("auth_token", loginToken);
       setToken(loginToken);
       window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
+  // An OAuth signup (Google/LinkedIn/Facebook) still requires clicking the
+  // emailed verification link before login - same requirement as password
+  // signup. The callback redirects here with the address instead of a
+  // login_token when that's still pending; reuse the same "check your
+  // inbox" screen and resend flow password signup already has.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const verifyPending = params.get("verify_pending");
+    if (verifyPending) {
+      window.history.replaceState({}, "", window.location.pathname);
+      setShowAuth(true);
+      setPendingVerificationEmail(verifyPending);
     }
   }, []);
 
@@ -326,6 +342,21 @@ export default function App() {
       );
     }
     return <Landing onGetStarted={() => setShowAuth(true)} />;
+  }
+
+  // OAuth signup (Google/LinkedIn/Facebook/X) only ever auto-generates a
+  // placeholder username server-side - block here until the user picks
+  // their own, same screen real-estate as the sign-in/signup form.
+  if (profile && !profile.username_is_set) {
+    return (
+      <div className="center-viewport">
+        <ChooseUsernameModal
+          token={token}
+          suggestedUsername={profile.username}
+          onDone={setProfile}
+        />
+      </div>
+    );
   }
 
   // Every non-excluded page (all except calendar/dashboard/settings) gets a
