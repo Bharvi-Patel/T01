@@ -119,6 +119,7 @@ function externalPostToDraft(platform, post) {
   return {
     draft_id: `external:${platform}:${post.id}`,
     is_external: true,
+    external_post_id: post.id,
     permalink: post.permalink,
     category: "Posted on " + platform,
     subtopic: text.slice(0, 80) || "(no caption)",
@@ -305,7 +306,7 @@ function ImageLightbox({ src, onClose }) {
 
 export default function Calendar({ token, connections, onOpenDraft, onAuthError }) {
   const [viewDate, setViewDate] = useState(() => startOfDay(new Date()));
-  const [viewMode, setViewMode] = useState("month"); // "month" | "week"
+  const [viewMode, setViewMode] = useState("month"); // "month" | "week" | "list"
   const [drafts, setDrafts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -326,19 +327,22 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
   const grid = buildGrid(viewDate, viewMode);
   const connectedPlatforms = PLATFORMS.filter((p) => connections?.[p.key]);
 
+  const isListView = viewMode === "list";
+
   const refresh = useCallback(() => {
     setLoading(true);
     setError("");
     setHistoryNotice("");
     const params = { token };
-    if (accountFilter === "all") {
+    if (accountFilter === "all" && !isListView) {
       const from = grid[0];
       const to = new Date(grid[grid.length - 1]);
       to.setDate(to.getDate() + 1); // cover the whole last day
       params.scheduledFrom = from.toISOString();
       params.scheduledTo = to.toISOString();
     }
-    // else: no date bounds at all — pull the account's entire post history.
+    // else: no date bounds at all — pull the account's (or, in list view,
+    // every connected account's) entire post history, archive-style.
     const draftsPromise = getDrafts(params).then((res) => {
       let list = res.drafts.filter((d) => effectiveDate(d));
       if (accountFilter !== "all") {
@@ -378,23 +382,26 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
       .then(([t01Drafts, externalPosts]) => {
         // Dedup: a post published through T01 shows up in both the drafts
         // table AND the platform's own history. T01's publish_results[].detail
-        // is a JSON string (e.g. {"success": true, "url": "..."}) on success,
-        // not a bare URL, so it has to be parsed before comparing to the
-        // permalink the platform's history endpoint returns.
-        const knownPermalinks = new Set();
+        // is a JSON string on success — for Facebook/Instagram/Threads (the
+        // only platforms whose history we ever fetch) that's always
+        // {"success": true, "post_id": "..."}, never a "url" key (only
+        // LinkedIn's publish result has "url", and LinkedIn history is never
+        // fetched at all — see HISTORY_SUPPORTED_PLATFORMS) — so dedup has
+        // to match on post_id, not url/permalink.
+        const knownPostIds = new Set();
         t01Drafts.forEach((d) => {
           (d.publish_results || []).forEach((r) => {
             if (!r.success || !r.detail) return;
             try {
               const parsed = JSON.parse(r.detail);
-              if (parsed?.url) knownPermalinks.add(parsed.url);
+              if (parsed?.post_id) knownPostIds.add(String(parsed.post_id));
             } catch {
-              knownPermalinks.add(r.detail); // wasn't JSON — treat as a bare URL
+              // detail wasn't JSON - nothing to key dedup off of for this result.
             }
           });
         });
-        let newExternal = externalPosts.filter((p) => !knownPermalinks.has(p.permalink));
-        if (accountFilter === "all") {
+        let newExternal = externalPosts.filter((p) => !knownPostIds.has(String(p.external_post_id)));
+        if (accountFilter === "all" && !isListView) {
           const from = grid[0];
           const to = new Date(grid[grid.length - 1]);
           to.setDate(to.getDate() + 1); // cover the whole last day
@@ -477,7 +484,8 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
       return;
     }
     setExpandedIds((prev) => new Set(prev).add(draftId));
-    if (!expandedContent[draftId]) {
+    const draft = drafts.find((d) => d.draft_id === draftId);
+    if (!draft?.is_external && !expandedContent[draftId]) {
       setExpandLoadingId(draftId);
       try {
         const res = await getDraft({ token, draftId });
@@ -505,7 +513,9 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
     handleReschedule(draftId, next.toISOString());
   }
 
-  const periodLabel = viewMode === "week"
+  const periodLabel = isListView
+    ? "All posts"
+    : viewMode === "week"
     ? (() => {
         const start = grid[0];
         const end = grid[grid.length - 1];
@@ -519,6 +529,12 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
       })()
     : viewDate.toLocaleDateString(undefined, { month: "long", year: "numeric" });
   const today = startOfDay(new Date());
+  // Newest-first, Instagram-archive-style ordering for the list view.
+  const listItems = [...drafts].sort((a, b) => new Date(effectiveDate(b)) - new Date(effectiveDate(a)));
+
+  function accountNamesForDraft(d) {
+    return chipPlatforms(d).map((key) => connections?.[key]?.profile_name || platformByKey(key)?.label || key);
+  }
 
   return (
     <div>
@@ -565,11 +581,13 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
           )}
         </div>
         <div style={{ display: "flex", flex: "1 1 260px", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button onClick={() => setViewDate(startOfDay(new Date()))} style={{ width: "auto", padding: "0 14px" }}>Today</button>
-            <button onClick={() => navigate(-1)} style={{ width: "auto", padding: "0 14px" }} aria-label={viewMode === "week" ? "Previous week" : "Previous month"}>‹</button>
-            <button onClick={() => navigate(1)} style={{ width: "auto", padding: "0 14px" }} aria-label={viewMode === "week" ? "Next week" : "Next month"}>›</button>
-          </div>
+          {!isListView && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button onClick={() => setViewDate(startOfDay(new Date()))} style={{ width: "auto", padding: "0 14px" }}>Today</button>
+              <button onClick={() => navigate(-1)} style={{ width: "auto", padding: "0 14px" }} aria-label={viewMode === "week" ? "Previous week" : "Previous month"}>‹</button>
+              <button onClick={() => navigate(1)} style={{ width: "auto", padding: "0 14px" }} aria-label={viewMode === "week" ? "Next week" : "Next month"}>›</button>
+            </div>
+          )}
           <div style={{ display: "flex", border: "0.5px solid var(--border-strong)", borderRadius: 6, overflow: "hidden" }}>
             <button
               onClick={() => setViewMode("month")}
@@ -591,6 +609,16 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
             >
               Week
             </button>
+            <button
+              onClick={() => setViewMode("list")}
+              style={{
+                width: "auto", padding: "0 14px", border: "none", borderRadius: 0,
+                background: viewMode === "list" ? "var(--accent)" : "transparent",
+                color: viewMode === "list" ? "#fff" : "var(--text-secondary)",
+              }}
+            >
+              List
+            </button>
           </div>
         </div>
         </div>
@@ -607,6 +635,55 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
         </p>
       )}
 
+      {isListView ? (
+        <div style={{ border: "0.5px solid var(--border)", borderRadius: 10, overflow: "hidden", opacity: loading ? 0.6 : 1 }}>
+          {listItems.length === 0 && !loading && (
+            <p style={{ fontSize: 13, color: "var(--text-muted)", margin: 0, padding: "24px 16px", textAlign: "center" }}>
+              No posts yet.
+            </p>
+          )}
+          {listItems.map((d) => {
+            const thumb = d.featured_image?.url;
+            const published = isPublished(d);
+            const names = accountNamesForDraft(d);
+            return (
+              <div
+                key={d.draft_id}
+                onClick={() => setSelectedDraftId(d.draft_id)}
+                style={{
+                  display: "flex", gap: 12, alignItems: "center", padding: "10px 14px", cursor: "pointer",
+                  borderBottom: "0.5px solid var(--border)",
+                }}
+              >
+                {thumb ? (
+                  <img src={thumb} alt="" style={{ width: 44, height: 44, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
+                ) : (
+                  <div style={{ width: 44, height: 44, borderRadius: 6, background: "var(--paper-raised)", flexShrink: 0 }} />
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: "0 0 3px", fontSize: 13, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {d.title || d.subtopic}
+                  </p>
+                  <p style={{ margin: 0, fontSize: 11.5, color: "var(--text-muted)" }}>
+                    {names.join(", ")} · {new Date(effectiveDate(d)).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                  </p>
+                </div>
+                {!d.is_external && (
+                  <span
+                    style={{
+                      fontSize: 10, fontWeight: 500, borderRadius: 4, padding: "2px 8px", flexShrink: 0,
+                      color: published ? "#4CAF7D" : "var(--accent)",
+                      background: published ? "rgba(76,175,125,0.12)" : "var(--paper-raised)",
+                    }}
+                  >
+                    {published ? "Published" : "Scheduled"}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
       <div style={{ border: "0.5px solid var(--border)", borderRadius: 10, overflow: "hidden", opacity: loading ? 0.6 : 1 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", background: "var(--paper-raised)" }}>
           {WEEKDAY_LABELS.map((w) => (
@@ -765,6 +842,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
           })}
         </div>
       </div>
+      )}
 
       {selectedDraft && (                                          
         <DraftDetailPanel                                    

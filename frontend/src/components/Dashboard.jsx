@@ -177,7 +177,7 @@ function NewIdeaModal({ token, onClose, onSaved }) {
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Behind-the-scenes reel"
+          placeholder="e.g. GRWM reel"
           autoFocus
           style={{ width: "100%", marginBottom: 14, boxSizing: "border-box" }}
         />
