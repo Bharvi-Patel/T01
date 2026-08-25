@@ -9,7 +9,7 @@ import secrets
 import sys
 import traceback
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -40,6 +40,9 @@ from oauth_platforms import (
     META_APP_SECRET, OAUTH_PROVIDERS, facebook_exchange, instagram_exchange,
     facebook_credentials_from_page, instagram_credentials_from_page, list_pages,
     instagram_fetch_media, facebook_fetch_posts, threads_fetch_posts,
+    facebook_fetch_follower_count, instagram_fetch_follower_count, threads_fetch_follower_count,
+    facebook_fetch_post_engagement, instagram_fetch_post_engagement,
+    threads_fetch_post_engagement, linkedin_fetch_post_engagement,
 )
 
 PENDING_PAGE_SELECTIONS: dict[str, dict] = {} # pending_id -> {"user_id","platform","pages","expires_at"}
@@ -102,6 +105,7 @@ from db import (
     CustomIdea,
     Draft,
     DraftStatus,
+    FollowerSnapshot,
     IdeaAttachment,
     InboxItem,
     InboxKind,
@@ -111,6 +115,7 @@ from db import (
     OAuthIdentity,
     Platform,
     PlatformConnection,
+    PostEngagement,
     PushSubscription,
     PublishResult,
     User,
@@ -993,6 +998,125 @@ async def delete_media(
     return {"deleted": True}
 
 
+@app.post("/analytics/refresh")
+async def refresh_analytics(
+    db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    """Pulls current follower counts and per-post engagement from every
+    connected platform and caches them (FollowerSnapshot / PostEngagement).
+    On-demand rather than a background job — called by the Analytics page
+    when it loads or when the user hits Refresh. Every platform call is
+    best-effort: one platform failing (expired token, permission gap)
+    never blocks the others, and the response reports per-platform errors
+    so the frontend can show what did/didn't refresh.
+    """
+    conn_rows = (
+        await db.execute(select(PlatformConnection).where(PlatformConnection.user_id == user_id))
+    ).all()
+    connections = {row[0].platform: row[0] for row in conn_rows}
+
+    today = date.today()
+    follower_errors: dict[str, str] = {}
+    followers_updated: dict[str, int] = {}
+
+    async def snapshot_followers(platform: Platform, count: int | None):
+        if count is None:
+            follower_errors[platform.value] = "Could not fetch follower count."
+            return
+        existing = (
+            await db.execute(
+                select(FollowerSnapshot).where(
+                    FollowerSnapshot.user_id == user_id,
+                    FollowerSnapshot.platform == platform,
+                    FollowerSnapshot.captured_on == today,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing:
+            existing.follower_count = count
+            existing.captured_at = datetime.now(timezone.utc)
+        else:
+            db.add(FollowerSnapshot(user_id=user_id, platform=platform, follower_count=count, captured_on=today))
+        followers_updated[platform.value] = count
+
+    if Platform.FACEBOOK in connections:
+        creds = connections[Platform.FACEBOOK].credentials
+        token = decrypt_secret(creds["page_access_token"])
+        count = await run_in_threadpool(facebook_fetch_follower_count, token, creds["page_id"])
+        await snapshot_followers(Platform.FACEBOOK, count)
+
+    if Platform.INSTAGRAM in connections:
+        creds = connections[Platform.INSTAGRAM].credentials
+        token = decrypt_secret(creds["page_access_token"])
+        count = await run_in_threadpool(instagram_fetch_follower_count, token, creds["ig_page_id"])
+        await snapshot_followers(Platform.INSTAGRAM, count)
+
+    if Platform.THREADS in connections:
+        creds = connections[Platform.THREADS].credentials
+        token = decrypt_secret(creds["access_token"])
+        count = await run_in_threadpool(threads_fetch_follower_count, token, creds["threads_user_id"])
+        await snapshot_followers(Platform.THREADS, count)
+
+    # Engagement: only recent (last 90 days) successful publishes are worth
+    # refreshing — older posts rarely change and this avoids unbounded API
+    # calls as publish history grows.
+    since = datetime.now(timezone.utc) - timedelta(days=90)
+    result_rows = (
+        await db.execute(
+            select(PublishResult)
+            .join(Draft, Draft.id == PublishResult.draft_id)
+            .where(Draft.user_id == user_id, PublishResult.success.is_(True), PublishResult.published_at >= since)
+        )
+    ).scalars().all()
+
+    engagement_updated = 0
+    engagement_errors = 0
+    for pr in result_rows:
+        try:
+            post_id = json.loads(pr.detail).get("post_id") if pr.detail else None
+        except (json.JSONDecodeError, AttributeError):
+            post_id = None
+        if not post_id:
+            continue
+
+        connection = connections.get(pr.platform)
+        if connection is None:
+            continue
+        creds = connection.credentials
+
+        counts = None
+        if pr.platform == Platform.FACEBOOK:
+            counts = await run_in_threadpool(facebook_fetch_post_engagement, decrypt_secret(creds["page_access_token"]), post_id)
+        elif pr.platform == Platform.INSTAGRAM:
+            counts = await run_in_threadpool(instagram_fetch_post_engagement, decrypt_secret(creds["page_access_token"]), post_id)
+        elif pr.platform == Platform.THREADS:
+            counts = await run_in_threadpool(threads_fetch_post_engagement, decrypt_secret(creds["access_token"]), post_id)
+        elif pr.platform == Platform.LINKEDIN:
+            counts = await run_in_threadpool(linkedin_fetch_post_engagement, decrypt_secret(creds["access_token"]), post_id)
+
+        if counts is None:
+            engagement_errors += 1
+            continue
+
+        existing = (
+            await db.execute(select(PostEngagement).where(PostEngagement.publish_result_id == pr.id))
+        ).scalar_one_or_none()
+        if existing:
+            existing.likes_count = counts["likes"]
+            existing.comments_count = counts["comments"]
+        else:
+            db.add(PostEngagement(publish_result_id=pr.id, likes_count=counts["likes"], comments_count=counts["comments"]))
+        engagement_updated += 1
+
+    await db.commit()
+    return {
+        "followers_updated": followers_updated,
+        "follower_errors": follower_errors,
+        "engagement_updated": engagement_updated,
+        "engagement_errors": engagement_errors,
+    }
+
+
 @app.get("/analytics/summary")
 async def analytics_summary(
     days: int = 30,
@@ -1085,6 +1209,82 @@ async def analytics_summary(
     ).all()
     top_categories = [{"category": c, "count": n} for c, n in cat_rows]
 
+    # --- Engagement (likes/comments), cached by POST /analytics/refresh ---
+    engagement_rows = (
+        await db.execute(
+            select(
+                PublishResult.platform, PublishResult.published_at,
+                Draft.category, Draft.content,
+                PostEngagement.likes_count, PostEngagement.comments_count,
+            )
+            .join(Draft, Draft.id == PublishResult.draft_id)
+            .join(PostEngagement, PostEngagement.publish_result_id == PublishResult.id)
+            .where(Draft.user_id == user_id, PublishResult.success.is_(True), PublishResult.published_at >= since)
+        )
+    ).all()
+
+    def _engagement_total(likes, comments):
+        return (likes or 0) + (comments or 0)
+
+    top_posts = sorted(
+        (
+            {
+                "platform": r.platform.value if hasattr(r.platform, "value") else r.platform,
+                "title": (r.content or {}).get("title") or (r.content or {}).get("subtopic") or r.category,
+                "category": r.category,
+                "likes": r.likes_count,
+                "comments": r.comments_count,
+                "published_at": r.published_at.isoformat(),
+            }
+            for r in engagement_rows
+        ),
+        key=lambda p: p["likes"] + p["comments"],
+        reverse=True,
+    )[:5]
+
+    category_engagement: dict[str, dict] = {}
+    for r in engagement_rows:
+        entry = category_engagement.setdefault(r.category, {"category": r.category, "posts": 0, "total_engagement": 0})
+        entry["posts"] += 1
+        entry["total_engagement"] += _engagement_total(r.likes_count, r.comments_count)
+    engagement_by_category = sorted(
+        [
+            {**v, "avg_engagement": round(v["total_engagement"] / v["posts"], 1)}
+            for v in category_engagement.values()
+        ],
+        key=lambda v: v["avg_engagement"],
+        reverse=True,
+    )
+
+    weekday_engagement_totals = [0] * 7
+    weekday_engagement_counts = [0] * 7
+    for r in engagement_rows:
+        wd = r.published_at.weekday()
+        weekday_engagement_totals[wd] += _engagement_total(r.likes_count, r.comments_count)
+        weekday_engagement_counts[wd] += 1
+    engagement_by_weekday = [
+        {"weekday": wl, "avg_engagement": round(weekday_engagement_totals[i] / weekday_engagement_counts[i], 1) if weekday_engagement_counts[i] else 0}
+        for i, wl in enumerate(weekday_labels)
+    ]
+
+    # --- Followers: current count (latest snapshot ever, not range-scoped)
+    # and the growth series within the selected range ---
+    snapshot_rows = (
+        await db.execute(
+            select(FollowerSnapshot)
+            .where(FollowerSnapshot.user_id == user_id)
+            .order_by(FollowerSnapshot.captured_on)
+        )
+    ).scalars().all()
+
+    current_followers: dict[str, int] = {}
+    follower_growth: dict[str, list] = {}
+    for snap in snapshot_rows:
+        key = snap.platform.value if hasattr(snap.platform, "value") else snap.platform
+        current_followers[key] = snap.follower_count  # last one wins - rows are ordered oldest-first
+        if snap.captured_on >= since.date():
+            follower_growth.setdefault(key, []).append({"date": snap.captured_on.isoformat(), "count": snap.follower_count})
+
     recent_failures = [
         {
             "platform": r.platform.value if hasattr(r.platform, "value") else r.platform,
@@ -1110,6 +1310,11 @@ async def analytics_summary(
         "platform_reliability_daily": platform_reliability_daily,
         "top_categories": top_categories,
         "recent_failures": recent_failures,
+        "top_posts": top_posts,
+        "engagement_by_category": engagement_by_category,
+        "engagement_by_weekday": engagement_by_weekday,
+        "current_followers": current_followers,
+        "follower_growth": follower_growth,
     }
 
 

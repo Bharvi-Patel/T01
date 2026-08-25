@@ -448,6 +448,17 @@ export async function getAnalyticsSummary({ token, days = 30 }) {
   return handle(res);
 }
 
+// Pulls current follower counts + per-post like/comment counts from every
+// connected platform and caches them server-side (see POST /analytics/refresh).
+// Call this, then re-fetch getAnalyticsSummary to see the update.
+export async function refreshAnalytics({ token }) {
+  const res = await fetch(`${API_BASE}/analytics/refresh`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
 /*
   Fetch a single draft by id (e.g. to resume review from the Drafts list).
   Expected backend response: { draft_id, draft: {...}, status }

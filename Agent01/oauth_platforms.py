@@ -11,6 +11,7 @@ load_dotenv(override=False)
 
 LINKEDIN_CLIENT_ID = os.environ.get("LINKEDIN_CLIENT_ID")
 LINKEDIN_CLIENT_SECRET = os.environ.get("LINKEDIN_CLIENT_SECRET")
+LINKEDIN_API_VERSION = os.environ.get("LINKEDIN_API_VERSION", "202607")
 META_APP_ID = os.environ.get("APP_ID") or os.environ.get("META_APP_ID")
 META_APP_SECRET = os.environ.get("APP_SECRET") or os.environ.get("META_APP_SECRET")
 THREADS_CLIENT_ID = os.environ.get("THREADS_APP_ID")
@@ -414,6 +415,130 @@ def threads_fetch_posts(access_token: str, threads_user_id: str, limit: int = 50
         url = payload.get("paging", {}).get("next")
         params = None
     return posts[:limit]
+
+
+# --- Analytics: follower counts + per-post engagement ----------------------
+# Everything below is best-effort by design: a permissions gap or a transient
+# API error on one platform must never break analytics for the others, so
+# every function here catches request failures and returns None rather than
+# raising. Called from POST /analytics/refresh in main.py.
+
+def facebook_fetch_follower_count(page_access_token: str, page_id: str) -> int | None:
+    try:
+        resp = requests.get(
+            f"https://graph.facebook.com/v21.0/{page_id}",
+            params={"fields": "fan_count", "access_token": page_access_token},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json().get("fan_count")
+    except requests.RequestException:
+        return None
+
+
+def instagram_fetch_follower_count(page_access_token: str, ig_page_id: str) -> int | None:
+    try:
+        resp = requests.get(
+            f"https://graph.facebook.com/v21.0/{ig_page_id}",
+            params={"fields": "followers_count", "access_token": page_access_token},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json().get("followers_count")
+    except requests.RequestException:
+        return None
+
+
+def threads_fetch_follower_count(access_token: str, threads_user_id: str) -> int | None:
+    try:
+        resp = requests.get(
+            f"https://graph.threads.net/v1.0/{threads_user_id}",
+            params={"fields": "followers_count", "access_token": access_token},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json().get("followers_count")
+    except requests.RequestException:
+        return None
+
+
+# LinkedIn has no follower-count endpoint for a personal member profile at
+# all — organizationalEntityFollowerStatistics only exists for Company
+# Pages, which this app doesn't publish as. Deliberately not implemented,
+# not a bug: there is nothing to call here.
+
+
+def facebook_fetch_post_engagement(page_access_token: str, post_id: str) -> dict | None:
+    try:
+        resp = requests.get(
+            f"https://graph.facebook.com/v21.0/{post_id}",
+            params={
+                "fields": "likes.summary(true).limit(0),comments.summary(true).limit(0)",
+                "access_token": page_access_token,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return {
+            "likes": data.get("likes", {}).get("summary", {}).get("total_count", 0),
+            "comments": data.get("comments", {}).get("summary", {}).get("total_count", 0),
+        }
+    except requests.RequestException:
+        return None
+
+
+def instagram_fetch_post_engagement(page_access_token: str, media_id: str) -> dict | None:
+    try:
+        resp = requests.get(
+            f"https://graph.facebook.com/v21.0/{media_id}",
+            params={"fields": "like_count,comments_count", "access_token": page_access_token},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return {"likes": data.get("like_count", 0), "comments": data.get("comments_count", 0)}
+    except requests.RequestException:
+        return None
+
+
+def threads_fetch_post_engagement(access_token: str, media_id: str) -> dict | None:
+    # Threads has no direct like/comment-count field on the media object
+    # itself (unlike Instagram) — only the separate /insights endpoint,
+    # which needs threads_manage_insights and reports "likes"/"replies" as
+    # named metrics rather than plain counts.
+    try:
+        resp = requests.get(
+            f"https://graph.threads.net/v1.0/{media_id}/insights",
+            params={"metric": "likes,replies", "access_token": access_token},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        values = {m["name"]: m["values"][0]["value"] for m in resp.json().get("data", []) if m.get("values")}
+        return {"likes": values.get("likes", 0), "comments": values.get("replies", 0)}
+    except (requests.RequestException, KeyError, IndexError):
+        return None
+
+
+def linkedin_fetch_post_engagement(access_token: str, post_urn: str) -> dict | None:
+    # Best-effort: the socialActions summary endpoint works for the
+    # authenticated member's own posts on a standard member-scope app;
+    # it 403s under stricter API products. A failure here must not break
+    # engagement refresh for the other platforms — return None, not raise.
+    try:
+        resp = requests.get(
+            f"https://api.linkedin.com/v2/socialActions/{post_urn}",
+            headers={"Authorization": f"Bearer {access_token}", "Linkedin-Version": LINKEDIN_API_VERSION},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return {
+            "likes": data.get("likesSummary", {}).get("totalLikes", 0),
+            "comments": data.get("commentsSummary", {}).get("totalFirstLevelComments", 0),
+        }
+    except requests.RequestException:
+        return None
 
 
 OAUTH_PROVIDERS = {

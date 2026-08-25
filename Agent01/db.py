@@ -3,7 +3,7 @@ from __future__ import annotations
 import enum
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import bcrypt
 
 from cryptography.fernet import Fernet
@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -268,6 +269,47 @@ class PublishResult(Base):
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     draft: Mapped["Draft"] = relationship(back_populates="publish_results")
+    engagement: Mapped["PostEngagement | None"] = relationship(
+        back_populates="publish_result", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class FollowerSnapshot(Base):
+    """One row per (user, platform, day) — the only way to chart follower
+    growth over time, since every platform's API only ever exposes a
+    current count, not history. Written by POST /analytics/refresh (see
+    main.py) — there's no background scheduler for this yet, so growth
+    only has data points for days the Analytics page was actually opened
+    (and refreshed) on."""
+    __tablename__ = "follower_snapshots"
+    __table_args__ = (UniqueConstraint("user_id", "platform", "captured_on", name="uq_user_platform_day"),)
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    platform: Mapped[Platform] = mapped_column(Enum(Platform, name="platform_enum"))
+    follower_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    captured_on: Mapped[date] = mapped_column(Date, nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class PostEngagement(Base):
+    """Cached like/comment counts for one published post, keyed to the
+    PublishResult that created it (its `detail` JSON holds the platform's
+    post_id on success — see approve_and_publish/publish_dispatch).
+    Refreshed on-demand by POST /analytics/refresh rather than live on
+    every /analytics/summary call, since that would mean one platform API
+    round-trip per post on every page load."""
+    __tablename__ = "post_engagements"
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    publish_result_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("publish_results.id", ondelete="CASCADE"), unique=True
+    )
+    likes_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    comments_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    publish_result: Mapped["PublishResult"] = relationship(back_populates="engagement")
 
 
 class MediaAsset(Base):
