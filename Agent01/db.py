@@ -100,6 +100,11 @@ class DraftStatus(str, enum.Enum):
     PUBLISHED = "published"
     PUBLISH_FAILED = "publish_failed"
     REJECTED = "rejected"
+    # A member whose access on at least one requested platform is
+    # NEEDS_APPROVAL tried to schedule or publish - the request (see
+    # Draft.requested_* below) is parked here until a workspace admin
+    # grants or denies it via POST /drafts/{id}/approval.
+    PENDING_APPROVAL = "pending_approval"
 
 
 class Platform(str, enum.Enum):
@@ -404,6 +409,16 @@ class Draft(Base):
     # T-15min and T-0 - set True the moment the reminder is sent, reset to
     # False whenever the draft is (re)scheduled to a new time.
     reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # What a NEEDS_APPROVAL member actually asked for, held here while
+    # status == PENDING_APPROVAL. requested_scheduled_at set means they
+    # asked to schedule; None means they asked to publish immediately.
+    # Cleared (all three back to None/False) the moment an admin grants
+    # or denies the request via POST /drafts/{id}/approval - see
+    # _platforms_needing_approval and that endpoint in main.py.
+    requested_scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    requested_platforms: Mapped[list | None] = mapped_column(JSON, nullable=True)  # list[str] of Platform values
+    requested_live: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     workspace: Mapped["Workspace"] = relationship()
     user: Mapped["User"] = relationship(back_populates="drafts")

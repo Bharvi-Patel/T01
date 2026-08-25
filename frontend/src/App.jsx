@@ -17,6 +17,7 @@ import Calendar from "./components/Calendar";
 import Analytics, { RANGE_OPTIONS } from "./components/Analytics";
 import Inbox, { KIND_TABS } from "./components/Inbox";
 import HelpCenter from "./components/HelpCenter";
+import Members from "./components/Members";
 import { MODE_TABS } from "./components/Form";
 import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft, getProfile } from "./api";
 
@@ -505,6 +506,10 @@ export default function App() {
           )}
 
           {step === "help" && <HelpCenter />}
+
+          {step === "members" && (
+            <Members token={token} onAuthError={handleLogout} profile={profile} />
+          )}
 
           {["billing", "notifications"].includes(step) && (
             <div style={{ padding: "3rem 0", textAlign: "center", color: "var(--text-secondary)" }}>

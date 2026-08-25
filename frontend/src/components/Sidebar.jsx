@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { key: "calendar", label: "Calendar", icon: "calendar" },
   { key: "analytics", label: "Analytics", icon: "chart" },
   { key: "billing", label: "Billing", icon: "card" },
+  { key: "members", label: "Members", icon: "users" },
 ];
 
 const ICON_PATHS = {
@@ -22,6 +23,7 @@ const ICON_PATHS = {
   send: "M22 2L11 13M22 2l-7 20-4-9-9-4z",
   chart: "M4 20V10M12 20V4M20 20v-7",
   card: "M2 7a2 2 0 012-2h16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7zM2 10h20M6 15h4",
+  users: "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75",
   calendar: "M8 2v4M16 2v4M3 9h18M4 5h16a1 1 0 011 1v13a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1z",
   bell: "M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0",
   help: "M12 2a10 10 0 100 20 10 10 0 000-20zM9.5 9a2.5 2.5 0 015 0c0 1.5-2 2-2 3.5M12 17h.01",

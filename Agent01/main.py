@@ -749,6 +749,53 @@ async def require_workspace_admin(
     return membership
 
 
+async def _platforms_needing_approval(
+    db: AsyncSession, membership: WorkspaceMember, platforms: list[Platform],
+) -> list[Platform]:
+    """Which of `platforms` this member can't schedule/publish to directly -
+    i.e. where their effective access (override, else default_access) is
+    NEEDS_APPROVAL. The workspace admin always has FULL access everywhere
+    and is never gated here (see schedule_draft/review's admin shortcut).
+    """
+    if membership.role == WorkspaceRole.ADMIN:
+        return []
+
+    overrides_result = await db.execute(
+        select(MemberPlatformAccess).where(
+            MemberPlatformAccess.workspace_member_id == membership.id,
+            MemberPlatformAccess.platform.in_(platforms),
+        )
+    )
+    overrides = {row.platform: row.access for row in overrides_result.scalars().all()}
+
+    blocked = []
+    for platform in platforms:
+        effective = overrides.get(platform, membership.default_access)
+        if effective == AccessLevel.NEEDS_APPROVAL:
+            blocked.append(platform)
+    return blocked
+
+
+async def _notify_workspace_admins(
+    db: AsyncSession, workspace_id: uuid.UUID, title: str, body: str, exclude_user_id: uuid.UUID | None = None,
+) -> None:
+    """Fan out a 'needs_approval' notification to every admin of this
+    workspace (normally just the one owner) - used when a member's
+    schedule/publish request gets parked as PENDING_APPROVAL.
+    exclude_user_id skips notifying the requester themselves, in the
+    (currently impossible, but future-proof) case a member is also an
+    admin of their own workspace."""
+    result = await db.execute(
+        select(WorkspaceMember.user_id).where(
+            WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.role == WorkspaceRole.ADMIN,
+        )
+    )
+    for (admin_user_id,) in result.all():
+        if exclude_user_id is not None and admin_user_id == exclude_user_id:
+            continue
+        await notify_user(db, admin_user_id, "needs_approval", title=title, body=body)
+
+
 def serialize_workspace(workspace: Workspace, role: WorkspaceRole) -> dict:
     return {
         "id": str(workspace.id),
@@ -937,6 +984,127 @@ async def clear_member_platform_access(
         await db.delete(override)
         await db.commit()
     return await serialize_member(db, member)
+
+
+# --- Approval requests --------------------------------------------------
+# A member's schedule/review-approve call that touches a NEEDS_APPROVAL
+# platform doesn't schedule or publish - it parks the draft at
+# PENDING_APPROVAL with what was asked for in requested_* (see
+# schedule_draft/review). These two endpoints are how a workspace admin
+# sees and resolves that queue.
+
+class ApprovalDecisionRequest(BaseModel):
+    decision: str  # "grant" | "deny"
+    feedback: str | None = None  # shown to the requester when denying
+
+
+async def _workspace_member_user_ids(db: AsyncSession, workspace_id: uuid.UUID) -> list[uuid.UUID]:
+    result = await db.execute(select(WorkspaceMember.user_id).where(WorkspaceMember.workspace_id == workspace_id))
+    return [row[0] for row in result.all()]
+
+
+@app.get("/workspace/pending-approvals")
+async def list_pending_approvals(
+    db: AsyncSession = Depends(get_db), admin: WorkspaceMember = Depends(require_workspace_admin),
+):
+    member_user_ids = await _workspace_member_user_ids(db, admin.workspace_id)
+    result = await db.execute(
+        select(Draft)
+        .where(Draft.status == DraftStatus.PENDING_APPROVAL, Draft.user_id.in_(member_user_ids))
+        .order_by(Draft.updated_at.asc())
+    )
+    drafts = result.scalars().all()
+    return [
+        {
+            "draft_id": str(d.id),
+            "user_id": str(d.user_id),
+            "category": d.category,
+            "subtopic": d.subtopic,
+            "title": (d.content or {}).get("title"),
+            "requested_scheduled_at": d.requested_scheduled_at.isoformat() if d.requested_scheduled_at else None,
+            "requested_platforms": d.requested_platforms,
+            "requested_live": d.requested_live,
+            "updated_at": d.updated_at.isoformat(),
+        }
+        for d in drafts
+    ]
+
+
+@app.post("/drafts/{draft_id}/approval")
+async def decide_approval_request(
+    draft_id: uuid.UUID, req: ApprovalDecisionRequest,
+    db: AsyncSession = Depends(get_db), admin: WorkspaceMember = Depends(require_workspace_admin),
+):
+    if req.decision not in ("grant", "deny"):
+        raise HTTPException(status_code=400, detail="decision must be 'grant' or 'deny'")
+
+    result = await db.execute(select(Draft).where(Draft.id == draft_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Unknown draft_id")
+    if draft.status != DraftStatus.PENDING_APPROVAL:
+        raise HTTPException(status_code=400, detail="This draft isn't waiting on an approval decision")
+
+    member_user_ids = await _workspace_member_user_ids(db, admin.workspace_id)
+    if draft.user_id not in member_user_ids:
+        raise HTTPException(status_code=404, detail="Unknown draft_id")
+
+    requester_id = draft.user_id
+    category, subtopic = draft.category, draft.subtopic
+
+    if req.decision == "deny":
+        draft.status = DraftStatus.PENDING_REVIEW
+        draft.requested_scheduled_at = None
+        draft.requested_platforms = None
+        draft.requested_live = False
+        await db.commit()
+
+        body = f'Your request to publish "{category}: {subtopic}" was declined.'
+        if req.feedback:
+            body += f" {req.feedback}"
+        await notify_user(db, requester_id, "needs_approval", title="A publish request was declined", body=body)
+        return {"draft_id": str(draft.id), "status": draft.status.value}
+
+    # decision == "grant"
+    platforms = [Platform(p) for p in (draft.requested_platforms or [])]
+    scheduled_at = draft.requested_scheduled_at
+
+    if scheduled_at is not None and scheduled_at > datetime.now(timezone.utc):
+        draft.scheduled_at = scheduled_at
+        draft.scheduled_platforms = draft.requested_platforms
+        draft.scheduled_live = draft.requested_live
+        draft.status = DraftStatus.SCHEDULED
+        draft.was_scheduled = True
+        draft.reminder_sent = False
+        draft.requested_scheduled_at = None
+        draft.requested_platforms = None
+        draft.requested_live = False
+        await db.commit()
+        await db.refresh(draft)
+
+        await notify_user(
+            db, requester_id, "needs_approval", title="Your scheduled post was approved",
+            body=f'"{category}: {subtopic}" is approved and queued for {scheduled_at.isoformat()}.',
+        )
+        return {
+            "draft_id": str(draft.id), "status": draft.status.value,
+            "scheduled_at": draft.scheduled_at.isoformat(), "scheduled_platforms": draft.scheduled_platforms,
+        }
+
+    # Either the requester wanted it published immediately, or the requested
+    # time has since passed while this sat waiting on approval - either way
+    # there's nothing left to schedule, so publish now instead.
+    live = draft.requested_live
+    draft.requested_scheduled_at = None
+    draft.requested_platforms = None
+    draft.requested_live = False
+    results = await _publish_to_platforms(db, draft, platforms, live, requester_id)
+
+    await notify_user(
+        db, requester_id, "needs_approval", title="Your post was approved",
+        body=f'"{category}: {subtopic}" was approved and published.',
+    )
+    return {"draft_id": str(draft.id), "results": results}
 
 
 # --- Profile settings (bottom-left account popup) --------------------------
@@ -1849,15 +2017,38 @@ async def schedule_draft(
     if not req.platforms:
         raise HTTPException(status_code=400, detail="platforms is required to schedule a draft")
 
+    platforms: list[Platform] = []
     for p in req.platforms:
         try:
-            Platform(p)
+            platforms.append(Platform(p))
         except ValueError:
             raise HTTPException(status_code=400, detail=f"platform must be one of: {', '.join(pl.value for pl in Platform)} (got {p!r})")
 
     scheduled_at = _ensure_utc(req.scheduled_at)
     if scheduled_at <= datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
+
+    membership = await get_or_create_membership(db, user_id)
+    blocked = await _platforms_needing_approval(db, membership, platforms)
+    if blocked:
+        draft.status = DraftStatus.PENDING_APPROVAL
+        draft.requested_scheduled_at = scheduled_at
+        draft.requested_platforms = req.platforms
+        draft.requested_live = req.live
+        await db.commit()
+        await db.refresh(draft)
+        await _notify_workspace_admins(
+            db, membership.workspace_id, exclude_user_id=user_id,
+            title="A scheduled post needs your approval",
+            body=f'"{draft.category}: {draft.subtopic}" is queued for {scheduled_at.isoformat()} but needs approval for '
+                 f'{", ".join(p.value for p in blocked)}.',
+        )
+        return {
+            "draft_id": str(draft.id), "status": draft.status.value,
+            "requested_scheduled_at": draft.requested_scheduled_at.isoformat(),
+            "requested_platforms": draft.requested_platforms,
+            "pending_approval_for": [p.value for p in blocked],
+        }
 
     draft.scheduled_at = scheduled_at
     draft.scheduled_platforms = req.platforms
@@ -1912,6 +2103,28 @@ async def unschedule_draft(
     draft.scheduled_at = None
     draft.scheduled_platforms = None
     draft.scheduled_live = False
+    await db.commit()
+    return {"draft_id": str(draft.id), "status": draft.status.value}
+
+
+@app.delete("/drafts/{draft_id}/approval")
+async def withdraw_approval_request(
+    draft_id: uuid.UUID, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    """Lets the requester themselves pull back a still-pending request
+    (e.g. they want to edit the draft first) - separate from an admin's
+    grant/deny via POST .../approval, and only touches their own drafts."""
+    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.user_id == user_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Unknown draft_id")
+    if draft.status != DraftStatus.PENDING_APPROVAL:
+        raise HTTPException(status_code=400, detail="This draft isn't waiting on an approval decision")
+
+    draft.status = DraftStatus.PENDING_REVIEW
+    draft.requested_scheduled_at = None
+    draft.requested_platforms = None
+    draft.requested_live = False
     await db.commit()
     return {"draft_id": str(draft.id), "status": draft.status.value}
 
@@ -2153,6 +2366,27 @@ async def review(req: ReviewRequest, db: AsyncSession = Depends(get_db),  user_i
             platforms.append(Platform(p))
         except ValueError:
             raise HTTPException(status_code=400, detail=f"platform must be one of: {', '.join(pl.value for pl in Platform)} (got {p!r})")
+
+    membership = await get_or_create_membership(db, user_id)
+    blocked = await _platforms_needing_approval(db, membership, platforms)
+    if blocked:
+        draft.status = DraftStatus.PENDING_APPROVAL
+        draft.requested_scheduled_at = None  # None here means "asked to publish now", not scheduled
+        draft.requested_platforms = req.platforms
+        draft.requested_live = req.live
+        await db.commit()
+        await db.refresh(draft)
+        await _notify_workspace_admins(
+            db, membership.workspace_id, exclude_user_id=user_id,
+            title="A post needs your approval",
+            body=f'"{draft.category}: {draft.subtopic}" is ready to publish but needs approval for '
+                 f'{", ".join(p.value for p in blocked)}.',
+        )
+        return {
+            "draft_id": str(draft.id), "status": draft.status.value,
+            "requested_platforms": draft.requested_platforms,
+            "pending_approval_for": [p.value for p in blocked],
+        }
 
     results = await _publish_to_platforms(db, draft, platforms, req.live, user_id)
 

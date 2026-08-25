@@ -634,3 +634,69 @@ export async function removePushSubscription({ token, endpoint }) {
   });
   return handle(res);
 }
+
+// --- Workspace / Members -----------------------------------------------
+
+// Caller's workspace + their own role in it (admin vs member).
+export async function getWorkspace({ token }) {
+  const res = await fetch(`${API_BASE}/workspace`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+export async function getWorkspaceMembers({ token }) {
+  const res = await fetch(`${API_BASE}/workspace/members`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+// Add an existing account (by username) to the workspace as a MEMBER.
+// Admin-only server-side.
+export async function addWorkspaceMember({ token, username, defaultAccess }) {
+  const res = await fetch(`${API_BASE}/workspace/members`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ username, default_access: defaultAccess }),
+  });
+  return handle(res);
+}
+
+// Change a member's fallback access level (used for any platform without
+// its own override).
+export async function updateWorkspaceMember({ token, memberId, defaultAccess }) {
+  const res = await fetch(`${API_BASE}/workspace/members/${memberId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ default_access: defaultAccess }),
+  });
+  return handle(res);
+}
+
+// Revoke a member's login to the workspace. Their existing drafts/media
+// stay attributed to them - this only removes the membership row.
+export async function removeWorkspaceMember({ token, memberId }) {
+  const res = await fetch(`${API_BASE}/workspace/members/${memberId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
+// Override one platform's access for a member, independent of their
+// default_access (e.g. full everywhere except needs-approval on LinkedIn).
+export async function setMemberPlatformAccess({ token, memberId, platform, access }) {
+  const res = await fetch(`${API_BASE}/workspace/members/${memberId}/access/${platform}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ access }),
+  });
+  return handle(res);
+}
+
+// Remove a per-platform override, snapping that platform back to the
+// member's default_access.
+export async function clearMemberPlatformAccess({ token, memberId, platform }) {
+  const res = await fetch(`${API_BASE}/workspace/members/${memberId}/access/${platform}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
