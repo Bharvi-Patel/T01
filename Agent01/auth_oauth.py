@@ -39,6 +39,11 @@ def google_authorize_url(state: str) -> str:
         f"?response_type=code&client_id={GOOGLE_CLIENT_ID}"
         f"&redirect_uri={_redirect_uri('google')}&state={state}"
         "&scope=openid%20email%20profile&access_type=online"
+        # Without this, Google silently signs in with whichever Google
+        # account already has an active session in the browser instead of
+        # showing the account chooser - which is what "just opens the last
+        # account" was. select_account forces the picker every time.
+        "&prompt=select_account"
     )
 
 

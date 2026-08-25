@@ -243,14 +243,29 @@ async def _get_or_create_oauth_user(db: AsyncSession, provider: str, identity: d
     if existing is not None:
         return existing.user_id
 
-    base_username = identity.get("email") or f"{provider}_{identity['provider_user_id']}"
+    # Prefer the provider's real display name (e.g. Google's "name" field)
+    # over the raw email/provider-id fallback, so a first-time OAuth login
+    # doesn't leave someone greeted by their email address everywhere the
+    # app shows their username. Still falls back to email/provider_id for
+    # providers that don't return a display name (X, or Google scopes that
+    # omit "profile").
+    base_username = identity.get("profile_name") or identity.get("email") or f"{provider}_{identity['provider_user_id']}"
+    base_username = base_username[:64]
     username = base_username
     suffix = 1
     while (await db.execute(select(User).where(User.username == username))).scalar_one_or_none() is not None:
         suffix += 1
         username = f"{base_username}{suffix}"
 
-    user = User(username=username, password_hash=None, is_verified=True)
+    # User.email is unique, so only carry it over if no other account has
+    # already claimed it (e.g. the same person signed up via a different
+    # provider first with the same address) - leave it blank rather than
+    # fail account creation over a rare cross-provider collision.
+    email = identity.get("email")
+    if email and (await db.execute(select(User).where(User.email == email))).scalar_one_or_none() is not None:
+        email = None
+
+    user = User(username=username, email=email, password_hash=None, is_verified=True)
     db.add(user)
     await db.flush()  # get user.id without a full commit yet
     db.add(OAuthIdentity(user_id=user.id, provider=provider, provider_user_id=identity["provider_user_id"], email=identity.get("email")))
