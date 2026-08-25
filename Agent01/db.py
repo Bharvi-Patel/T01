@@ -19,6 +19,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    true as sa_true,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import (
@@ -148,6 +149,11 @@ class User(Base):
     # email (e.g. X/Twitter). Required and validated at the /signup endpoint
     # for password-based accounts — see SignupRequest in main.py.
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    # True once the user has picked their own username (password signup, or
+    # the onboarding prompt after OAuth). False means it's still the
+    # auto-generated placeholder from OAuth signup and the frontend blocks
+    # on the "choose a username" prompt until a real one is set.
+    username_is_set: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=sa_true())
     password_hash: Mapped[str] = mapped_column(String(255), nullable=True)
     # Password accounts start unverified and can't log in until they click
     # the emailed link (see /verify-email in main.py). OAuth logins and the
@@ -178,6 +184,9 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     custom_ideas: Mapped[list["CustomIdea"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    custom_todos: Mapped[list["CustomTodo"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -480,6 +489,29 @@ class IdeaAttachment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     idea: Mapped["CustomIdea"] = relationship(back_populates="attachments")
+
+
+class CustomTodo(Base):
+    """A Dashboard "To Do" item. The three starter tasks (post today, plan
+    ahead, connect an account) used to be a hardcoded frontend list; they're
+    now seeded into this table the first time a user's todos are fetched
+    (see get_dashboard_todos), so they're regular rows the user can edit or
+    delete just like anything they add themselves via the "+ New" button.
+    nav is the dashboard tab (e.g. "generate", "calendar", "settings") to
+    jump to on click when the item isn't being edited - None for anything
+    the user added themselves, since those have nowhere built-in to go."""
+    __tablename__ = "custom_todos"
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    accent: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    nav: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    user: Mapped["User"] = relationship(back_populates="custom_todos")
 
 
 # Init helper (dev convenience - use Alembic migrations once schema stabilizes)

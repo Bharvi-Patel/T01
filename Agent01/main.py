@@ -105,6 +105,7 @@ from db import (
     AsyncSessionLocal,
     AuthSession,
     CustomIdea,
+    CustomTodo,
     Draft,
     DraftStatus,
     FollowerSnapshot,
@@ -2140,6 +2141,106 @@ async def delete_dashboard_idea(
         (MEDIA_DIR / attachment.file_path).unlink(missing_ok=True)
 
     await db.delete(idea)
+    await db.commit()
+    return {"deleted": True}
+
+
+# --- Dashboard To Do -------------------------------------------------------
+# The three starter tasks used to be a hardcoded, uneditable frontend list.
+# They're now seeded into custom_todos the first time a user's todos are
+# fetched, so every item - built-in or user-added via "+ New" - is just a
+# row this user can edit in place or delete.
+
+DEFAULT_TODOS = [
+    {"title": "Post something today", "body": "Engage with your audience today. Create a post now!", "accent": "#4CAF7D", "nav": "generate"},
+    {"title": "Plan your next big post", "body": "Keep your feed active with a post scheduled ahead.", "accent": "#C1447E", "nav": "calendar"},
+    {"title": "Connect an account", "body": "Link a social account so drafts have somewhere to publish.", "accent": "#D9A441", "nav": "settings"},
+]
+
+
+def serialize_todo(todo: "CustomTodo") -> dict:
+    return {
+        "id": str(todo.id),
+        "title": todo.title,
+        "body": todo.body or "",
+        "accent": todo.accent,
+        "nav": todo.nav,
+    }
+
+
+class TodoRequest(BaseModel):
+    title: str
+    body: str | None = None
+
+
+@app.get("/dashboard/todos")
+async def get_dashboard_todos(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    result = await db.execute(
+        select(CustomTodo).where(CustomTodo.user_id == user_id).order_by(CustomTodo.sort_order, CustomTodo.created_at)
+    )
+    todos = result.scalars().all()
+    if not todos:
+        # First time this user has ever loaded the Dashboard - seed the
+        # three starter tasks so the list isn't empty, exactly like the
+        # old hardcoded TODO_ITEMS used to render for everyone.
+        for i, seed in enumerate(DEFAULT_TODOS):
+            db.add(CustomTodo(user_id=user_id, sort_order=i, **seed))
+        await db.commit()
+        result = await db.execute(
+            select(CustomTodo).where(CustomTodo.user_id == user_id).order_by(CustomTodo.sort_order, CustomTodo.created_at)
+        )
+        todos = result.scalars().all()
+    return {"todos": [serialize_todo(t) for t in todos]}
+
+
+@app.post("/dashboard/todos")
+async def create_dashboard_todo(
+    req: TodoRequest, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    title = req.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title must not be empty")
+    max_order = (await db.execute(
+        select(func.max(CustomTodo.sort_order)).where(CustomTodo.user_id == user_id)
+    )).scalar()
+    todo = CustomTodo(
+        user_id=user_id, title=title, body=(req.body or "").strip() or None,
+        sort_order=(max_order or 0) + 1,
+    )
+    db.add(todo)
+    await db.commit()
+    await db.refresh(todo)
+    return serialize_todo(todo)
+
+
+@app.patch("/dashboard/todos/{todo_id}")
+async def update_dashboard_todo(
+    todo_id: uuid.UUID, req: TodoRequest, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    result = await db.execute(select(CustomTodo).where(CustomTodo.id == todo_id, CustomTodo.user_id == user_id))
+    todo = result.scalar_one_or_none()
+    if todo is None:
+        raise HTTPException(status_code=404, detail="Unknown todo_id")
+
+    title = req.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title must not be empty")
+    todo.title = title
+    todo.body = (req.body or "").strip() or None
+    await db.commit()
+    await db.refresh(todo)
+    return serialize_todo(todo)
+
+
+@app.delete("/dashboard/todos/{todo_id}")
+async def delete_dashboard_todo(
+    todo_id: uuid.UUID, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    result = await db.execute(select(CustomTodo).where(CustomTodo.id == todo_id, CustomTodo.user_id == user_id))
+    todo = result.scalar_one_or_none()
+    if todo is None:
+        raise HTTPException(status_code=404, detail="Unknown todo_id")
+    await db.delete(todo)
     await db.commit()
     return {"deleted": True}
 

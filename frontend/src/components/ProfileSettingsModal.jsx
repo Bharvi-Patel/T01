@@ -8,6 +8,8 @@ import { updateProfile, uploadAvatar, changePassword, deleteAccount } from "../a
 
 // A reasonably short, curated list rather than every IANA zone - covers the
 // common regions without turning the select into an unscrollable wall.
+const USERNAME_PATTERN = /^[a-z0-9_]{3,64}$/;
+
 const TIMEZONES = [
   "UTC",
   "America/Los_Angeles", "America/Denver", "America/Chicago", "America/New_York",
@@ -170,7 +172,9 @@ export default function ProfileSettingsModal({ token, profile, onClose, onProfil
                 pattern="[a-z0-9_]{3,64}"
                 title="Lowercase letters, numbers, and underscores only - no spaces"
               />
-              <p className="profile-modal-hint">Lowercase letters, numbers, and underscores only - no spaces</p>
+              {username.length > 0 && !USERNAME_PATTERN.test(username) && (
+                <p className="profile-modal-hint">Lowercase letters, numbers, and underscores only - no spaces</p>
+              )}
             </div>
             <div>
               <label>Email</label>
@@ -255,5 +259,5 @@ export default function ProfileSettingsModal({ token, profile, onClose, onProfil
         </div>
       </div>
     </div>
-  );
+  ); 
 }

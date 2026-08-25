@@ -441,6 +441,45 @@ export async function deleteIdeaMedia({ token, ideaId, attachmentId }) {
   return handle(res);
 }
 
+/*
+  Dashboard "To Do" section. GET seeds the three starter tasks the first
+  time a user has none, so the response is always a normal editable list -
+  no distinction between "built-in" and "custom" items on the frontend.
+  Expected response: { todos: [{ id, title, body, accent, nav }] }.
+*/
+export async function getDashboardTodos({ token }) {
+  const res = await fetch(`${API_BASE}/dashboard/todos`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+// Add a todo from the "+ New" button. Returns the saved todo.
+export async function createDashboardTodo({ token, title, body }) {
+  const res = await fetch(`${API_BASE}/dashboard/todos`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ title, body }),
+  });
+  return handle(res);
+}
+
+// Edit an existing todo's title/body (built-in seeded ones included).
+export async function updateDashboardTodo({ token, todoId, title, body }) {
+  const res = await fetch(`${API_BASE}/dashboard/todos/${todoId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ title, body }),
+  });
+  return handle(res);
+}
+
+export async function deleteDashboardTodo({ token, todoId }) {
+  const res = await fetch(`${API_BASE}/dashboard/todos/${todoId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
 export async function getAnalyticsSummary({ token, days = 30 }) {
   const url = new URL(`${API_BASE}/analytics/summary`);
   url.searchParams.set("days", days);

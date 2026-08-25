@@ -3,7 +3,7 @@
 // calendar API), To Do (static prompt cards), Integrations (static grid,
 // coming soon), and Your Recent Posts (real published-draft data).
 import { useEffect, useState } from "react";
-import { getDashboardIdeas, getDrafts, createDashboardIdea, addIdeaMedia, deleteDashboardIdea } from "../api";
+import { getDashboardIdeas, getDrafts, createDashboardIdea, addIdeaMedia, deleteDashboardIdea, getDashboardTodos, createDashboardTodo, updateDashboardTodo, deleteDashboardTodo } from "../api";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
 const card = {
@@ -290,33 +290,244 @@ function IdeasSection({ token }) {
   );
 }
 
-const TODO_ITEMS = [
-  { key: "post_today", accent: "#4CAF7D", title: "Post something today", body: "Engage with your audience today. Create a post now!", nav: "generate" },
-  { key: "plan_next", accent: "#C1447E", title: "Plan your next big post", body: "Keep your feed active with a post scheduled ahead.", nav: "calendar" },
-  { key: "connect_account", accent: "#D9A441", title: "Connect an account", body: "Link a social account so drafts have somewhere to publish.", nav: "settings" },
-];
+function NewTodoModal({ token, onClose, onSaved }) {
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
 
-function ToDoSection({ onNavigate }) {
+  async function handleSave() {
+    if (!title.trim()) {
+      setError("Give your to do a title first.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const todo = await createDashboardTodo({ token, title: title.trim(), body: body.trim() || null });
+      onSaved(todo);
+    } catch (e) {
+      setError(e.message || "Couldn't save that to do.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--paper-raised)", border: "0.5px solid var(--border-strong)", borderRadius: 12,
+          padding: "1.5rem", width: "100%", maxWidth: 420, margin: "0 1rem",
+        }}
+      >
+        <p style={{ fontFamily: "var(--font-display)", fontSize: 17, margin: "0 0 16px", color: "var(--ink)" }}>
+          New to do
+        </p>
+
+        <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "0 0 6px" }}>Title</p>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="e.g. Reply to comments"
+          autoFocus
+          style={{ width: "100%", marginBottom: 14, boxSizing: "border-box" }}
+        />
+
+        <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "0 0 6px" }}>Notes (optional)</p>
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          placeholder="Any details worth remembering later"
+          rows={3}
+          style={{ width: "100%", marginBottom: 14, boxSizing: "border-box" }}
+        />
+
+        {error && <p style={{ fontSize: 12.5, color: "var(--danger)", margin: "0 0 8px" }}>{error}</p>}
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+          <button onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="primary" onClick={handleSave} disabled={saving} style={{ width: "auto", padding: "0 16px" }}>
+            {saving ? "Saving…" : "Save to do"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// One To Do row. Click navigates (when the item has a nav target and isn't
+// being edited); the pencil/trash icons only show on hover so the list
+// still reads as plain cards at rest.
+function TodoCard({ todo, onNavigate, onSave, onDelete }) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(todo.title);
+  const [body, setBody] = useState(todo.body || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [hover, setHover] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  function startEdit(e) {
+    e.stopPropagation();
+    setTitle(todo.title);
+    setBody(todo.body || "");
+    setError(null);
+    setEditing(true);
+  }
+
+  async function handleSave(e) {
+    e.stopPropagation();
+    if (!title.trim()) {
+      setError("Title can't be empty.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(todo.id, { title: title.trim(), body: body.trim() || null });
+      setEditing(false);
+    } catch (err) {
+      setError(err.message || "Couldn't save that.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(e) {
+    e.stopPropagation();
+    setDeleting(true);
+    try {
+      await onDelete(todo.id);
+    } catch {
+      setDeleting(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div
+        style={{ ...card, borderLeft: `3px solid ${todo.accent || "var(--border-strong)"}`, height: "auto" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          autoFocus
+          style={{ width: "100%", marginBottom: 8, boxSizing: "border-box", fontSize: 14, fontWeight: 600 }}
+        />
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          rows={2}
+          placeholder="Notes (optional)"
+          style={{ width: "100%", marginBottom: 8, boxSizing: "border-box", fontSize: 12.5 }}
+        />
+        {error && <p style={{ fontSize: 12, color: "var(--danger)", margin: "0 0 8px" }}>{error}</p>}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={(e) => { e.stopPropagation(); setEditing(false); }} disabled={saving} style={{ width: "auto", padding: "0 12px", height: 30, fontSize: 12.5 }}>
+            Cancel
+          </button>
+          <button className="primary" onClick={handleSave} disabled={saving} style={{ width: "auto", padding: "0 12px", height: 30, fontSize: 12.5 }}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => todo.nav && onNavigate(todo.nav)}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        ...card, display: "flex", alignItems: "center", gap: 12, textAlign: "left",
+        borderLeft: `3px solid ${todo.accent || "var(--border-strong)"}`, height: "auto",
+        cursor: todo.nav ? "pointer" : "default", position: "relative",
+      }}
+    >
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)", marginBottom: 2 }}>{todo.title}</div>
+        {todo.body && <div style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{todo.body}</div>}
+      </div>
+      {hover && (
+        <div style={{ display: "flex", gap: 4 }}>
+          <span
+            role="button"
+            title="Edit to do"
+            onClick={startEdit}
+            style={{ width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, color: "var(--text-secondary)" }}
+          >
+            ✎
+          </span>
+          <span
+            role="button"
+            title="Delete to do"
+            onClick={handleDelete}
+            style={{ width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, color: "var(--danger)", opacity: deleting ? 0.5 : 1 }}
+          >
+            ✕
+          </span>
+        </div>
+      )}
+    </button>
+  );
+}
+
+function ToDoSection({ token, onNavigate }) {
+  const [state, setState] = useState({ loading: true, error: null, todos: [] });
+  const [showNewTodo, setShowNewTodo] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getDashboardTodos({ token })
+      .then((res) => { if (!cancelled) setState({ loading: false, error: null, todos: res.todos || [] }); })
+      .catch((e) => { if (!cancelled) setState({ loading: false, error: e.message || "Couldn't load to dos.", todos: [] }); });
+    return () => { cancelled = true; };
+  }, [token]);
+
+  function handleTodoSaved(saved) {
+    setState((s) => ({ ...s, error: null, todos: [...s.todos, saved] }));
+    setShowNewTodo(false);
+  }
+
+  async function handleTodoSave(todoId, { title, body }) {
+    const updated = await updateDashboardTodo({ token, todoId, title, body });
+    setState((s) => ({ ...s, todos: s.todos.map((t) => (t.id === todoId ? updated : t)) }));
+  }
+
+  async function handleTodoDelete(todoId) {
+    await deleteDashboardTodo({ token, todoId });
+    setState((s) => ({ ...s, todos: s.todos.filter((t) => t.id !== todoId) }));
+  }
+
   return (
     <div style={{ marginBottom: 28 }}>
-      <p style={sectionTitle}>To Do</p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {TODO_ITEMS.map((item) => (
-          <button
-            key={item.key}
-            onClick={() => onNavigate(item.nav)}
-            style={{
-              ...card, display: "flex", alignItems: "center", gap: 12, textAlign: "left",
-              borderLeft: `3px solid ${item.accent}`, height: "auto", cursor: "pointer",
-            }}
-          >
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)", marginBottom: 2 }}>{item.title}</div>
-              <div style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{item.body}</div>
-            </div>
-          </button>
-        ))}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <p style={{ ...sectionTitle, margin: 0 }}>To Do</p>
+        <button className="primary" onClick={() => setShowNewTodo(true)} style={{ height: 34, padding: "0 14px", fontSize: 13 }}>+ New</button>
       </div>
+      {state.loading && <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>Loading to dos…</p>}
+      {state.error && <p style={{ fontSize: 13, color: "var(--danger)" }}>{state.error}</p>}
+      {!state.loading && !state.error && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {state.todos.map((todo) => (
+            <TodoCard key={todo.id} todo={todo} onNavigate={onNavigate} onSave={handleTodoSave} onDelete={handleTodoDelete} />
+          ))}
+        </div>
+      )}
+      {showNewTodo && (
+        <NewTodoModal token={token} onClose={() => setShowNewTodo(false)} onSaved={handleTodoSaved} />
+      )}
     </div>
   );
 }
@@ -457,7 +668,7 @@ export default function Dashboard({ token, profile, onNewPost, onNavigate, onOpe
         {greeting}{profile?.username ? `, ${profile.username}` : ""}.
       </p>
       <IdeasSection token={token} />
-      <ToDoSection onNavigate={onNavigate} />
+      <ToDoSection token={token} onNavigate={onNavigate} />
       <IntegrationsSection />
       <RecentPostsSection token={token} onOpenDraft={onOpenDraft} onAuthError={onAuthError} />
     </div>
