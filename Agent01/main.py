@@ -613,18 +613,23 @@ def _parse_draft(content: str) -> dict:
         )
 
 
-async def _upsert_connection(db: AsyncSession, user_id, platform: Platform, credentials: dict):
+async def _upsert_connection(db: AsyncSession, workspace_id, platform: Platform, credentials: dict, connected_by_user_id=None):
     result = await db.execute(
         select(PlatformConnection).where(
-            PlatformConnection.user_id == user_id,
+            PlatformConnection.workspace_id == workspace_id,
             PlatformConnection.platform == platform,
         )
     )
     connection = result.scalar_one_or_none()
     if connection is None:
-        db.add(PlatformConnection(user_id=user_id, platform=platform, credentials=credentials))
+        db.add(PlatformConnection(
+            workspace_id=workspace_id, connected_by_user_id=connected_by_user_id,
+            platform=platform, credentials=credentials,
+        ))
     else:
         connection.credentials = credentials
+        if connected_by_user_id is not None:
+            connection.connected_by_user_id = connected_by_user_id
     await db.commit()
 
 
@@ -1571,8 +1576,9 @@ async def refresh_analytics(
     never blocks the others, and the response reports per-platform errors
     so the frontend can show what did/didn't refresh.
     """
+    membership = await get_or_create_membership(db, user_id)
     conn_rows = (
-        await db.execute(select(PlatformConnection).where(PlatformConnection.user_id == user_id))
+        await db.execute(select(PlatformConnection).where(PlatformConnection.workspace_id == membership.workspace_id))
     ).all()
     connections = {row[0].platform: row[0] for row in conn_rows}
 
@@ -1587,7 +1593,7 @@ async def refresh_analytics(
         existing = (
             await db.execute(
                 select(FollowerSnapshot).where(
-                    FollowerSnapshot.user_id == user_id,
+                    FollowerSnapshot.workspace_id == membership.workspace_id,
                     FollowerSnapshot.platform == platform,
                     FollowerSnapshot.captured_on == today,
                 )
@@ -1597,7 +1603,7 @@ async def refresh_analytics(
             existing.follower_count = count
             existing.captured_at = datetime.now(timezone.utc)
         else:
-            db.add(FollowerSnapshot(user_id=user_id, platform=platform, follower_count=count, captured_on=today))
+            db.add(FollowerSnapshot(workspace_id=membership.workspace_id, platform=platform, follower_count=count, captured_on=today))
         followers_updated[platform.value] = count
 
     if Platform.FACEBOOK in connections:
@@ -1688,6 +1694,7 @@ async def analytics_summary(
     since T01 doesn't call any platform's insights API. Everything here is
     counted from our own PublishResult rows."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
+    membership = await get_or_create_membership(db, user_id)
 
     # Drafts the user actually wrote in this range — independent of whether
     # they were ever published, since that's their own content output.
@@ -1833,7 +1840,7 @@ async def analytics_summary(
     snapshot_rows = (
         await db.execute(
             select(FollowerSnapshot)
-            .where(FollowerSnapshot.user_id == user_id)
+            .where(FollowerSnapshot.workspace_id == membership.workspace_id)
             .order_by(FollowerSnapshot.captured_on)
         )
     ).scalars().all()
@@ -2131,27 +2138,32 @@ async def withdraw_approval_request(
 
 @app.post("/connect/finto")
 async def connect_finto(req: ConnectFintoRequest, db: AsyncSession = Depends(get_db),  user_id: uuid.UUID = Depends(require_auth)):
-    await _upsert_connection(db, user_id, Platform.FINTO, {"email": req.email, "password": encrypt_secret(req.password)})
+    membership = await get_or_create_membership(db, user_id)
+    await _upsert_connection(db, membership.workspace_id, Platform.FINTO, {"email": req.email, "password": encrypt_secret(req.password)}, connected_by_user_id=user_id)
     return {"success": True}
 
 @app.post("/connect/linkedin")
 async def connect_linkedin(req: ConnectLinkedInRequest, db: AsyncSession = Depends(get_db),  user_id: uuid.UUID = Depends(require_auth)):
-    await _upsert_connection(db, user_id, Platform.LINKEDIN, {"access_token": encrypt_secret(req.access_token), "member_id": req.member_id})
+    membership = await get_or_create_membership(db, user_id)
+    await _upsert_connection(db, membership.workspace_id, Platform.LINKEDIN, {"access_token": encrypt_secret(req.access_token), "member_id": req.member_id}, connected_by_user_id=user_id)
     return {"success": True}
 
 @app.post("/connect/facebook")
 async def connect_facebook(req: ConnectFacebookRequest, db: AsyncSession = Depends(get_db),  user_id: uuid.UUID = Depends(require_auth)):
-    await _upsert_connection(db, user_id, Platform.FACEBOOK, {"page_access_token": encrypt_secret(req.page_access_token), "page_id": req.page_id})
+    membership = await get_or_create_membership(db, user_id)
+    await _upsert_connection(db, membership.workspace_id, Platform.FACEBOOK, {"page_access_token": encrypt_secret(req.page_access_token), "page_id": req.page_id}, connected_by_user_id=user_id)
     return {"success": True}
 
 @app.post("/connect/instagram")
 async def connect_instagram(req: ConnectInstagramRequest, db: AsyncSession = Depends(get_db),  user_id: uuid.UUID = Depends(require_auth)):
-    await _upsert_connection(db, user_id, Platform.INSTAGRAM, {"page_access_token": encrypt_secret(req.page_access_token), "ig_page_id": req.ig_page_id})
+    membership = await get_or_create_membership(db, user_id)
+    await _upsert_connection(db, membership.workspace_id, Platform.INSTAGRAM, {"page_access_token": encrypt_secret(req.page_access_token), "ig_page_id": req.ig_page_id}, connected_by_user_id=user_id)
     return {"success": True}
 
 @app.post("/connect/threads")
 async def connect_threads(req: ConnectThreadsRequest, db: AsyncSession = Depends(get_db),  user_id: uuid.UUID = Depends(require_auth)):
-    await _upsert_connection(db, user_id, Platform.THREADS, {"access_token": encrypt_secret(req.access_token), "threads_user_id": req.threads_user_id})
+    membership = await get_or_create_membership(db, user_id)
+    await _upsert_connection(db, membership.workspace_id, Platform.THREADS, {"access_token": encrypt_secret(req.access_token), "threads_user_id": req.threads_user_id}, connected_by_user_id=user_id)
     return {"success": True}
 
 
@@ -2194,7 +2206,8 @@ async def oauth_callback(platform: str, code: str | None = None, state: str | No
             for field in SECRET_CREDENTIAL_FIELDS.get(Platform(platform), []):
                 if field in credentials:
                     credentials[field] = encrypt_secret(credentials[field])
-            await _upsert_connection(db, entry["user_id"], Platform(platform), credentials)
+            membership = await get_or_create_membership(db, entry["user_id"])
+            await _upsert_connection(db, membership.workspace_id, Platform(platform), credentials, connected_by_user_id=entry["user_id"])
             return redirect_with("success")
 
         # More than one Page — stash the choice and let the frontend show a picker
@@ -2214,7 +2227,8 @@ async def oauth_callback(platform: str, code: str | None = None, state: str | No
     for field in SECRET_CREDENTIAL_FIELDS.get(Platform(platform), []):
         if field in credentials:
             credentials[field] = encrypt_secret(credentials[field])
-    await _upsert_connection(db, entry["user_id"], Platform(platform), credentials)
+    membership = await get_or_create_membership(db, entry["user_id"])
+    await _upsert_connection(db, membership.workspace_id, Platform(platform), credentials, connected_by_user_id=entry["user_id"])
     return redirect_with("success")
 
 
@@ -2246,7 +2260,8 @@ async def select_page(platform: str, req: SelectPageRequest, db: AsyncSession = 
     for field in SECRET_CREDENTIAL_FIELDS.get(Platform(platform), []):
         if field in credentials:
             credentials[field] = encrypt_secret(credentials[field])
-    await _upsert_connection(db, user_id, Platform(platform), credentials)
+    membership = await get_or_create_membership(db, user_id)
+    await _upsert_connection(db, membership.workspace_id, Platform(platform), credentials, connected_by_user_id=user_id)
     PENDING_PAGE_SELECTIONS.pop(req.pending_id, None)
     return {"success": True}
 
@@ -2267,7 +2282,7 @@ async def _publish_to_platforms(db: AsyncSession, draft: Draft, platforms: list[
     for platform in platforms:
         conn_result = await db.execute(
             select(PlatformConnection).where(
-                PlatformConnection.user_id == user_id,
+                PlatformConnection.workspace_id == draft.workspace_id,
                 PlatformConnection.platform == platform,
             )
         )
@@ -2394,9 +2409,10 @@ async def review(req: ReviewRequest, db: AsyncSession = Depends(get_db),  user_i
 
 @app.get("/connections")
 async def list_connections(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    membership = await get_or_create_membership(db, user_id)
     result = await db.execute(
         select(PlatformConnection.platform, PlatformConnection.credentials).where(
-            PlatformConnection.user_id == user_id
+            PlatformConnection.workspace_id == membership.workspace_id
         )
     )
     connections = {
@@ -2856,9 +2872,10 @@ async def platform_post_history(
     if platform_enum not in (Platform.INSTAGRAM, Platform.FACEBOOK, Platform.THREADS):
         raise HTTPException(status_code=400, detail=f"Post history isn't supported for {platform}.")
 
+    membership = await get_or_create_membership(db, user_id)
     result = await db.execute(
         select(PlatformConnection.credentials).where(
-            PlatformConnection.user_id == user_id, PlatformConnection.platform == platform_enum
+            PlatformConnection.workspace_id == membership.workspace_id, PlatformConnection.platform == platform_enum
         )
     )
     row = result.first()
@@ -2942,9 +2959,10 @@ async def disconnect_platform(platform: str, db: AsyncSession = Depends(get_db),
     except ValueError:
         raise HTTPException(status_code=400, detail=f"platform must be one of: {', '.join(pl.value for pl in Platform)} (got {platform!r})")
 
+    membership = await get_or_create_membership(db, user_id)
     result = await db.execute(
         select(PlatformConnection).where(
-            PlatformConnection.user_id == user_id,
+            PlatformConnection.workspace_id == membership.workspace_id,
             PlatformConnection.platform == platform_enum,
         )
     )
@@ -3009,10 +3027,10 @@ def _verify_meta_signature(raw_body: bytes, signature_header: str | None) -> boo
     return hmac.compare_digest(expected, provided)
 
 
-async def _user_id_for_page(db: AsyncSession, platform: Platform, page_id: str) -> uuid.UUID | None:
+async def _workspace_id_for_page(db: AsyncSession, platform: Platform, page_id: str) -> uuid.UUID | None:
     field = "ig_page_id" if platform == Platform.INSTAGRAM else "page_id"
     result = await db.execute(
-        select(PlatformConnection.user_id).where(
+        select(PlatformConnection.workspace_id).where(
             PlatformConnection.platform == platform,
             PlatformConnection.credentials[field].as_string() == page_id,
         )
@@ -3086,9 +3104,9 @@ def _fetch_mention_context(page_access_token: str, ig_page_id: str, value: dict)
     return {}
 
 
-async def _user_id_for_threads_account(db: AsyncSession, threads_user_id: str) -> uuid.UUID | None:
+async def _workspace_id_for_threads_account(db: AsyncSession, threads_user_id: str) -> uuid.UUID | None:
     result = await db.execute(
-        select(PlatformConnection.user_id).where(
+        select(PlatformConnection.workspace_id).where(
             PlatformConnection.platform == Platform.THREADS,
             PlatformConnection.credentials["threads_user_id"].as_string() == threads_user_id,
         )
@@ -3099,7 +3117,7 @@ async def _user_id_for_threads_account(db: AsyncSession, threads_user_id: str) -
 async def _upsert_inbox_item(
     db: AsyncSession,
     *,
-    user_id: uuid.UUID,
+    workspace_id: uuid.UUID,
     platform: Platform,
     kind: InboxKind,
     external_id: str,
@@ -3118,7 +3136,7 @@ async def _upsert_inbox_item(
         return  # webhook redelivery of something we already recorded - no-op
 
     db.add(InboxItem(
-        user_id=user_id,
+        workspace_id=workspace_id,
         platform=platform,
         kind=kind,
         external_id=external_id,
@@ -3154,13 +3172,13 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
 
             if field == "comments":
                 platform = Platform.INSTAGRAM if payload.get("object") == "instagram" else Platform.FACEBOOK
-                user_id = await _user_id_for_page(db, platform, page_id)
-                if user_id is None:
+                workspace_id = await _workspace_id_for_page(db, platform, page_id)
+                if workspace_id is None:
                     print(f"[webhooks/meta] dropped comment - no PlatformConnection matches "
                           f"platform={platform.value} page_id={page_id!r}", file=sys.stderr)
                     continue
                 await _upsert_inbox_item(
-                    db, user_id=user_id, platform=platform, kind=InboxKind.COMMENT,
+                    db, workspace_id=workspace_id, platform=platform, kind=InboxKind.COMMENT,
                     external_id=str(value.get("id")),
                     thread_id=str(value.get("media", {}).get("id") or value.get("post_id") or ""),
                     sender_name=(value.get("from") or {}).get("username") or (value.get("from") or {}).get("name"),
@@ -3189,7 +3207,7 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
                     continue
                 context = await run_in_threadpool(_fetch_mention_context, page_access_token, ig_page_id, value)
                 await _upsert_inbox_item(
-                    db, user_id=connection.user_id, platform=Platform.INSTAGRAM, kind=InboxKind.MENTION,
+                    db, workspace_id=connection.workspace_id, platform=Platform.INSTAGRAM, kind=InboxKind.MENTION,
                     external_id=str(value.get("comment_id") or value.get("media_id")),
                     thread_id=context.get("thread_id", str(value.get("media_id") or "")),
                     sender_name=context.get("sender_name"),
@@ -3203,8 +3221,8 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
 
         for messaging_event in entry.get("messaging", []):
             platform = Platform.INSTAGRAM if payload.get("object") == "instagram" else Platform.FACEBOOK
-            user_id = await _user_id_for_page(db, platform, page_id)
-            if user_id is None:
+            workspace_id = await _workspace_id_for_page(db, platform, page_id)
+            if workspace_id is None:
                 print(f"[webhooks/meta] dropped messaging event - no PlatformConnection matches "
                       f"platform={platform.value} page_id={page_id!r}", file=sys.stderr)
                 continue
@@ -3225,7 +3243,7 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
             story_mention = next((a for a in attachments if a.get("type") == "story_mention"), None)
             if story_mention is not None:
                 await _upsert_inbox_item(
-                    db, user_id=user_id, platform=platform, kind=InboxKind.STORY_REPLY,
+                    db, workspace_id=workspace_id, platform=platform, kind=InboxKind.STORY_REPLY,
                     external_id=str(message.get("mid") or f"story-{sender_id}-{messaging_event.get('timestamp')}"),
                     thread_id=str(sender_id or ""),
                     sender_name=None,  # not included in this event shape either
@@ -3236,7 +3254,7 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
                 continue
 
             await _upsert_inbox_item(
-                db, user_id=user_id, platform=platform, kind=InboxKind.MESSAGE,
+                db, workspace_id=workspace_id, platform=platform, kind=InboxKind.MESSAGE,
                 external_id=str(message.get("mid") or f"{sender_id}-{messaging_event.get('timestamp')}"),
                 thread_id=str(sender_id or ""),
                 sender_name=None,  # Meta doesn't include a display name on the messaging event itself
@@ -3256,9 +3274,10 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
 
 @app.get("/inbox")
 async def list_inbox(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    membership = await get_or_create_membership(db, user_id)
     result = await db.execute(
         select(InboxItem)
-        .where(InboxItem.user_id == user_id)
+        .where(InboxItem.workspace_id == membership.workspace_id)
         .order_by(InboxItem.created_at.desc())
         .limit(200)
     )
@@ -3286,8 +3305,9 @@ async def mark_inbox_item_read(
     db: AsyncSession = Depends(get_db),
     user_id: uuid.UUID = Depends(require_auth),
 ):
+    membership = await get_or_create_membership(db, user_id)
     result = await db.execute(
-        select(InboxItem).where(InboxItem.id == item_id, InboxItem.user_id == user_id)
+        select(InboxItem).where(InboxItem.id == item_id, InboxItem.workspace_id == membership.workspace_id)
     )
     item = result.scalar_one_or_none()
     if item is None:
