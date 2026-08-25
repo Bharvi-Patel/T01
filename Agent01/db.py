@@ -116,6 +116,16 @@ class MediaKind(str, enum.Enum):
     TEXT = "text"
 
 
+class WorkspaceRole(str, enum.Enum):
+    ADMIN = "admin"
+    MEMBER = "member"
+
+
+class AccessLevel(str, enum.Enum):
+    FULL = "full"
+    NEEDS_APPROVAL = "needs_approval"
+
+
 class InboxKind(str, enum.Enum):
     COMMENT = "comment"
     MESSAGE = "message"
@@ -170,11 +180,25 @@ class User(Base):
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC", server_default="UTC")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
-    platform_connections: Mapped[list["PlatformConnection"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
+    # Drafts, media, ideas, todos below are attribution FKs, not scoping -
+    # a Draft etc. belongs to a Workspace now (see Draft.workspace_id);
+    # user_id just records who authored/uploaded/created it, and stays
+    # intact even after that user's WorkspaceMember row is removed.
     drafts: Mapped[list["Draft"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
+    )
+    # Workspaces this user owns outright (see Workspace.owner_user_id).
+    # Deliberately not cascade="delete-orphan" - deleting a user shouldn't
+    # silently delete a whole workspace and everyone else's data in it;
+    # ownership transfer (not yet built) is the intended path off this.
+    owned_workspaces: Mapped[list["Workspace"]] = relationship(
+        foreign_keys="Workspace.owner_user_id", viewonly=True
+    )
+    # This user's seats across every workspace they belong to (including
+    # ones they own - the owner also gets a WorkspaceMember row with
+    # role=ADMIN, so membership lookups don't need a special case).
+    workspace_memberships: Mapped[list["WorkspaceMember"]] = relationship(
+        back_populates="user", foreign_keys="WorkspaceMember.user_id", cascade="all, delete-orphan"
     )
     oauth_identities: Mapped[list["OAuthIdentity"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     media_assets: Mapped[list["MediaAsset"]] = relationship(
@@ -205,10 +229,111 @@ class OAuthIdentity(Base):
     user: Mapped["User"] = relationship(back_populates="oauth_identities")
     
 
+class Workspace(Base):
+    """A self-contained tenant: owns its connected platforms, drafts,
+    media, and calendar. `owner_user_id` is the workspace creator - an
+    Admin who cannot be demoted except through an explicit ownership
+    transfer (not yet built; the column is the seam for it). `plan` is a
+    plain string ("free" / "pro" / ...) rather than an enum since billing
+    tiers are expected to change independently of a schema migration.
+
+    Every existing single-tenant table that used to be scoped by user_id
+    directly (PlatformConnection, Draft, MediaAsset, FollowerSnapshot,
+    CustomIdea, CustomTodo, InboxItem) now carries a workspace_id instead
+    - see each model's own docstring for what happened to its old
+    user_id column (usually demoted to an attribution field, not removed).
+    """
+    __tablename__ = "workspaces"
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    plan: Mapped[str] = mapped_column(String(32), nullable=False, default="free", server_default="free")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    owner: Mapped["User"] = relationship(foreign_keys=[owner_user_id])
+    members: Mapped[list["WorkspaceMember"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan"
+    )
+
+
+class WorkspaceMember(Base):
+    """One row per (workspace, user) - a person's seat in a workspace.
+    `role` is ADMIN or MEMBER only, no third tier (see the design notes
+    this schema was built from). `default_access` is what a Member gets
+    on any platform they don't have an explicit MemberPlatformAccess
+    override for, and is what newly-connected platforms fall back to
+    automatically - no re-approval ritual needed every time the Admin
+    connects another platform. Meaningless for ADMIN rows (an Admin
+    always has full access everywhere) but still populated as FULL for
+    consistency rather than made nullable-only-for-members.
+
+    Deleting this row (kicking a Member out) does NOT touch anything
+    they created - Draft.user_id etc. keep pointing at their still-
+    existing User row, just with no more WorkspaceMember linking them to
+    this workspace. See MemberPlatformAccess for the per-platform
+    override table this points at.
+    """
+    __tablename__ = "workspace_members"
+    __table_args__ = (UniqueConstraint("workspace_id", "user_id", name="uq_workspace_user"),)
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    role: Mapped[WorkspaceRole] = mapped_column(Enum(WorkspaceRole, name="workspace_role_enum"), nullable=False)
+    default_access: Mapped[AccessLevel] = mapped_column(
+        Enum(AccessLevel, name="access_level_enum"), nullable=False, default=AccessLevel.NEEDS_APPROVAL
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    workspace: Mapped["Workspace"] = relationship(back_populates="members")
+    user: Mapped["User"] = relationship(back_populates="workspace_memberships", foreign_keys=[user_id])
+    platform_overrides: Mapped[list["MemberPlatformAccess"]] = relationship(
+        back_populates="member", cascade="all, delete-orphan"
+    )
+
+
+class MemberPlatformAccess(Base):
+    """Sparse override table: a row exists ONLY when a Member's access to
+    one specific platform diverges from their WorkspaceMember.default_access
+    - no row means "just use the default". Covers both upgrades (Admin
+    grants Full on one platform while the Member's default stays
+    needs_approval) and downgrades (Admin revokes Full on one platform
+    without touching the others). Revoking is the same write as granting,
+    just in the other direction - deleting the row snaps that platform
+    back to following the default again.
+
+    Revocation is forward-only by convention, enforced in the API layer
+    rather than here: a Draft already scheduled under looser access when
+    this row changes is left alone and still publishes; only new
+    schedule/publish actions after the change are gated by the new value.
+    """
+    __tablename__ = "member_platform_access"
+    __table_args__ = (
+        UniqueConstraint("workspace_member_id", "platform", name="uq_member_platform"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    workspace_member_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspace_members.id", ondelete="CASCADE")
+    )
+    platform: Mapped[Platform] = mapped_column(Enum(Platform, name="platform_enum"))
+    access: Mapped[AccessLevel] = mapped_column(Enum(AccessLevel, name="access_level_enum"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    member: Mapped["WorkspaceMember"] = relationship(back_populates="platform_overrides")
+
+
 class PlatformConnection(Base):
     """
-    One row per (user, platform). `credentials` holds whatever that
-    platform needs:
+    One row per (workspace, platform) - platforms are connected at the
+    workspace level, not per-user, so every Member with adequate access
+    can publish through the same connection. `connected_by_user_id`
+    keeps a record of who actually did the OAuth/credential handoff, for
+    audit purposes only; it does not gate anything and is untouched if
+    that user is later removed from the workspace. `credentials` holds
+    whatever that platform needs:
 
         finto:    {"email": "...", "password": "<fernet-encrypted>"}
         linkedin: {"access_token": "...", "refresh_token": "...", "member_id": "..."}
@@ -217,10 +342,13 @@ class PlatformConnection(Base):
     plaintext - use encrypt_secret() before writing.
     """
     __tablename__ = "platform_connections"
-    __table_args__ = (UniqueConstraint("user_id", "platform", name="uq_user_platform"),)
+    __table_args__ = (UniqueConstraint("workspace_id", "platform", name="uq_workspace_platform"),)
 
     id: Mapped[uuid.UUID] = _uuid_col()
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
+    connected_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     platform: Mapped[Platform] = mapped_column(Enum(Platform, name="platform_enum"))
     credentials: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -228,13 +356,20 @@ class PlatformConnection(Base):
         DateTime(timezone=True), default=_now, onupdate=_now
     )
 
-    user: Mapped["User"] = relationship(back_populates="platform_connections")
+    workspace: Mapped["Workspace"] = relationship()
+    connected_by: Mapped["User | None"] = relationship(foreign_keys=[connected_by_user_id])
 
 
 class Draft(Base):
+    """workspace_id scopes the draft (which workspace it belongs to,
+    what /generate and /review filter by); user_id is now just the
+    author - kept for attribution even after that user's WorkspaceMember
+    row is removed, per the "removal revokes login, not content" rule.
+    """
     __tablename__ = "drafts"
 
     id: Mapped[uuid.UUID] = _uuid_col()
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     category: Mapped[str] = mapped_column(String(64), nullable=False)
     subtopic: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -270,6 +405,7 @@ class Draft(Base):
     # False whenever the draft is (re)scheduled to a new time.
     reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    workspace: Mapped["Workspace"] = relationship()
     user: Mapped["User"] = relationship(back_populates="drafts")
     publish_results: Mapped[list["PublishResult"]] = relationship(
         back_populates="draft", cascade="all, delete-orphan"
@@ -300,10 +436,10 @@ class FollowerSnapshot(Base):
     only has data points for days the Analytics page was actually opened
     (and refreshed) on."""
     __tablename__ = "follower_snapshots"
-    __table_args__ = (UniqueConstraint("user_id", "platform", "captured_on", name="uq_user_platform_day"),)
+    __table_args__ = (UniqueConstraint("workspace_id", "platform", "captured_on", name="uq_workspace_platform_day"),)
 
     id: Mapped[uuid.UUID] = _uuid_col()
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
     platform: Mapped[Platform] = mapped_column(Enum(Platform, name="platform_enum"))
     follower_count: Mapped[int] = mapped_column(Integer, nullable=False)
     captured_on: Mapped[date] = mapped_column(Date, nullable=False)
@@ -341,6 +477,7 @@ class MediaAsset(Base):
     __tablename__ = "media_assets"
 
     id: Mapped[uuid.UUID] = _uuid_col()
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     kind: Mapped[MediaKind] = mapped_column(Enum(MediaKind, name="media_kind_enum"), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -350,6 +487,7 @@ class MediaAsset(Base):
     text_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    workspace: Mapped["Workspace"] = relationship()
     user: Mapped["User"] = relationship(back_populates="media_assets")
 
 
@@ -375,11 +513,11 @@ class AuthSession(Base):
 
 class InboxItem(Base):
     """One comment or DM from a Meta webhook event (Instagram + Facebook
-    Page). `user_id` is resolved in the webhook handler by matching the
-    payload's page/ig_user id against PlatformConnection.credentials
+    Page). `workspace_id` is resolved in the webhook handler by matching
+    the payload's page/ig_user id against PlatformConnection.credentials
     (page_id / ig_page_id) - there's no FK to PlatformConnection itself
-    since one user can have both a Facebook and Instagram connection and
-    a single webhook entry belongs to whichever one the event was for.
+    since one workspace can have both a Facebook and Instagram connection
+    and a single webhook entry belongs to whichever one the event was for.
     `thread_id` groups a DM conversation (Meta's conversation id) or a
     post's comment thread (the media/post id) so the frontend can list
     conversations before expanding individual items. `raw_payload` is
@@ -390,7 +528,7 @@ class InboxItem(Base):
     __table_args__ = (UniqueConstraint("platform", "external_id", name="uq_platform_external_id"),)
 
     id: Mapped[uuid.UUID] = _uuid_col()
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
     platform: Mapped[Platform] = mapped_column(Enum(Platform, name="platform_enum"))
     kind: Mapped[InboxKind] = mapped_column(Enum(InboxKind, name="inbox_kind_enum"), nullable=False)
     # Meta's id for this comment/message - the uniqueness guard above
@@ -404,7 +542,7 @@ class InboxItem(Base):
     raw_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
-    user: Mapped["User"] = relationship()
+    workspace: Mapped["Workspace"] = relationship()
 
 
 class NotificationPreference(Base):
@@ -460,12 +598,14 @@ class CustomIdea(Base):
     __tablename__ = "custom_ideas"
 
     id: Mapped[uuid.UUID] = _uuid_col()
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     date: Mapped[str | None] = mapped_column(String(10), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    workspace: Mapped["Workspace"] = relationship()
     user: Mapped["User"] = relationship(back_populates="custom_ideas")
     attachments: Mapped[list["IdeaAttachment"]] = relationship(
         back_populates="idea", cascade="all, delete-orphan"
@@ -503,6 +643,7 @@ class CustomTodo(Base):
     __tablename__ = "custom_todos"
 
     id: Mapped[uuid.UUID] = _uuid_col()
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -511,6 +652,7 @@ class CustomTodo(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    workspace: Mapped["Workspace"] = relationship()
     user: Mapped["User"] = relationship(back_populates="custom_todos")
 
 

@@ -7,6 +7,7 @@ import DraftReview from "./components/DraftReview";
 import Done from "./components/Done";
 import Landing from "./components/Landing";
 import Sidebar from "./components/Sidebar";
+import TopBar from "./components/TopBar";
 import Dashboard from "./components/Dashboard";
 import Settings from "./components/settings";
 import Publish from "./components/Publish";
@@ -413,6 +414,7 @@ export default function App() {
       )}
 
       <div className="main-panel" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <TopBar />
         <button
           className="mobile-menu-button"
           onClick={() => setMobileMenuOpen(true)}

@@ -102,6 +102,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "Agent01"))
 from Agent import agent01, revise_draft, approve_and_publish, clean_json_string, VALID_CATEGORIES, upload_to_imgbb, IMGBB_API_KEY, suggest_hashtags
 
 from db import (
+    AccessLevel,
     AsyncSessionLocal,
     AuthSession,
     CustomIdea,
@@ -114,6 +115,7 @@ from db import (
     InboxKind,
     MediaAsset,
     MediaKind,
+    MemberPlatformAccess,
     NotificationPreference,
     OAuthIdentity,
     Platform,
@@ -122,6 +124,9 @@ from db import (
     PushSubscription,
     PublishResult,
     User,
+    Workspace,
+    WorkspaceMember,
+    WorkspaceRole,
     decrypt_secret,
     encrypt_secret,
     hash_password,
@@ -674,6 +679,264 @@ def serialize_profile(user: User) -> dict:
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "has_password": bool(user.password_hash),
     }
+
+
+# --- Workspace / Members -----------------------------------------------
+# Two roles only: ADMIN (the workspace creator/owner) and MEMBER - see
+# WorkspaceRole in db.py. A Member's access to any given platform is
+# their WorkspaceMember.default_access unless a MemberPlatformAccess row
+# overrides that one platform specifically (upgrade or downgrade); no
+# override row means "just follow the default". Revoking access never
+# reaches backward into drafts already SCHEDULED under the old, looser
+# access - see schedule/publish endpoints for where that access check
+# actually gates something.
+#
+# Every existing user is lazily given a personal workspace (themself as
+# sole ADMIN) the first time any workspace endpoint resolves their
+# membership - see get_or_create_membership. This unblocks the Members
+# feature immediately without a separate migration step; a proper
+# Alembic migration to backfill workspace_id onto pre-existing
+# Draft/MediaAsset/PlatformConnection/etc. rows for multi-row accounts
+# is still a separate, not-yet-done piece of work.
+
+def _default_workspace_name(user: User) -> str:
+    base = (user.full_name or user.username or "My").strip()
+    return f"{base}'s Workspace"
+
+
+async def get_or_create_membership(db: AsyncSession, user_id: uuid.UUID) -> WorkspaceMember:
+    """Resolve the caller's workspace membership. For now everyone has
+    exactly one workspace (the one they own or were added to), so this
+    just picks their oldest membership - once multi-workspace switching
+    is wired up frontend-side (see TopBar's workspace dropdown), this is
+    the seam where a ?workspace_id= / header param would take over."""
+    result = await db.execute(
+        select(WorkspaceMember)
+        .where(WorkspaceMember.user_id == user_id)
+        .options(selectinload(WorkspaceMember.workspace))
+        .order_by(WorkspaceMember.created_at.asc())
+        .limit(1)
+    )
+    membership = result.scalar_one_or_none()
+    if membership is not None:
+        return membership
+
+    user = await db.get(User, user_id)
+    workspace = Workspace(name=_default_workspace_name(user), owner_user_id=user_id)
+    db.add(workspace)
+    await db.flush()  # need workspace.id before creating the membership row
+
+    membership = WorkspaceMember(
+        workspace_id=workspace.id, user_id=user_id, role=WorkspaceRole.ADMIN, default_access=AccessLevel.FULL,
+    )
+    db.add(membership)
+    await db.commit()
+
+    result = await db.execute(
+        select(WorkspaceMember)
+        .where(WorkspaceMember.id == membership.id)
+        .options(selectinload(WorkspaceMember.workspace))
+    )
+    return result.scalar_one()
+
+
+async def require_workspace_admin(
+    db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+) -> WorkspaceMember:
+    membership = await get_or_create_membership(db, user_id)
+    if membership.role != WorkspaceRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Only the workspace admin can do that")
+    return membership
+
+
+def serialize_workspace(workspace: Workspace, role: WorkspaceRole) -> dict:
+    return {
+        "id": str(workspace.id),
+        "name": workspace.name,
+        "plan": workspace.plan,
+        "role": role.value,
+    }
+
+
+async def serialize_member(db: AsyncSession, member: WorkspaceMember) -> dict:
+    user = member.user if member.user is not None else await db.get(User, member.user_id)
+    overrides_result = await db.execute(
+        select(MemberPlatformAccess).where(MemberPlatformAccess.workspace_member_id == member.id)
+    )
+    overrides = {row.platform.value: row.access.value for row in overrides_result.scalars().all()}
+    return {
+        "id": str(member.id),
+        "user_id": str(member.user_id),
+        "username": user.username if user else None,
+        "full_name": user.full_name if user else None,
+        "avatar_url": user.avatar_url if user else None,
+        "role": member.role.value,
+        "default_access": member.default_access.value,
+        "platform_overrides": overrides,
+        "created_at": member.created_at.isoformat() if member.created_at else None,
+    }
+
+
+class AddMemberRequest(BaseModel):
+    username: str
+    default_access: AccessLevel = AccessLevel.NEEDS_APPROVAL
+
+
+class UpdateMemberRequest(BaseModel):
+    default_access: AccessLevel
+
+
+class SetPlatformAccessRequest(BaseModel):
+    access: AccessLevel
+
+
+@app.get("/workspace")
+async def get_workspace(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    membership = await get_or_create_membership(db, user_id)
+    return serialize_workspace(membership.workspace, membership.role)
+
+
+@app.get("/workspace/members")
+async def list_workspace_members(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(
+        select(WorkspaceMember)
+        .where(WorkspaceMember.workspace_id == membership.workspace_id)
+        .options(selectinload(WorkspaceMember.user))
+        .order_by(WorkspaceMember.created_at.asc())
+    )
+    members = result.scalars().all()
+    return [await serialize_member(db, m) for m in members]
+
+
+@app.post("/workspace/members")
+async def add_workspace_member(
+    req: AddMemberRequest, db: AsyncSession = Depends(get_db), admin: WorkspaceMember = Depends(require_workspace_admin),
+):
+    username = req.username.strip().lower()
+    result = await db.execute(select(User).where(User.username == username))
+    target_user = result.scalar_one_or_none()
+    if target_user is None:
+        raise HTTPException(status_code=404, detail="No account with that username")
+
+    existing = await db.execute(
+        select(WorkspaceMember).where(
+            WorkspaceMember.workspace_id == admin.workspace_id,
+            WorkspaceMember.user_id == target_user.id,
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="Already a member of this workspace")
+
+    member = WorkspaceMember(
+        workspace_id=admin.workspace_id,
+        user_id=target_user.id,
+        role=WorkspaceRole.MEMBER,
+        default_access=req.default_access,
+    )
+    db.add(member)
+    await db.commit()
+    await db.refresh(member)
+    member.user = target_user
+    return await serialize_member(db, member)
+
+
+async def _get_member_in_scope(db: AsyncSession, admin: WorkspaceMember, member_id: uuid.UUID) -> WorkspaceMember:
+    result = await db.execute(
+        select(WorkspaceMember)
+        .where(WorkspaceMember.id == member_id, WorkspaceMember.workspace_id == admin.workspace_id)
+        .options(selectinload(WorkspaceMember.user))
+    )
+    member = result.scalar_one_or_none()
+    if member is None:
+        raise HTTPException(status_code=404, detail="Member not found in this workspace")
+    return member
+
+
+@app.patch("/workspace/members/{member_id}")
+async def update_workspace_member(
+    member_id: uuid.UUID,
+    req: UpdateMemberRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: WorkspaceMember = Depends(require_workspace_admin),
+):
+    member = await _get_member_in_scope(db, admin, member_id)
+    if member.role == WorkspaceRole.ADMIN:
+        raise HTTPException(status_code=400, detail="The workspace owner's access can't be changed")
+
+    member.default_access = req.default_access
+    await db.commit()
+    await db.refresh(member)
+    return await serialize_member(db, member)
+
+
+@app.delete("/workspace/members/{member_id}")
+async def remove_workspace_member(
+    member_id: uuid.UUID, db: AsyncSession = Depends(get_db), admin: WorkspaceMember = Depends(require_workspace_admin),
+):
+    member = await _get_member_in_scope(db, admin, member_id)
+    if member.role == WorkspaceRole.ADMIN:
+        raise HTTPException(status_code=400, detail="The workspace owner can't be removed")
+
+    # Deleting only the membership row - their drafts/media/etc. keep
+    # user_id pointing at their still-existing User row, still attributed
+    # to them, per the "removal revokes login, not content" rule.
+    await db.delete(member)
+    await db.commit()
+    return {"removed": True}
+
+
+@app.put("/workspace/members/{member_id}/access/{platform}")
+async def set_member_platform_access(
+    member_id: uuid.UUID,
+    platform: Platform,
+    req: SetPlatformAccessRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: WorkspaceMember = Depends(require_workspace_admin),
+):
+    member = await _get_member_in_scope(db, admin, member_id)
+    if member.role == WorkspaceRole.ADMIN:
+        raise HTTPException(status_code=400, detail="The workspace owner's access can't be changed")
+
+    result = await db.execute(
+        select(MemberPlatformAccess).where(
+            MemberPlatformAccess.workspace_member_id == member.id,
+            MemberPlatformAccess.platform == platform,
+        )
+    )
+    override = result.scalar_one_or_none()
+    if override is None:
+        override = MemberPlatformAccess(workspace_member_id=member.id, platform=platform, access=req.access)
+        db.add(override)
+    else:
+        override.access = req.access
+
+    await db.commit()
+    return await serialize_member(db, member)
+
+
+@app.delete("/workspace/members/{member_id}/access/{platform}")
+async def clear_member_platform_access(
+    member_id: uuid.UUID,
+    platform: Platform,
+    db: AsyncSession = Depends(get_db),
+    admin: WorkspaceMember = Depends(require_workspace_admin),
+):
+    """Removes the override for this one platform, snapping it back to
+    following the member's default_access. Idempotent - no error if there
+    was no override to begin with."""
+    member = await _get_member_in_scope(db, admin, member_id)
+    result = await db.execute(
+        select(MemberPlatformAccess).where(
+            MemberPlatformAccess.workspace_member_id == member.id,
+            MemberPlatformAccess.platform == platform,
+        )
+    )
+    override = result.scalar_one_or_none()
+    if override is not None:
+        await db.delete(override)
+        await db.commit()
+    return await serialize_member(db, member)
 
 
 # --- Profile settings (bottom-left account popup) --------------------------
