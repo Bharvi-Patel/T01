@@ -415,7 +415,7 @@ export default function App() {
       )}
 
       <div className="main-panel" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <TopBar />
+        <TopBar token={token} onAuthError={handleLogout} />
         <button
           className="mobile-menu-button"
           onClick={() => setMobileMenuOpen(true)}

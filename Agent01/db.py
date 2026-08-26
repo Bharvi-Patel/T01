@@ -183,6 +183,18 @@ class User(Base):
     # an IANA name (e.g. "America/New_York"); "UTC" until the user picks one.
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC", server_default="UTC")
+    # Which of this user's workspaces get_or_create_membership() should
+    # resolve to. Nullable - null means "no explicit choice yet, fall
+    # back to the oldest membership" (covers every pre-existing row and
+    # anyone who has only ever belonged to one workspace). Set on the
+    # /workspaces switch endpoint and again whenever a new workspace is
+    # created (the creator's context follows their new workspace). Not a
+    # FK-with-cascade-delete on purpose: if the active workspace is ever
+    # deleted this should fall back to null/oldest, not cascade the user
+    # row away - see the switch/create endpoints for the fallback logic.
+    active_workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     # Drafts, media, ideas, todos below are attribution FKs, not scoping -

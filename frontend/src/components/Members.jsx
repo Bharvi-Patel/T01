@@ -418,7 +418,7 @@ export default function Members({ token, onAuthError, profile }) {
             onClick={() => setShowAddForm((v) => !v)}
             style={{ fontSize: 13.5, fontWeight: 600, padding: "10px 18px", borderRadius: 8 }}
           >
-            {showAddForm ? "Close" : "Invite Member"}
+            {showAddForm ? "Close" : "Add Member"}
           </button>
         )}
       </div>
@@ -455,7 +455,7 @@ export default function Members({ token, onAuthError, profile }) {
               type="text"
               value={addUsername}
               onChange={(e) => setAddUsername(e.target.value)}
-              placeholder="their-username"
+              placeholder="username"
               style={{ fontSize: 13, minWidth: 200 }}
             />
           </div>

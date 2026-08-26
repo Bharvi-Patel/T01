@@ -648,6 +648,33 @@ export async function getWorkspaceMembers({ token }) {
   return handle(res);
 }
 
+// Every workspace the caller belongs to, each tagged with their role
+// there and an is_active flag for whichever one is currently selected.
+export async function listWorkspaces({ token }) {
+  const res = await fetch(`${API_BASE}/workspaces`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+// Create a brand new workspace (caller becomes its sole admin) and
+// switch into it immediately.
+export async function createWorkspace({ token, name }) {
+  const res = await fetch(`${API_BASE}/workspaces`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ name }),
+  });
+  return handle(res);
+}
+
+// Switch the caller's active workspace to one they're already a member of.
+export async function switchWorkspace({ token, workspaceId }) {
+  const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/switch`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
 // Add an existing account (by username) to the workspace as a MEMBER.
 // Admin-only server-side.
 export async function addWorkspaceMember({ token, username, defaultAccess }) {

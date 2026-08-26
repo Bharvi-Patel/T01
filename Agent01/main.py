@@ -710,11 +710,31 @@ def _default_workspace_name(user: User) -> str:
 
 
 async def get_or_create_membership(db: AsyncSession, user_id: uuid.UUID) -> WorkspaceMember:
-    """Resolve the caller's workspace membership. For now everyone has
-    exactly one workspace (the one they own or were added to), so this
-    just picks their oldest membership - once multi-workspace switching
-    is wired up frontend-side (see TopBar's workspace dropdown), this is
-    the seam where a ?workspace_id= / header param would take over."""
+    """Resolve the caller's workspace membership: their active_workspace_id
+    if they've set one (and still belong to it), else their oldest
+    membership, else a freshly auto-created personal workspace. Every
+    workspace-scoped endpoint in this file funnels through here, so this
+    one function is the whole seam for multi-workspace switching - see
+    the /workspaces endpoints below for where active_workspace_id gets
+    set."""
+    user = await db.get(User, user_id)
+
+    if user is not None and user.active_workspace_id is not None:
+        result = await db.execute(
+            select(WorkspaceMember)
+            .where(
+                WorkspaceMember.user_id == user_id,
+                WorkspaceMember.workspace_id == user.active_workspace_id,
+            )
+            .options(selectinload(WorkspaceMember.workspace))
+        )
+        membership = result.scalar_one_or_none()
+        if membership is not None:
+            return membership
+        # Stale pointer (e.g. they were removed from that workspace) -
+        # fall through to the oldest-membership path below instead of
+        # erroring, and let it get corrected next time they switch.
+
     result = await db.execute(
         select(WorkspaceMember)
         .where(WorkspaceMember.user_id == user_id)
@@ -726,7 +746,8 @@ async def get_or_create_membership(db: AsyncSession, user_id: uuid.UUID) -> Work
     if membership is not None:
         return membership
 
-    user = await db.get(User, user_id)
+    if user is None:
+        user = await db.get(User, user_id)
     workspace = Workspace(name=_default_workspace_name(user), owner_user_id=user_id)
     db.add(workspace)
     await db.flush()  # need workspace.id before creating the membership row
@@ -829,6 +850,10 @@ async def serialize_member(db: AsyncSession, member: WorkspaceMember) -> dict:
     }
 
 
+class CreateWorkspaceRequest(BaseModel):
+    name: str
+
+
 class AddMemberRequest(BaseModel):
     username: str
     default_access: AccessLevel = AccessLevel.NEEDS_APPROVAL
@@ -845,6 +870,80 @@ class SetPlatformAccessRequest(BaseModel):
 @app.get("/workspace")
 async def get_workspace(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
     membership = await get_or_create_membership(db, user_id)
+    return serialize_workspace(membership.workspace, membership.role)
+
+
+@app.get("/workspaces")
+async def list_workspaces(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    """Every workspace this user belongs to (as admin or member), each
+    tagged with their role there and whether it's the currently-active
+    one - powers the TopBar workspace switcher list. Also makes sure
+    active_workspace_id is resolved/created first, so a brand new user
+    always sees at least their auto-created personal workspace."""
+    active = await get_or_create_membership(db, user_id)
+    result = await db.execute(
+        select(WorkspaceMember)
+        .where(WorkspaceMember.user_id == user_id)
+        .options(selectinload(WorkspaceMember.workspace))
+        .order_by(WorkspaceMember.created_at.asc())
+    )
+    memberships = result.scalars().all()
+    return [
+        {**serialize_workspace(m.workspace, m.role), "is_active": m.workspace_id == active.workspace_id}
+        for m in memberships
+    ]
+
+
+@app.post("/workspaces")
+async def create_workspace(
+    req: CreateWorkspaceRequest, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    """Create a brand new workspace with the caller as its sole ADMIN,
+    and immediately switch their active_workspace_id to it - so the
+    workspace they just created is the one they land in, matching
+    what the "Create a new workspace" flow in the TopBar implies."""
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Workspace name can't be empty")
+    if len(name) > 120:
+        raise HTTPException(status_code=400, detail="Workspace name is too long")
+
+    workspace = Workspace(name=name, owner_user_id=user_id)
+    db.add(workspace)
+    await db.flush()
+
+    membership = WorkspaceMember(
+        workspace_id=workspace.id, user_id=user_id, role=WorkspaceRole.ADMIN, default_access=AccessLevel.FULL,
+    )
+    db.add(membership)
+
+    user = await db.get(User, user_id)
+    user.active_workspace_id = workspace.id
+
+    await db.commit()
+    return serialize_workspace(workspace, WorkspaceRole.ADMIN)
+
+
+@app.post("/workspaces/{workspace_id}/switch")
+async def switch_workspace(
+    workspace_id: uuid.UUID, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    """Point the caller's active_workspace_id at a workspace they're
+    already a member of - everything else (drafts, members, calendar,
+    connected platforms...) picks this up automatically next request
+    since it all funnels through get_or_create_membership."""
+    result = await db.execute(
+        select(WorkspaceMember)
+        .where(WorkspaceMember.user_id == user_id, WorkspaceMember.workspace_id == workspace_id)
+        .options(selectinload(WorkspaceMember.workspace))
+    )
+    membership = result.scalar_one_or_none()
+    if membership is None:
+        raise HTTPException(status_code=404, detail="You're not a member of that workspace")
+
+    user = await db.get(User, user_id)
+    user.active_workspace_id = workspace_id
+    await db.commit()
     return serialize_workspace(membership.workspace, membership.role)
 
 
@@ -3386,4 +3485,4 @@ async def threads_webhook_receive(request: _Request, db: AsyncSession = Depends(
         print("[webhooks/threads] commit failed - event(s) from this payload were NOT saved:", file=sys.stderr)
         traceback.print_exc()
         raise
-    return {"received": True} 
+    return {"received": True}
