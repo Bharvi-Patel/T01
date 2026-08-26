@@ -29,13 +29,6 @@ function PlusCircleIcon({ size = 15 }) {
     </svg>
   );
 }
-function CheckIcon({ size = 15 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20 6L9 17l-5-5" />
-    </svg>
-  );
-}
 function GearIcon({ size = 14 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -164,7 +157,6 @@ export default function TopBar({ token, onAuthError }) {
                         {w.plan ? w.plan[0].toUpperCase() + w.plan.slice(1) : ""}
                       </span>
                     </span>
-                    {w.is_active && <CheckIcon size={14} />}
                   </button>
                   {/* Only that workspace's own admin can manage/delete it. */}
                   {w.role === "admin" && (
