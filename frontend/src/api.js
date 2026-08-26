@@ -700,3 +700,21 @@ export async function clearMemberPlatformAccess({ token, memberId, platform }) {
   });
   return handle(res);
 }
+
+// Drafts currently parked at PENDING_APPROVAL for any member of the
+// caller's workspace - admin-only server-side.
+export async function getPendingApprovals({ token }) {
+  const res = await fetch(`${API_BASE}/workspace/pending-approvals`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+// Grant or deny a parked publish/schedule request. feedback is shown to
+// the requester only when decision is "deny".
+export async function decideApprovalRequest({ token, draftId, decision, feedback }) {
+  const res = await fetch(`${API_BASE}/drafts/${draftId}/approval`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ decision, feedback }),
+  });
+  return handle(res);
+}

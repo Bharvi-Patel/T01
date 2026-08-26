@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import {
   getWorkspace, getWorkspaceMembers, addWorkspaceMember, updateWorkspaceMember,
   removeWorkspaceMember, setMemberPlatformAccess, clearMemberPlatformAccess,
-  getPendingApprovals, decideApprovalRequest,
+  getPendingApprovals, decideApprovalRequest, getConnections,
 } from "../api";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
@@ -96,22 +96,6 @@ function PendingApprovalRow({ request, onDecide }) {
   );
 }
 
-function RoleBadge({ role }) {
-  const admin = role === "admin";
-  return (
-    <span
-      style={{
-        fontSize: 11, fontWeight: 500, borderRadius: 4, padding: "2px 7px",
-        color: admin ? "var(--accent)" : "var(--text-secondary)",
-        background: admin ? "rgba(76,175,125,0.12)" : "var(--border)",
-        textTransform: "uppercase", letterSpacing: 0.3,
-      }}
-    >
-      {admin ? "Admin" : "Member"}
-    </span>
-  );
-}
-
 // One platform cell: shows the effective access (override, else default)
 // and, for admins looking at another member, a small select to change it.
 function PlatformAccessCell({ member, platform, canEdit, onChange, busy }) {
@@ -141,11 +125,12 @@ function PlatformAccessCell({ member, platform, canEdit, onChange, busy }) {
   );
 }
 
-function MemberRow({ member, isSelf, canManage, onUpdateDefault, onRemove, onSetPlatformAccess }) {
+function MemberRow({ member, isSelf, canManage, connections, onUpdateDefault, onRemove, onSetPlatformAccess }) {
   const [busyPlatform, setBusyPlatform] = useState(null);
   const [busyDefault, setBusyDefault] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const isOwner = member.role === "admin";
   const editable = canManage && !isOwner;
@@ -182,81 +167,116 @@ function MemberRow({ member, isSelf, canManage, onUpdateDefault, onRemove, onSet
   }
 
   return (
-    <tr style={{ borderTop: "0.5px solid var(--border-strong)" }}>
-      <td style={{ padding: "10px 12px", verticalAlign: "middle" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span
-            style={{
-              width: 28, height: 28, borderRadius: "50%", overflow: "hidden", flexShrink: 0,
-              background: "var(--border)", display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 11, fontWeight: 600, color: "var(--text-secondary)",
-            }}
-          >
-            {member.avatar_url
-              ? <img src={member.avatar_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              : initials(member.full_name || member.username)}
-          </span>
-          <div>
-            <div style={{ fontSize: 13, color: "var(--ink)", fontWeight: 500 }}>
-              {member.full_name || member.username}
-              {isSelf && <span style={{ color: "var(--text-secondary)", fontWeight: 400 }}> (you)</span>}
-            </div>
-            {member.username && <div style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>@{member.username}</div>}
-          </div>
-        </div>
-      </td>
-      <td style={{ padding: "10px 12px", verticalAlign: "middle" }}>
-        <RoleBadge role={member.role} />
-      </td>
-      <td style={{ padding: "10px 12px", verticalAlign: "middle" }}>
-        {editable ? (
-          <select value={member.default_access} disabled={busyDefault} onChange={handleDefaultChange} style={{ fontSize: 12, padding: "3px 6px" }}>
-            <option value="full">Full access</option>
-            <option value="needs_approval">Needs approval</option>
-          </select>
-        ) : (
-          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-            {isOwner ? "Owner \u2014 full access" : ACCESS_LABELS[member.default_access]}
-          </span>
-        )}
-      </td>
-      {PLATFORMS.map((platform) => (
-        <td key={platform.key} style={{ padding: "10px 12px", verticalAlign: "middle" }}>
-          {isOwner ? (
-            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <PlatformLogo platform={platform} size={13} />
-              <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>Full</span>
+    <>
+      <tr style={{ borderTop: "0.5px solid var(--border-strong)" }}>
+        <td style={{ padding: "12px", verticalAlign: "middle" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span
+              style={{
+                width: 30, height: 30, borderRadius: "50%", overflow: "hidden", flexShrink: 0,
+                background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 11.5, fontWeight: 700, color: "#fff",
+              }}
+            >
+              {member.avatar_url
+                ? <img src={member.avatar_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                : initials(member.full_name || member.username)}
             </span>
+            <div>
+              <div style={{ fontSize: 13.5, color: "var(--ink)", fontWeight: 600 }}>
+                {member.full_name || member.username}
+                {isSelf && <span style={{ color: "var(--text-secondary)", fontWeight: 400 }}> (you)</span>}
+              </div>
+              {member.username && <div style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>@{member.username}</div>}
+            </div>
+          </div>
+        </td>
+        <td style={{ padding: "12px", verticalAlign: "middle", fontSize: 13, color: "var(--text-secondary)" }}>
+          {isOwner ? "Owner" : "Member"}
+        </td>
+        <td style={{ padding: "12px", verticalAlign: "middle" }}>
+          <div style={{ display: "flex", alignItems: "center" }}>
+            {PLATFORMS.filter((platform) => connections?.[platform.key]).map((platform, i) => {
+              const picture = connections[platform.key]?.profile_picture_url;
+              const name = connections[platform.key]?.profile_name;
+              return (
+                <span
+                  key={platform.key}
+                  title={name ? `${platform.label} \u2014 ${name}` : platform.label}
+                  style={{
+                    width: 24, height: 24, borderRadius: "50%", display: "flex", alignItems: "center",
+                    justifyContent: "center", background: "#fff", border: "2px solid var(--paper)",
+                    marginLeft: i === 0 ? 0 : -8, position: "relative", zIndex: PLATFORMS.length - i,
+                    overflow: "hidden",
+                  }}
+                >
+                  {picture
+                    ? <img src={picture} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    : <PlatformLogo platform={platform} size={12} />}
+                </span>
+              );
+            })}
+            {PLATFORMS.every((platform) => !connections?.[platform.key]) && (
+              <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>None connected</span>
+            )}
+          </div>
+        </td>
+        <td style={{ padding: "12px", verticalAlign: "middle", textAlign: "right" }}>
+          {canManage && !isOwner ? (
+            <button type="button" onClick={() => setExpanded((v) => !v)} style={{ fontSize: 12, padding: "4px 10px" }}>
+              {expanded ? "Close" : "Manage"}
+            </button>
           ) : (
-            <PlatformAccessCell
-              member={member}
-              platform={platform}
-              canEdit={editable}
-              busy={busyPlatform === platform.key}
-              onChange={handlePlatformChange}
-            />
+            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>&mdash;</span>
           )}
         </td>
-      ))}
-      <td style={{ padding: "10px 12px", verticalAlign: "middle", textAlign: "right" }}>
-        {canManage && !isOwner && (
-          confirmRemove ? (
-            <span style={{ display: "inline-flex", gap: 6 }}>
-              <button type="button" className="danger" disabled={removing} onClick={handleRemove} style={{ fontSize: 12, padding: "4px 8px" }}>
-                {removing ? "Removing…" : "Confirm"}
-              </button>
-              <button type="button" disabled={removing} onClick={() => setConfirmRemove(false)} style={{ fontSize: 12, padding: "4px 8px" }}>
-                Cancel
-              </button>
-            </span>
-          ) : (
-            <button type="button" onClick={() => setConfirmRemove(true)} style={{ fontSize: 12, padding: "4px 8px" }}>
-              Remove
-            </button>
-          )
-        )}
-      </td>
-    </tr>
+      </tr>
+      {expanded && (
+        <tr style={{ borderTop: "0.5px solid var(--border-strong)", background: "var(--paper-raised)" }}>
+          <td colSpan={4} style={{ padding: "14px 16px" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 20, alignItems: "flex-start" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={{ fontSize: 11, color: "var(--text-secondary)" }}>Default access</label>
+                <select value={member.default_access} disabled={busyDefault} onChange={handleDefaultChange} style={{ fontSize: 12, padding: "4px 8px" }}>
+                  <option value="full">Full access</option>
+                  <option value="needs_approval">Needs approval</option>
+                </select>
+              </div>
+              {PLATFORMS.map((platform) => (
+                <div key={platform.key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 11, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 4 }}>
+                    <PlatformLogo platform={platform} size={12} /> {platform.label}
+                  </label>
+                  <PlatformAccessCell
+                    member={member}
+                    platform={platform}
+                    canEdit={editable}
+                    busy={busyPlatform === platform.key}
+                    onChange={handlePlatformChange}
+                  />
+                </div>
+              ))}
+              <div style={{ marginLeft: "auto", alignSelf: "flex-end" }}>
+                {confirmRemove ? (
+                  <span style={{ display: "inline-flex", gap: 6 }}>
+                    <button type="button" className="danger" disabled={removing} onClick={handleRemove} style={{ fontSize: 12, padding: "4px 8px" }}>
+                      {removing ? "Removing…" : "Confirm remove"}
+                    </button>
+                    <button type="button" disabled={removing} onClick={() => setConfirmRemove(false)} style={{ fontSize: 12, padding: "4px 8px" }}>
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button type="button" onClick={() => setConfirmRemove(true)} style={{ fontSize: 12, padding: "4px 8px" }}>
+                    Remove from workspace
+                  </button>
+                )}
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -269,21 +289,24 @@ export default function Members({ token, onAuthError, profile }) {
 
   const [pendingApprovals, setPendingApprovals] = useState(null);
   const [approvalsError, setApprovalsError] = useState(null);
+  const [connections, setConnections] = useState({});
 
   const [addUsername, setAddUsername] = useState("");
   const [addAccess, setAddAccess] = useState("needs_approval");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState("");
+  const [showAddForm, setShowAddForm] = useState(false);
 
   function load() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    Promise.all([getWorkspace({ token }), getWorkspaceMembers({ token })])
-      .then(([ws, mem]) => {
+    Promise.all([getWorkspace({ token }), getWorkspaceMembers({ token }), getConnections({ token })])
+      .then(([ws, mem, conn]) => {
         if (cancelled) return;
         setWorkspace(ws);
         setMembers(mem);
+        setConnections(conn?.connections || {});
         if (ws.role === "admin") {
           getPendingApprovals({ token })
             .then((reqs) => { if (!cancelled) setPendingApprovals(reqs); })
@@ -329,6 +352,7 @@ export default function Members({ token, onAuthError, profile }) {
       setMembers((prev) => [...(prev || []), member]);
       setAddUsername("");
       setAddAccess("needs_approval");
+      setShowAddForm(false);
     } catch (e) {
       if (e.status === 401) return onAuthError?.();
       setAddError(e.message || "Couldn't add that member");
@@ -378,14 +402,26 @@ export default function Members({ token, onAuthError, profile }) {
 
   return (
     <div>
-      <p style={{ fontFamily: "var(--font-display)", fontSize: 22, color: "var(--ink)", margin: "0 0 4px" }}>
-        Members
-      </p>
-      <p style={{ fontSize: 13.5, color: "var(--text-secondary)", margin: "0 0 20px" }}>
-        {isAdmin
-          ? "Invite people to your workspace and control what they can schedule or publish on each platform."
-          : "People with access to this workspace. Only the workspace admin can change access."}
-      </p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <p style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 22, color: "var(--ink)", margin: "0 0 4px" }}>
+            Members
+          </p>
+          <p style={{ fontSize: 13.5, color: "var(--text-secondary)", margin: 0 }}>
+            {(members || []).length} workspace member{(members || []).length === 1 ? "" : "s"}
+          </p>
+        </div>
+        {isAdmin && (
+          <button
+            type="button"
+            className="primary"
+            onClick={() => setShowAddForm((v) => !v)}
+            style={{ fontSize: 13.5, fontWeight: 600, padding: "10px 18px", borderRadius: 8 }}
+          >
+            {showAddForm ? "Close" : "Invite Member"}
+          </button>
+        )}
+      </div>
 
       {isAdmin && (pendingApprovals === null || pendingApprovals.length > 0) && (
         <div style={{ marginBottom: 20 }}>
@@ -404,7 +440,7 @@ export default function Members({ token, onAuthError, profile }) {
         </div>
       )}
 
-      {isAdmin && (
+      {isAdmin && showAddForm && (
         <form
           onSubmit={handleAddMember}
           style={{
@@ -438,18 +474,13 @@ export default function Members({ token, onAuthError, profile }) {
       )}
 
       <div style={{ overflowX: "auto", border: "0.5px solid var(--border-strong)", borderRadius: 8 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ borderBottom: "0.5px solid var(--border-strong)" }}>
-              <th style={{ textAlign: "left", padding: "10px 12px", fontSize: 11.5, color: "var(--text-secondary)", fontWeight: 500 }}>Member</th>
-              <th style={{ textAlign: "left", padding: "10px 12px", fontSize: 11.5, color: "var(--text-secondary)", fontWeight: 500 }}>Role</th>
-              <th style={{ textAlign: "left", padding: "10px 12px", fontSize: 11.5, color: "var(--text-secondary)", fontWeight: 500 }}>Default access</th>
-              {PLATFORMS.map((platform) => (
-                <th key={platform.key} style={{ textAlign: "left", padding: "10px 12px", fontSize: 11.5, color: "var(--text-secondary)", fontWeight: 500 }}>
-                  {platform.label}
-                </th>
-              ))}
-              <th style={{ padding: "10px 12px" }} />
+              <th style={{ textAlign: "left", padding: "12px", fontSize: 11.5, color: "var(--text-secondary)", fontWeight: 600, letterSpacing: 0.4, textTransform: "uppercase" }}>Name</th>
+              <th style={{ textAlign: "left", padding: "12px", fontSize: 11.5, color: "var(--text-secondary)", fontWeight: 600, letterSpacing: 0.4, textTransform: "uppercase" }}>Role</th>
+              <th style={{ textAlign: "left", padding: "12px", fontSize: 11.5, color: "var(--text-secondary)", fontWeight: 600, letterSpacing: 0.4, textTransform: "uppercase" }}>Social Accounts</th>
+              <th style={{ textAlign: "right", padding: "12px", fontSize: 11.5, color: "var(--text-secondary)", fontWeight: 600, letterSpacing: 0.4, textTransform: "uppercase" }}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -459,6 +490,7 @@ export default function Members({ token, onAuthError, profile }) {
                 member={member}
                 isSelf={member.username === selfUsername}
                 canManage={isAdmin}
+                connections={connections}
                 onUpdateDefault={handleUpdateDefault}
                 onRemove={handleRemove}
                 onSetPlatformAccess={handleSetPlatformAccess}

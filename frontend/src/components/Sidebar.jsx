@@ -1,3 +1,4 @@
+
 // Sidebar.jsx
 import { useState, useRef, useEffect } from "react";
 import ProfileSettingsModal from "./ProfileSettingsModal";
@@ -12,8 +13,8 @@ const NAV_ITEMS = [
   { key: "publish", label: "Publish", icon: "send" },
   { key: "calendar", label: "Calendar", icon: "calendar" },
   { key: "analytics", label: "Analytics", icon: "chart" },
-  { key: "billing", label: "Billing", icon: "card" },
   { key: "members", label: "Members", icon: "users" },
+  { key: "billing", label: "Billing", icon: "card" },
 ];
 
 const ICON_PATHS = {
