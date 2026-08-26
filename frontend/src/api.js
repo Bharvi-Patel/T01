@@ -675,6 +675,30 @@ export async function switchWorkspace({ token, workspaceId }) {
   return handle(res);
 }
 
+// Rename a workspace. Admin-only server-side, scoped to workspaceId
+// (not necessarily the caller's active workspace).
+export async function renameWorkspace({ token, workspaceId, name }) {
+  const res = await fetch(`${API_BASE}/workspaces/${workspaceId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ name }),
+  });
+  return handle(res);
+}
+
+// Permanently delete a workspace (and everything in it - drafts, media,
+// connections, members...). Admin-only server-side, scoped to
+// workspaceId (not necessarily the caller's active workspace); name
+// must match the workspace's actual name, retyped by the caller.
+export async function deleteWorkspace({ token, workspaceId, name }) {
+  const res = await fetch(`${API_BASE}/workspaces/${workspaceId}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ name }),
+  });
+  return handle(res);
+}
+
 // Add an existing account (by username) to the workspace as a MEMBER.
 // Admin-only server-side.
 export async function addWorkspaceMember({ token, username, defaultAccess }) {

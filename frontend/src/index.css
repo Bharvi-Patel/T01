@@ -370,6 +370,11 @@ body::before {
   margin-bottom: 8px;
   border-bottom: 1px solid var(--border);
 }
+.topbar-workspace-row-wrap {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
 .topbar-workspace-row {
   display: flex;
   align-items: center;
@@ -381,6 +386,8 @@ body::before {
   background: transparent;
   color: var(--ink);
   cursor: pointer;
+  flex: 1;
+  min-width: 0;
 }
 .topbar-workspace-row:hover { background: var(--border); }
 .topbar-workspace-row-text {
@@ -392,6 +399,21 @@ body::before {
 .topbar-workspace-row-name { font-size: 13.5px; font-weight: 400; }
 .topbar-workspace-row-plan { font-size: 11px; color: var(--text-muted); }
 .topbar-workspace-row svg { color: var(--accent); flex-shrink: 0; }
+.topbar-workspace-row-settings {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.topbar-workspace-row-settings:hover { background: var(--border); color: var(--accent); }
 .topbar-workspace-create {
   display: flex;
   align-items: center;

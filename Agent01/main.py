@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -837,6 +837,16 @@ class CreateWorkspaceRequest(BaseModel):
     name: str
 
 
+class DeleteWorkspaceRequest(BaseModel):
+    # Caller must retype the workspace's exact name - standard
+    # confirm-by-typing guard for an irreversible, fully-cascading delete.
+    name: str
+
+
+class RenameWorkspaceRequest(BaseModel):
+    name: str
+
+
 class AddMemberRequest(BaseModel):
     username: str
     default_access: AccessLevel = AccessLevel.NEEDS_APPROVAL
@@ -928,6 +938,79 @@ async def switch_workspace(
     user.active_workspace_id = workspace_id
     await db.commit()
     return serialize_workspace(membership.workspace, membership.role)
+
+
+async def _get_admin_membership(db: AsyncSession, user_id: uuid.UUID, workspace_id: uuid.UUID) -> WorkspaceMember:
+    """Like require_workspace_admin, but scoped to a specific workspace_id
+    rather than the caller's currently-active one - needed for rename/
+    delete, which act on whichever workspace's gear icon was clicked in
+    the switcher, not necessarily the one the caller is sitting in right
+    now (see TopBar's per-row settings button)."""
+    result = await db.execute(
+        select(WorkspaceMember).where(
+            WorkspaceMember.user_id == user_id, WorkspaceMember.workspace_id == workspace_id,
+        )
+    )
+    membership = result.scalar_one_or_none()
+    if membership is None:
+        raise HTTPException(status_code=404, detail="You're not a member of that workspace")
+    if membership.role != WorkspaceRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Only the workspace admin can do that")
+    return membership
+
+
+@app.patch("/workspaces/{workspace_id}")
+async def rename_workspace(
+    workspace_id: uuid.UUID,
+    req: RenameWorkspaceRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """Rename a workspace - admin-only, scoped to whichever workspace_id
+    was passed (not necessarily the caller's active one)."""
+    membership = await _get_admin_membership(db, user_id, workspace_id)
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Workspace name can't be empty")
+    if len(name) > 120:
+        raise HTTPException(status_code=400, detail="Workspace name is too long")
+
+    workspace = await db.get(Workspace, workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    workspace.name = name
+    await db.commit()
+    return serialize_workspace(workspace, membership.role)
+
+
+@app.delete("/workspaces/{workspace_id}")
+async def delete_workspace(
+    workspace_id: uuid.UUID,
+    req: DeleteWorkspaceRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """Permanently delete a workspace - admin-only, scoped to whichever
+    workspace_id was passed (not necessarily the caller's active one),
+    and only after retyping the workspace's name. Every workspace-scoped
+    table cascades at the DB level (ondelete="CASCADE" - see db.py), so a
+    plain core DELETE on the Workspace row is enough; no need to walk
+    drafts/media/members/etc. by hand. Any account (this admin included)
+    whose active_workspace_id pointed here gets SET NULL by the same FK
+    and falls back to their oldest remaining membership next load - see
+    get_active_membership - or the create-workspace prompt if they have
+    none left."""
+    await _get_admin_membership(db, user_id, workspace_id)
+    workspace = await db.get(Workspace, workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if req.name.strip() != workspace.name:
+        raise HTTPException(status_code=400, detail="Workspace name doesn't match")
+
+    await db.execute(delete(Workspace).where(Workspace.id == workspace_id))
+    await db.commit()
+    return {"deleted": True}
 
 
 @app.get("/workspace/members")
@@ -1313,6 +1396,17 @@ async def delete_account(
     if user.password_hash:
         if not req.password or not verify_password(req.password, user.password_hash):
             raise HTTPException(status_code=401, detail="Password is incorrect")
+
+    # Workspace.owner_user_id is ondelete="RESTRICT" on purpose (see db.py) -
+    # ownership transfer isn't built yet, so a user who owns a workspace
+    # can't be deleted outright. Check for that up front and fail cleanly
+    # instead of letting the DB throw an IntegrityError -> 500.
+    owned = await db.execute(select(Workspace.id).where(Workspace.owner_user_id == user_id))
+    if owned.scalars().first() is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="You own one or more workspaces. Delete or transfer ownership of them before deleting your account.",
+        )
 
     # Invalidate every session for this account, then delete the user row -
     # cascades (platform_connections, drafts, oauth_identities, media_assets,
