@@ -696,27 +696,19 @@ def serialize_profile(user: User) -> dict:
 # access - see schedule/publish endpoints for where that access check
 # actually gates something.
 #
-# Every existing user is lazily given a personal workspace (themself as
-# sole ADMIN) the first time any workspace endpoint resolves their
-# membership - see get_or_create_membership. This unblocks the Members
-# feature immediately without a separate migration step; a proper
-# Alembic migration to backfill workspace_id onto pre-existing
-# Draft/MediaAsset/PlatformConnection/etc. rows for multi-row accounts
-# is still a separate, not-yet-done piece of work.
-
-def _default_workspace_name(user: User) -> str:
-    base = (user.full_name or user.username or "My").strip()
-    return f"{base}'s Workspace"
+# Workspaces are NEVER auto-generated server-side. A new account has
+# zero workspaces until they go through the "create your workspace"
+# onboarding prompt (frontend: CreateWorkspacePrompt, shown right after
+# signup/login whenever GET /workspace comes back 404 "no_workspace") -
+# see get_or_create_membership below for where that 404 comes from.
 
 
-async def get_or_create_membership(db: AsyncSession, user_id: uuid.UUID) -> WorkspaceMember:
-    """Resolve the caller's workspace membership: their active_workspace_id
-    if they've set one (and still belong to it), else their oldest
-    membership, else a freshly auto-created personal workspace. Every
-    workspace-scoped endpoint in this file funnels through here, so this
-    one function is the whole seam for multi-workspace switching - see
-    the /workspaces endpoints below for where active_workspace_id gets
-    set."""
+async def get_active_membership(db: AsyncSession, user_id: uuid.UUID) -> WorkspaceMember | None:
+    """Resolve the caller's current workspace membership: their
+    active_workspace_id if they've set one (and still belong to it),
+    else their oldest membership, else None if they have no workspace
+    at all yet. Never creates one - see POST /workspaces for the only
+    place a Workspace row gets created."""
     user = await db.get(User, user_id)
 
     if user is not None and user.active_workspace_id is not None:
@@ -742,28 +734,19 @@ async def get_or_create_membership(db: AsyncSession, user_id: uuid.UUID) -> Work
         .order_by(WorkspaceMember.created_at.asc())
         .limit(1)
     )
-    membership = result.scalar_one_or_none()
-    if membership is not None:
-        return membership
+    return result.scalar_one_or_none()
 
-    if user is None:
-        user = await db.get(User, user_id)
-    workspace = Workspace(name=_default_workspace_name(user), owner_user_id=user_id)
-    db.add(workspace)
-    await db.flush()  # need workspace.id before creating the membership row
 
-    membership = WorkspaceMember(
-        workspace_id=workspace.id, user_id=user_id, role=WorkspaceRole.ADMIN, default_access=AccessLevel.FULL,
-    )
-    db.add(membership)
-    await db.commit()
-
-    result = await db.execute(
-        select(WorkspaceMember)
-        .where(WorkspaceMember.id == membership.id)
-        .options(selectinload(WorkspaceMember.workspace))
-    )
-    return result.scalar_one()
+async def get_or_create_membership(db: AsyncSession, user_id: uuid.UUID) -> WorkspaceMember:
+    """Same resolution as get_active_membership, but raises 404
+    "no_workspace" instead of returning None - the shape every existing
+    workspace-scoped endpoint below expects. That specific 404 is the
+    frontend's signal to show the onboarding prompt instead of the app
+    (see App.jsx's GET /workspace check) rather than a generic error."""
+    membership = await get_active_membership(db, user_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="no_workspace")
+    return membership
 
 
 async def require_workspace_admin(
@@ -877,10 +860,10 @@ async def get_workspace(db: AsyncSession = Depends(get_db), user_id: uuid.UUID =
 async def list_workspaces(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
     """Every workspace this user belongs to (as admin or member), each
     tagged with their role there and whether it's the currently-active
-    one - powers the TopBar workspace switcher list. Also makes sure
-    active_workspace_id is resolved/created first, so a brand new user
-    always sees at least their auto-created personal workspace."""
-    active = await get_or_create_membership(db, user_id)
+    one - powers the TopBar workspace switcher list. Returns an empty
+    list for a brand new account with no workspace yet, rather than
+    erroring - see get_active_membership (nullable, no auto-create)."""
+    active = await get_active_membership(db, user_id)
     result = await db.execute(
         select(WorkspaceMember)
         .where(WorkspaceMember.user_id == user_id)
@@ -889,7 +872,7 @@ async def list_workspaces(db: AsyncSession = Depends(get_db), user_id: uuid.UUID
     )
     memberships = result.scalars().all()
     return [
-        {**serialize_workspace(m.workspace, m.role), "is_active": m.workspace_id == active.workspace_id}
+        {**serialize_workspace(m.workspace, m.role), "is_active": active is not None and m.workspace_id == active.workspace_id}
         for m in memberships
     ]
 

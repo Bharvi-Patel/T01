@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import Login from "./components/Login";
 import ChooseUsernameModal from "./components/ChooseUsernameModal";
+import CreateWorkspacePrompt from "./components/CreateWorkspacePrompt";
 import Form from "./components/Form";
 import DraftReview from "./components/DraftReview";
 import Done from "./components/Done";
@@ -19,7 +20,7 @@ import Inbox, { KIND_TABS } from "./components/Inbox";
 import HelpCenter from "./components/HelpCenter";
 import Members from "./components/Members";
 import { MODE_TABS } from "./components/Form";
-import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft, getProfile } from "./api";
+import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft, getProfile, getWorkspace } from "./api";
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem("auth_token"));
@@ -35,6 +36,10 @@ export default function App() {
 
   const [connections, setConnections] = useState({}); // { linkedin: { profile_name, profile_picture_url }, ... } — key present means connected
   const [profile, setProfile] = useState(null); // { username, email, avatar_url, timezone, ... } — the logged-in user's own account, from GET /me
+  // Workspaces are never auto-generated server-side - a brand new account
+  // has none until they go through CreateWorkspacePrompt. null = haven't
+  // checked yet (don't flash the prompt while this is still loading).
+  const [needsWorkspace, setNeedsWorkspace] = useState(null);
 
   const [showAuth, setShowAuth] = useState(false);
   
@@ -109,6 +114,19 @@ export default function App() {
   }
 
   useEffect(refreshProfile, [token]);
+
+  useEffect(() => {
+    if (!token) { setNeedsWorkspace(null); return; }
+    getWorkspace({ token })
+      .then(() => setNeedsWorkspace(false))
+      .catch((e) => {
+        if (e.status === 404 && e.message === "no_workspace") { setNeedsWorkspace(true); return; }
+        if (e.status === 401) return handleLogout();
+        // Any other error (offline, 500...): don't strand the user on the
+        // workspace prompt indefinitely for a transient failure.
+        setNeedsWorkspace(false);
+      });
+  }, [token]);
 
 
   useEffect(() => {
@@ -357,6 +375,18 @@ export default function App() {
           suggestedUsername={profile.username}
           onDone={setProfile}
         />
+      </div>
+    );
+  }
+
+  // Wait for the initial GET /workspace check before deciding whether to
+  // show the prompt - avoids a flash of it for accounts that already
+  // have one. needsWorkspace stays null only for the brief window right
+  // after token is set, before that check resolves.
+  if (needsWorkspace) {
+    return (
+      <div className="center-viewport">
+        <CreateWorkspacePrompt token={token} />
       </div>
     );
   }

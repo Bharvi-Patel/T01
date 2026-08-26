@@ -416,7 +416,7 @@ export default function Members({ token, onAuthError, profile }) {
             type="button"
             className="primary"
             onClick={() => setShowAddForm((v) => !v)}
-            style={{ fontSize: 13.5, fontWeight: 600, padding: "10px 18px", borderRadius: 8 }}
+            style={{ fontSize: 13.5, fontWeight: 400, padding: "10px 18px", borderRadius: 8 }}
           >
             {showAddForm ? "Close" : "Add Member"}
           </button>
@@ -466,7 +466,7 @@ export default function Members({ token, onAuthError, profile }) {
               <option value="full">Full access</option>
             </select>
           </div>
-          <button type="submit" className="primary" disabled={adding || !addUsername.trim()} style={{ fontSize: 13 }}>
+          <button type="submit" className="primary" disabled={adding || !addUsername.trim()} style={{ fontSize: 13, fontWeight: 400 }}>
             {adding ? "Adding…" : "Add member"}
           </button>
           {addError && <div style={{ fontSize: 12.5, color: "var(--danger)", flexBasis: "100%" }}>{addError}</div>}
