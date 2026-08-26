@@ -254,6 +254,13 @@ class Workspace(Base):
     plain string ("free" / "pro" / ...) rather than an enum since billing
     tiers are expected to change independently of a schema migration.
 
+    `owner_user_id` cascades: deleting the owner's account deletes every
+    workspace they own outright (see DELETE /me in main.py), which in
+    turn cascades to that workspace's WorkspaceMember rows - so any other
+    member loses their seat and everything they made in it too. There's
+    no ownership-transfer flow yet to avoid that, so DELETE /me warns
+    about it up front instead of blocking the deletion.
+
     Every existing single-tenant table that used to be scoped by user_id
     directly (PlatformConnection, Draft, MediaAsset, FollowerSnapshot,
     CustomIdea, CustomTodo, InboxItem) now carries a workspace_id instead
@@ -264,7 +271,7 @@ class Workspace(Base):
 
     id: Mapped[uuid.UUID] = _uuid_col()
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     plan: Mapped[str] = mapped_column(String(32), nullable=False, default="free", server_default="free")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

@@ -386,7 +386,13 @@ export default function App() {
   if (needsWorkspace) {
     return (
       <div className="center-viewport">
-        <CreateWorkspacePrompt token={token} />
+        <CreateWorkspacePrompt
+          token={token}
+          profile={profile}
+          onProfileUpdated={setProfile}
+          onAccountDeleted={handleAccountDeleted}
+          onLogout={handleLogout}
+        />
       </div>
     );
   }

@@ -232,7 +232,7 @@ export default function ProfileSettingsModal({ token, profile, onClose, onProfil
               </button>
             ) : (
               <div className="profile-modal-delete-confirm">
-                <p>This permanently deletes your account, drafts, and connected platforms. This can't be undone.</p>
+                <p>This permanently deletes your account, drafts, and connected platforms - and every workspace you own, along with all its content and any other members' access to it. This can't be undone.</p>
                 {hasPassword ? (
                   <div>
                     <label>Enter your password to confirm</label>

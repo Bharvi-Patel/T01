@@ -1,137 +1,246 @@
-// WorkspaceSettingsModal.jsx — opened from the gear icon on the active
-// workspace row in TopBar's switcher. Admin-only (the caller can't even
-// open this for a workspace they don't own - see the gear's visibility
-// check in TopBar). Reuses the same profile-modal-* CSS as
-// ProfileSettingsModal.
-import { useEffect, useState } from "react";
-import { renameWorkspace, deleteWorkspace } from "../api";
+// TopBar.jsx
+// Slim persistent bar shown above every page's content, regardless of
+// sidebar collapse state. Surfaces the workspace name as a dropdown —
+// notifications/help/account stay in the sidebar, not duplicated here.
+import { useState, useRef, useEffect } from "react";
+import { listWorkspaces, createWorkspace, switchWorkspace } from "../api";
+import WorkspaceSettingsModal from "./WorkspaceSettingsModal";
 
-export default function WorkspaceSettingsModal({ token, workspace, onClose, onWorkspaceRenamed, onWorkspaceDeleted }) {
-  const [name, setName] = useState(workspace?.name || "");
-  const [nameSaving, setNameSaving] = useState(false);
-  const [nameMessage, setNameMessage] = useState(null); // { type, text }
+function ChevronDownIcon({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+function SearchIcon({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-3.5-3.5" />
+    </svg>
+  );
+}
+function PlusCircleIcon({ size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8v8M8 12h8" />
+    </svg>
+  );
+}
+function CheckIcon({ size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 6L9 17l-5-5" />
+    </svg>
+  );
+}
+function GearIcon({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+    </svg>
+  );
+}
 
-  // workspace can still update (e.g. after a rename elsewhere) while this
-  // modal is open - keep the field in sync rather than freezing on mount.
+export default function TopBar({ token, onAuthError }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [workspaces, setWorkspaces] = useState(null); // null = not loaded yet
+  const [loadError, setLoadError] = useState("");
+  const [switching, setSwitching] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [settingsWorkspace, setSettingsWorkspace] = useState(null); // the workspace row whose gear was clicked
+  const wrapRef = useRef(null);
+
   useEffect(() => {
-    setName(workspace?.name || "");
-  }, [workspace?.name]);
+    function handleClickOutside(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setOpen(false);
+        setShowCreateForm(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [confirmName, setConfirmName] = useState("");
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState("");
+  // Load the real workspace list once we have a token, so the button
+  // shows the caller's actual active workspace instead of a placeholder.
+  useEffect(() => {
+    if (!token) { setWorkspaces(null); return; }
+    listWorkspaces({ token })
+      .then(setWorkspaces)
+      .catch((e) => {
+        if (e.status === 401) return onAuthError?.();
+        setLoadError(e.message || "Couldn't load workspaces");
+      });
+  }, [token]);
 
-  const savedName = workspace?.name || "";
-  const plan = workspace?.plan ? workspace.plan[0].toUpperCase() + workspace.plan.slice(1) : "";
-  const trimmedName = name.trim();
-  const nameChanged = trimmedName.length > 0 && trimmedName !== savedName;
+  const active = (workspaces || []).find((w) => w.is_active);
+  const workspaceName = active?.name || "Workspace";
+  const plan = active?.plan ? active.plan[0].toUpperCase() + active.plan.slice(1) : "";
 
-  async function handleSaveName(e) {
-    e.preventDefault();
-    if (!nameChanged) return;
-    setNameSaving(true);
-    setNameMessage(null);
+  const filtered = (workspaces || []).filter((w) =>
+    w.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  async function handleSwitch(workspaceId) {
+    if (switching || workspaceId === active?.id) { setOpen(false); return; }
+    setSwitching(true);
     try {
-      const updated = await renameWorkspace({ token, workspaceId: workspace.id, name: trimmedName });
-      onWorkspaceRenamed(updated);
-      setNameMessage({ type: "success", text: "Saved." });
-    } catch (err) {
-      setNameMessage({ type: "error", text: err.message || "Could not rename workspace." });
-    } finally {
-      setNameSaving(false);
+      await switchWorkspace({ token, workspaceId });
+      // Workspace-scoped data (drafts, members, connections, calendar...)
+      // is fetched all over the app keyed by token, not workspace id, so
+      // a full reload is the simplest reliable way to pick up the switch
+      // everywhere at once.
+      window.location.reload();
+    } catch (e) {
+      if (e.status === 401) return onAuthError?.();
+      setLoadError(e.message || "Couldn't switch workspace");
+      setSwitching(false);
     }
   }
 
-  async function handleDelete() {
-    setDeleting(true);
-    setDeleteError("");
+  async function handleCreate(e) {
+    e.preventDefault();
+    const name = newName.trim();
+    if (!name) return;
+    setCreating(true);
+    setCreateError("");
     try {
-      await deleteWorkspace({ token, workspaceId: workspace.id, name: confirmName.trim() });
-      onWorkspaceDeleted();
-    } catch (err) {
-      setDeleteError(err.message || "Could not delete workspace.");
-    } finally {
-      setDeleting(false);
+      await createWorkspace({ token, name });
+      window.location.reload();
+    } catch (e2) {
+      if (e2.status === 401) return onAuthError?.();
+      setCreateError(e2.message || "Couldn't create workspace");
+      setCreating(false);
     }
   }
 
   return (
-    <div className="profile-modal-overlay" onClick={onClose}>
-      <div className="profile-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="profile-modal-header">
-          <span>Workspace settings</span>
-          <button className="profile-modal-close" onClick={onClose} aria-label="Close">✕</button>
-        </div>
+    <div className="topbar">
+      <div className="topbar-workspace-wrap" ref={wrapRef}>
+        <button className="topbar-workspace" onClick={() => setOpen((o) => !o)}>
+          <span className="topbar-workspace-text">
+            <span className="topbar-workspace-name">{workspaceName}</span>
+            {plan && <span className="topbar-workspace-plan">{plan}</span>}
+          </span>
+          <ChevronDownIcon />
+        </button>
 
-        <div className="profile-modal-body">
-          <form onSubmit={handleSaveName} className="profile-modal-section">
-            <div>
-              <label>Name</label>
+        {open && (
+          <div className="topbar-workspace-menu">
+            {loadError && (
+              <div style={{ fontSize: 12.5, color: "var(--danger)", padding: "4px 8px" }}>{loadError}</div>
+            )}
+
+            <div className="topbar-workspace-search">
+              <SearchIcon />
               <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                maxLength={120}
-                required
+                type="text"
+                placeholder="Search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                autoFocus
               />
             </div>
-            {plan && (
-              <div>
-                <label>Plan</label>
-                <input value={plan} disabled />
-              </div>
-            )}
-            {nameMessage && (
-              <p className={nameMessage.type === "error" ? "profile-modal-error" : "profile-modal-success"}>
-                {nameMessage.text}
-              </p>
-            )}
-            <button type="submit" className="primary" disabled={!nameChanged || nameSaving}>
-              {nameSaving ? "Saving…" : "Save changes"}
-            </button>
-          </form>
 
-          {/* Danger zone */}
-          <div className="profile-modal-section profile-modal-danger">
-            <p className="profile-modal-section-title">Danger zone</p>
-            {!deleteOpen ? (
-              <button type="button" className="danger" onClick={() => setDeleteOpen(true)}>
-                Delete workspace
-              </button>
-            ) : (
-              <div className="profile-modal-delete-confirm">
-                <p>
-                  This permanently deletes "{savedName}" - every draft, connected platform, media file, and
-                  member's access in it. This can't be undone.
-                </p>
-                <div>
-                  <label>
-                    Type <strong style={{ textTransform: "none" }}>{savedName}</strong> to confirm
-                  </label>
-                  <input value={confirmName} onChange={(e) => setConfirmName(e.target.value)} />
+            <div className="topbar-workspace-list">
+              {filtered.map((w) => (
+                <div key={w.id} className="topbar-workspace-row-wrap">
+                  <button
+                    className="topbar-workspace-row"
+                    onClick={() => handleSwitch(w.id)}
+                    disabled={switching}
+                  >
+                    <span className="topbar-workspace-row-text">
+                      <span className="topbar-workspace-row-name">{w.name}</span>
+                      <span className="topbar-workspace-row-plan">
+                        {w.plan ? w.plan[0].toUpperCase() + w.plan.slice(1) : ""}
+                      </span>
+                    </span>
+                    {w.is_active && <CheckIcon size={14} />}
+                  </button>
+                  {/* Only that workspace's own admin can manage/delete it. */}
+                  {w.role === "admin" && (
+                    <button
+                      type="button"
+                      className="topbar-workspace-row-settings"
+                      onClick={() => { setSettingsWorkspace(w); setOpen(false); }}
+                      aria-label={`${w.name} settings`}
+                      title={`${w.name} settings`}
+                    >
+                      <GearIcon size={13} />
+                    </button>
+                  )}
                 </div>
-                {deleteError && <p className="profile-modal-error">{deleteError}</p>}
-                <div style={{ display: "flex", gap: 8 }}>
+              ))}
+              {workspaces === null && !loadError && (
+                <div style={{ fontSize: 12.5, color: "var(--text-secondary)", padding: "6px 8px" }}>Loading…</div>
+              )}
+            </div>
+
+            {showCreateForm ? (
+              <form onSubmit={handleCreate} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 8 }}>
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="Workspace name"
+                  autoFocus
+                  style={{ fontSize: 13 }}
+                />
+                {createError && <div style={{ fontSize: 12, color: "var(--danger)" }}>{createError}</div>}
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button type="submit" className="primary" disabled={creating || !newName.trim()} style={{ fontSize: 13, flex: 1 }}>
+                    {creating ? "Creating…" : "Create"}
+                  </button>
                   <button
                     type="button"
-                    onClick={() => { setDeleteOpen(false); setConfirmName(""); setDeleteError(""); }}
+                    onClick={() => { setShowCreateForm(false); setNewName(""); setCreateError(""); }}
+                    style={{ fontSize: 13 }}
                   >
                     Cancel
                   </button>
-                  <button
-                    type="button"
-                    className="danger"
-                    disabled={confirmName.trim() !== savedName || deleting}
-                    onClick={handleDelete}
-                  >
-                    {deleting ? "Deleting…" : "Permanently delete"}
-                  </button>
                 </div>
-              </div>
+              </form>
+            ) : (
+              <button
+                className="topbar-workspace-create"
+                onClick={() => setShowCreateForm(true)}
+              >
+                <PlusCircleIcon />
+                Create a new workspace
+              </button>
             )}
           </div>
-        </div>
+        )}
       </div>
+
+      {settingsWorkspace && (
+        <WorkspaceSettingsModal
+          token={token}
+          workspace={settingsWorkspace}
+          onClose={() => setSettingsWorkspace(null)}
+          onWorkspaceRenamed={(updated) => {
+            setSettingsWorkspace(updated);
+            setWorkspaces((prev) => (prev || []).map((w) => (w.id === updated.id ? { ...w, ...updated } : w)));
+          }}
+          onWorkspaceDeleted={() => {
+            // Same reasoning as handleSwitch/handleCreate - workspace-scoped
+            // data is fetched all over the app keyed by token, not workspace
+            // id, so a full reload is the simplest reliable way to land on
+            // whatever workspace (or the create-workspace prompt) the
+            // account resolves to next.
+            window.location.reload();
+          }}
+        />
+      )}
     </div>
   );
 }

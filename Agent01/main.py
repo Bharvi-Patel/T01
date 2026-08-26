@@ -1397,20 +1397,17 @@ async def delete_account(
         if not req.password or not verify_password(req.password, user.password_hash):
             raise HTTPException(status_code=401, detail="Password is incorrect")
 
-    # Workspace.owner_user_id is ondelete="RESTRICT" on purpose (see db.py) -
-    # ownership transfer isn't built yet, so a user who owns a workspace
-    # can't be deleted outright. Check for that up front and fail cleanly
-    # instead of letting the DB throw an IntegrityError -> 500.
-    owned = await db.execute(select(Workspace.id).where(Workspace.owner_user_id == user_id))
-    if owned.scalars().first() is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="You own one or more workspaces. Delete or transfer ownership of them before deleting your account.",
-        )
+    # Workspace.owner_user_id now cascades (see db.py) - deleting this user
+    # deletes every workspace they own along with it, which in turn cascades
+    # to that workspace's WorkspaceMember rows, drafts, media, connections,
+    # etc. There's no ownership-transfer flow yet, so the frontend's delete-
+    # account confirmation is what's responsible for warning the user about
+    # this up front - by the time we're here, that warning has already run.
 
     # Invalidate every session for this account, then delete the user row -
     # cascades (platform_connections, drafts, oauth_identities, media_assets,
-    # auth_sessions, custom_ideas) are already declared on the User model.
+    # auth_sessions, custom_ideas, owned workspaces) are already declared on
+    # the User/Workspace models.
     await db.execute(AuthSession.__table__.delete().where(AuthSession.user_id == user_id))
     await db.delete(user)
     await db.commit()
@@ -1521,7 +1518,9 @@ async def generate(req: GenerateRequest, db: AsyncSession = Depends(get_db), use
     )
     draft_content = _parse_draft(content)
 
+    membership = await get_or_create_membership(db, user_id)
     draft = Draft(
+        workspace_id=membership.workspace_id,
         user_id=user_id,
         category=req.category,
         subtopic=req.subtopic,
@@ -1589,6 +1588,8 @@ async def create_manual_draft(
     if not body.strip():
         raise HTTPException(status_code=400, detail="body must not be empty")
 
+    membership = await get_or_create_membership(db, user_id)
+
     carousel_images = []
     for image in images:
         image_bytes = await image.read()
@@ -1627,6 +1628,7 @@ async def create_manual_draft(
     }
 
     draft = Draft(
+        workspace_id=membership.workspace_id,
         user_id=user_id,
         category=category,
         subtopic=subtopic,
@@ -1671,7 +1673,9 @@ async def upload_media(
     stored_name = f"{uuid.uuid4()}{ext}"
     (user_media_dir(user_id) / stored_name).write_bytes(file_bytes)
 
+    membership = await get_or_create_membership(db, user_id)
     asset = MediaAsset(
+        workspace_id=membership.workspace_id,
         user_id=user_id,
         kind=MediaKind.PHOTO if kind == "photo" else MediaKind.VIDEO,
         name=(name or file.filename or stored_name).strip() or stored_name,
@@ -1699,7 +1703,9 @@ async def add_media_text(
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="content must not be empty")
 
+    membership = await get_or_create_membership(db, user_id)
     asset = MediaAsset(
+        workspace_id=membership.workspace_id,
         user_id=user_id,
         kind=MediaKind.TEXT,
         name=req.name.strip() or "Untitled text",
@@ -1713,8 +1719,9 @@ async def add_media_text(
 
 @app.get("/media")
 async def list_media(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    membership = await get_or_create_membership(db, user_id)
     result = await db.execute(
-        select(MediaAsset).where(MediaAsset.user_id == user_id).order_by(MediaAsset.created_at.desc())
+        select(MediaAsset).where(MediaAsset.workspace_id == membership.workspace_id).order_by(MediaAsset.created_at.desc())
     )
     assets = result.scalars().all()
     return {"assets": [serialize_media_asset(a) for a in assets]}
@@ -1724,8 +1731,9 @@ async def list_media(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = De
 async def delete_media(
     media_id: uuid.UUID, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
 ):
+    membership = await get_or_create_membership(db, user_id)
     result = await db.execute(
-        select(MediaAsset).where(MediaAsset.id == media_id, MediaAsset.user_id == user_id)
+        select(MediaAsset).where(MediaAsset.id == media_id, MediaAsset.workspace_id == membership.workspace_id)
     )
     asset = result.scalar_one_or_none()
     if asset is None:
@@ -1808,7 +1816,7 @@ async def refresh_analytics(
         await db.execute(
             select(PublishResult)
             .join(Draft, Draft.id == PublishResult.draft_id)
-            .where(Draft.user_id == user_id, PublishResult.success.is_(True), PublishResult.published_at >= since)
+            .where(Draft.workspace_id == membership.workspace_id, PublishResult.success.is_(True), PublishResult.published_at >= since)
         )
     ).scalars().all()
 
@@ -1877,7 +1885,7 @@ async def analytics_summary(
     draft_totals = (
         await db.execute(
             select(func.count(Draft.id), func.coalesce(func.sum(Draft.word_count), 0))
-            .where(Draft.user_id == user_id, Draft.created_at >= since)
+            .where(Draft.workspace_id == membership.workspace_id, Draft.created_at >= since)
         )
     ).one()
     total_drafts, total_words = draft_totals[0], int(draft_totals[1])
@@ -1886,7 +1894,7 @@ async def analytics_summary(
     # it's whatever's sitting on the calendar right now.
     currently_scheduled = (
         await db.execute(
-            select(func.count(Draft.id)).where(Draft.user_id == user_id, Draft.status == DraftStatus.SCHEDULED)
+            select(func.count(Draft.id)).where(Draft.workspace_id == membership.workspace_id, Draft.status == DraftStatus.SCHEDULED)
         )
     ).scalar_one()
 
@@ -1894,7 +1902,7 @@ async def analytics_summary(
         await db.execute(
             select(PublishResult.platform, PublishResult.success, PublishResult.published_at, PublishResult.detail)
             .join(Draft, Draft.id == PublishResult.draft_id)
-            .where(Draft.user_id == user_id, PublishResult.published_at >= since)
+            .where(Draft.workspace_id == membership.workspace_id, PublishResult.published_at >= since)
         )
     ).all()
 
@@ -1945,7 +1953,7 @@ async def analytics_summary(
         await db.execute(
             select(Draft.category, func.count(func.distinct(Draft.id)))
             .join(PublishResult, PublishResult.draft_id == Draft.id)
-            .where(Draft.user_id == user_id, PublishResult.published_at >= since)
+            .where(Draft.workspace_id == membership.workspace_id, PublishResult.published_at >= since)
             .group_by(Draft.category)
             .order_by(func.count(func.distinct(Draft.id)).desc())
             .limit(5)
@@ -1963,7 +1971,7 @@ async def analytics_summary(
             )
             .join(Draft, Draft.id == PublishResult.draft_id)
             .join(PostEngagement, PostEngagement.publish_result_id == PublishResult.id)
-            .where(Draft.user_id == user_id, PublishResult.success.is_(True), PublishResult.published_at >= since)
+            .where(Draft.workspace_id == membership.workspace_id, PublishResult.success.is_(True), PublishResult.published_at >= since)
         )
     ).all()
 
@@ -2072,6 +2080,8 @@ async def list_drafts(
     db: AsyncSession = Depends(get_db),
     user_id: uuid.UUID = Depends(require_auth),
 ):
+    membership = await get_or_create_membership(db, user_id)
+
     # Earliest successful publish per draft — this is what "past posts" get
     # placed on the calendar by, since scheduled_at is cleared to None the
     # moment a draft actually publishes (see _publish_to_platforms).
@@ -2088,7 +2098,7 @@ async def list_drafts(
     query = (
         select(Draft, first_published_subq.c.first_published_at)
         .outerjoin(first_published_subq, first_published_subq.c.draft_id == Draft.id)
-        .where(Draft.user_id == user_id)
+        .where(Draft.workspace_id == membership.workspace_id)
         .order_by(Draft.created_at.desc())
     )
     if status:
@@ -2180,7 +2190,8 @@ async def list_drafts(
 
 @app.get("/drafts/{draft_id}")
 async def get_draft(draft_id: uuid.UUID, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
-    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.user_id == user_id))
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.workspace_id == membership.workspace_id))
     draft = result.scalar_one_or_none()
     if draft is None:
         raise HTTPException(status_code=404, detail="Unknown draft_id")
@@ -2192,7 +2203,8 @@ async def schedule_draft(
     draft_id: uuid.UUID, req: ScheduleRequest,
     db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
 ):
-    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.user_id == user_id))
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.workspace_id == membership.workspace_id))
     draft = result.scalar_one_or_none()
     if draft is None:
         raise HTTPException(status_code=404, detail="Unknown draft_id")
@@ -2211,7 +2223,6 @@ async def schedule_draft(
     if scheduled_at <= datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
 
-    membership = await get_or_create_membership(db, user_id)
     blocked = await _platforms_needing_approval(db, membership, platforms)
     if blocked:
         draft.status = DraftStatus.PENDING_APPROVAL
@@ -2254,7 +2265,8 @@ async def reschedule_draft(
 ):
     """Move an already-scheduled draft to a new date/time (e.g. calendar
     drag & drop) without needing to resend its platforms/live choice."""
-    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.user_id == user_id))
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.workspace_id == membership.workspace_id))
     draft = result.scalar_one_or_none()
     if draft is None:
         raise HTTPException(status_code=404, detail="Unknown draft_id")
@@ -2275,7 +2287,8 @@ async def reschedule_draft(
 async def unschedule_draft(
     draft_id: uuid.UUID, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
 ):
-    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.user_id == user_id))
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.workspace_id == membership.workspace_id))
     draft = result.scalar_one_or_none()
     if draft is None:
         raise HTTPException(status_code=404, detail="Unknown draft_id")
@@ -2518,7 +2531,8 @@ def _ensure_utc(dt: datetime) -> datetime:
 
 @app.post("/review")
 async def review(req: ReviewRequest, db: AsyncSession = Depends(get_db),  user_id: uuid.UUID = Depends(require_auth)):
-    result = await db.execute(select(Draft).where(Draft.id == req.draft_id))
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(select(Draft).where(Draft.id == req.draft_id, Draft.workspace_id == membership.workspace_id))
     draft = result.scalar_one_or_none()
     if draft is None:
         raise HTTPException(status_code=404, detail="Unknown or expired draft_id")
@@ -2659,13 +2673,14 @@ class CreateIdeaRequest(BaseModel):
 async def get_dashboard_ideas(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
     """Upcoming festivals/observances for the Dashboard's Ideas section,
     each turned into a lightweight content suggestion, merged with any
-    ideas the user has entered themselves via the "+ New" button
+    ideas the workspace has entered themselves via the "+ New" button
     (POST /dashboard/ideas). Auth-gated like the rest of the dashboard
     even though the Calendarific data isn't user-specific, so an
     unauthenticated caller can't use this as a free Calendarific proxy."""
+    membership = await get_or_create_membership(db, user_id)
     result = await db.execute(
         select(CustomIdea)
-        .where(CustomIdea.user_id == user_id)
+        .where(CustomIdea.workspace_id == membership.workspace_id)
         .options(selectinload(CustomIdea.attachments))
         .order_by(CustomIdea.created_at.desc())
     )
@@ -2722,6 +2737,7 @@ async def create_dashboard_idea(
 ):
     """Save a user-entered idea from the Dashboard's "+ New" button. Attach
     media afterward via POST /dashboard/ideas/{idea_id}/media."""
+    membership = await get_or_create_membership(db, user_id)
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="name must not be empty")
@@ -2736,6 +2752,7 @@ async def create_dashboard_idea(
         date_str = date_str[:10]
 
     idea = CustomIdea(
+        workspace_id=membership.workspace_id,
         user_id=user_id,
         name=name,
         date=date_str,
@@ -2755,8 +2772,9 @@ async def add_idea_media(
     user_id: uuid.UUID = Depends(require_auth),
 ):
     """Attach a photo or video to a saved idea (Dashboard "+ New" modal)."""
+    membership = await get_or_create_membership(db, user_id)
     result = await db.execute(
-        select(CustomIdea).where(CustomIdea.id == idea_id, CustomIdea.user_id == user_id)
+        select(CustomIdea).where(CustomIdea.id == idea_id, CustomIdea.workspace_id == membership.workspace_id)
     )
     idea = result.scalar_one_or_none()
     if idea is None:
@@ -2792,13 +2810,14 @@ async def delete_idea_media(
     db: AsyncSession = Depends(get_db),
     user_id: uuid.UUID = Depends(require_auth),
 ):
+    membership = await get_or_create_membership(db, user_id)
     result = await db.execute(
         select(IdeaAttachment)
         .join(CustomIdea, CustomIdea.id == IdeaAttachment.idea_id)
         .where(
             IdeaAttachment.id == attachment_id,
             IdeaAttachment.idea_id == idea_id,
-            CustomIdea.user_id == user_id,
+            CustomIdea.workspace_id == membership.workspace_id,
         )
     )
     attachment = result.scalar_one_or_none()
@@ -2817,9 +2836,10 @@ async def delete_idea_media(
 async def delete_dashboard_idea(
     idea_id: uuid.UUID, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
 ):
+    membership = await get_or_create_membership(db, user_id)
     result = await db.execute(
         select(CustomIdea)
-        .where(CustomIdea.id == idea_id, CustomIdea.user_id == user_id)
+        .where(CustomIdea.id == idea_id, CustomIdea.workspace_id == membership.workspace_id)
         .options(selectinload(CustomIdea.attachments))
     )
     idea = result.scalar_one_or_none()
@@ -2864,19 +2884,24 @@ class TodoRequest(BaseModel):
 
 @app.get("/dashboard/todos")
 async def get_dashboard_todos(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    membership = await get_or_create_membership(db, user_id)
     result = await db.execute(
-        select(CustomTodo).where(CustomTodo.user_id == user_id).order_by(CustomTodo.sort_order, CustomTodo.created_at)
+        select(CustomTodo)
+        .where(CustomTodo.workspace_id == membership.workspace_id)
+        .order_by(CustomTodo.sort_order, CustomTodo.created_at)
     )
     todos = result.scalars().all()
     if not todos:
-        # First time this user has ever loaded the Dashboard - seed the
+        # First time this workspace has ever loaded the Dashboard - seed the
         # three starter tasks so the list isn't empty, exactly like the
         # old hardcoded TODO_ITEMS used to render for everyone.
         for i, seed in enumerate(DEFAULT_TODOS):
-            db.add(CustomTodo(user_id=user_id, sort_order=i, **seed))
+            db.add(CustomTodo(workspace_id=membership.workspace_id, user_id=user_id, sort_order=i, **seed))
         await db.commit()
         result = await db.execute(
-            select(CustomTodo).where(CustomTodo.user_id == user_id).order_by(CustomTodo.sort_order, CustomTodo.created_at)
+            select(CustomTodo)
+            .where(CustomTodo.workspace_id == membership.workspace_id)
+            .order_by(CustomTodo.sort_order, CustomTodo.created_at)
         )
         todos = result.scalars().all()
     return {"todos": [serialize_todo(t) for t in todos]}
@@ -2886,14 +2911,15 @@ async def get_dashboard_todos(db: AsyncSession = Depends(get_db), user_id: uuid.
 async def create_dashboard_todo(
     req: TodoRequest, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
 ):
+    membership = await get_or_create_membership(db, user_id)
     title = req.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="title must not be empty")
     max_order = (await db.execute(
-        select(func.max(CustomTodo.sort_order)).where(CustomTodo.user_id == user_id)
+        select(func.max(CustomTodo.sort_order)).where(CustomTodo.workspace_id == membership.workspace_id)
     )).scalar()
     todo = CustomTodo(
-        user_id=user_id, title=title, body=(req.body or "").strip() or None,
+        workspace_id=membership.workspace_id, user_id=user_id, title=title, body=(req.body or "").strip() or None,
         sort_order=(max_order or 0) + 1,
     )
     db.add(todo)
@@ -2906,7 +2932,10 @@ async def create_dashboard_todo(
 async def update_dashboard_todo(
     todo_id: uuid.UUID, req: TodoRequest, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
 ):
-    result = await db.execute(select(CustomTodo).where(CustomTodo.id == todo_id, CustomTodo.user_id == user_id))
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(
+        select(CustomTodo).where(CustomTodo.id == todo_id, CustomTodo.workspace_id == membership.workspace_id)
+    )
     todo = result.scalar_one_or_none()
     if todo is None:
         raise HTTPException(status_code=404, detail="Unknown todo_id")
@@ -2925,7 +2954,10 @@ async def update_dashboard_todo(
 async def delete_dashboard_todo(
     todo_id: uuid.UUID, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
 ):
-    result = await db.execute(select(CustomTodo).where(CustomTodo.id == todo_id, CustomTodo.user_id == user_id))
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(
+        select(CustomTodo).where(CustomTodo.id == todo_id, CustomTodo.workspace_id == membership.workspace_id)
+    )
     todo = result.scalar_one_or_none()
     if todo is None:
         raise HTTPException(status_code=404, detail="Unknown todo_id")
