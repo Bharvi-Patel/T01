@@ -574,6 +574,41 @@ export async function markInboxItemRead({ token, itemId }) {
   return handle(res);
 }
 
+/*
+  Fetch the current user's in-app notifications (draft-ready, publish-failed,
+  approval-granted, weekly digest, etc). Expected backend response:
+  { items: [{ id, kind, title, body, url, is_read, created_at }], unread_count }
+ */
+export async function getNotifications({ token, unreadOnly = false } = {}) {
+  const qs = unreadOnly ? "?unread_only=true" : "";
+  const res = await fetch(`${API_BASE}/notifications${qs}`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+/*
+  Mark a single notification as read. Expected backend response:
+  { id, is_read: true }
+ */
+export async function markNotificationRead({ token, notificationId }) {
+  const res = await fetch(`${API_BASE}/notifications/${notificationId}/read`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
+/*
+  Mark every unread notification as read. Expected backend response:
+  { updated: <count> }
+ */
+export async function markAllNotificationsRead({ token }) {
+  const res = await fetch(`${API_BASE}/notifications/read-all`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
 
 
 export async function getPendingPages({ token, platform, pendingId }) {

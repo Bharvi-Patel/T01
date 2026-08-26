@@ -602,6 +602,30 @@ class NotificationPreference(Base):
     user: Mapped["User"] = relationship()
 
 
+class Notification(Base):
+    """One in-app inbox item for a single user. Populated by notify_user()
+    alongside the existing push+email send, so every existing call site
+    (draft-ready, publish-failed, approval-granted, weekly digest) starts
+    filling this automatically with no changes to those call sites. `kind`
+    reuses the same strings as NotificationPreference/PREFERENCE_FIELD.
+    `url` is where clicking the notification should take the user, if
+    anywhere. This is user-scoped (not workspace-scoped like InboxItem) -
+    notifications are about things that happened to *you*, not shared
+    workspace activity."""
+    __tablename__ = "notifications"
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+    user: Mapped["User"] = relationship()
+
+
 class PushSubscription(Base):
     """A single browser/device's Web Push subscription (one user can have
     several - e.g. phone + laptop). `endpoint` is the push service URL the

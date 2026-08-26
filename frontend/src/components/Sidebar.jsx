@@ -1,4 +1,3 @@
-
 // Sidebar.jsx
 import { useState, useRef, useEffect } from "react";
 import ProfileSettingsModal from "./ProfileSettingsModal";
@@ -81,6 +80,7 @@ export default function Sidebar({
   onAccountDeleted,
   theme,
   onSetTheme,
+  unreadNotifications = 0,
 }) {
   const [accountOpen, setAccountOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
@@ -152,9 +152,25 @@ export default function Sidebar({
             className={`sidebar-help-btn${activeStep === "notifications" ? " active" : ""}`}
             onClick={() => onNavigate("notifications")}
             data-tooltip="Notifications"
-            aria-label="Notifications"
+            aria-label={`Notifications${unreadNotifications > 0 ? ` (${unreadNotifications} unread)` : ""}`}
+            style={{ position: "relative" }}
           >
-            <Icon name="bell" size={16} />
+            <span style={{ position: "relative", display: "inline-flex" }}>
+              <Icon name="bell" size={16} />
+              {unreadNotifications > 0 && (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute", top: -4, right: -6,
+                    minWidth: 14, height: 14, padding: "0 3px",
+                    borderRadius: 7, background: "var(--accent)", color: "#fff",
+                    fontSize: 9, fontWeight: 700, lineHeight: "14px", textAlign: "center",
+                  }}
+                >
+                  {unreadNotifications > 99 ? "99+" : unreadNotifications}
+                </span>
+              )}
+            </span>
             {!collapsed && <span>Notifications</span>}
           </button>
 

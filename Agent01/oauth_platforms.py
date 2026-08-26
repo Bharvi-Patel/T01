@@ -258,6 +258,13 @@ def instagram_credentials_from_page(page: dict) -> dict:
     return {
         "page_access_token": page["access_token"],
         "ig_page_id": ig_account["id"],
+        # The Facebook Page ID (NOT ig_page_id) is what /subscribed_apps and
+        # any other Page-scoped Graph API call need - Meta rejects those
+        # calls with the IG business account id ("(#3) Application does not
+        # have the capability to make this API call", easy to misread as a
+        # permissions problem when it's actually just the wrong id type).
+        # Stored here so a later resubscribe/backfill never has to guess it.
+        "fb_page_id": page["id"],
         "profile_name": ig_account.get("username"),
         "profile_picture_url": ig_account.get("profile_picture_url"),
     }

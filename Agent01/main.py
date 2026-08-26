@@ -116,6 +116,7 @@ from db import (
     MediaAsset,
     MediaKind,
     MemberPlatformAccess,
+    Notification,
     NotificationPreference,
     OAuthIdentity,
     Platform,
@@ -3523,6 +3524,83 @@ async def mark_inbox_item_read(
     item.is_read = True
     await db.commit()
     return {"id": str(item.id), "is_read": True}
+
+
+# ---------------------------------------------------------------------------
+# In-app notifications - the sidebar bell tab. Unlike /inbox (workspace-
+# scoped: shared DM/comment activity), these are user-scoped: things that
+# happened to *you* specifically (your draft failed, your draft needs
+# approval, your weekly digest). Rows are written by notify_user() in
+# notifications.py - nothing here inserts a Notification directly.
+
+
+@app.get("/notifications")
+async def list_notifications(
+    unread_only: bool = False,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    query = select(Notification).where(Notification.user_id == user_id)
+    if unread_only:
+        query = query.where(Notification.is_read.is_(False))
+    result = await db.execute(query.order_by(Notification.created_at.desc()).limit(200))
+    items = result.scalars().all()
+
+    unread_count = (
+        await db.execute(
+            select(func.count(Notification.id)).where(
+                Notification.user_id == user_id, Notification.is_read.is_(False)
+            )
+        )
+    ).scalar_one()
+
+    return {
+        "items": [
+            {
+                "id": str(item.id),
+                "kind": item.kind,
+                "title": item.title,
+                "body": item.body,
+                "url": item.url,
+                "is_read": item.is_read,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in items
+        ],
+        "unread_count": unread_count,
+    }
+
+
+@app.patch("/notifications/{notification_id}/read")
+async def mark_notification_read(
+    notification_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    result = await db.execute(
+        select(Notification).where(Notification.id == notification_id, Notification.user_id == user_id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    item.is_read = True
+    await db.commit()
+    return {"id": str(item.id), "is_read": True}
+
+
+@app.patch("/notifications/read-all")
+async def mark_all_notifications_read(
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    result = await db.execute(
+        select(Notification).where(Notification.user_id == user_id, Notification.is_read.is_(False))
+    )
+    items = result.scalars().all()
+    for item in items:
+        item.is_read = True
+    await db.commit()
+    return {"updated": len(items)}
 
 
 # ---------------------------------------------------------------------------

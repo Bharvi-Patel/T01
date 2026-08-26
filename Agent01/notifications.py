@@ -1,14 +1,17 @@
-"""Notification delivery for the Publish page's "Mobile Notifications" tab.
+"""Notification delivery for the Publish page's "Mobile Notifications" tab
+and the sidebar's in-app Notifications inbox.
 
-Two channels, sent together whenever a notification fires:
+Three channels, all written/sent together whenever a notification fires:
+  - In-app inbox row (see Notification) - what GET /notifications reads.
   - Web Push, to every browser/device the user has subscribed (see
     PushSubscription) - this is the actual "mobile push" the UI promises.
   - Email, to the user's account email if they have one - a fallback that
     reaches them even with no push subscription registered.
 
-Both are gated per-kind by NotificationPreference. This module is the only
-place that should call pywebpush or emailer.send_email for a notification
-purpose - everywhere else just calls notify_user(...).
+All three are gated per-kind by NotificationPreference. This module is the
+only place that should call pywebpush or emailer.send_email for a
+notification purpose, and the only place that should insert a Notification
+row - everywhere else just calls notify_user(...).
 
 Requires VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY in .env for push to actually
 send (generate a pair with `python -m py_vapid --gen` from the pywebpush
@@ -28,7 +31,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from db import Draft, DraftStatus, NotificationPreference, PushSubscription, User
+from db import Draft, DraftStatus, Notification, NotificationPreference, PushSubscription, User
 from emailer import send_email
 
 load_dotenv(override=True)
@@ -99,16 +102,20 @@ def _send_push_sync(subscription: PushSubscription, title: str, body: str, url: 
 
 
 async def notify_user(db: AsyncSession, user_id, kind: str, title: str, body: str, url: str | None = None) -> None:
-    """Send `title`/`body` to `user_id` via push + email, if they have
-    `kind` enabled. Never raises - a notification failure should never take
-    down the /generate or publish flow that triggered it. One dead/
-    unreachable push subscription is isolated to itself: it never blocks
-    delivery to the user's other devices or to email."""
+    """Send `title`/`body` to `user_id` via in-app inbox + push + email, if
+    they have `kind` enabled. Never raises - a notification failure should
+    never take down the /generate or publish flow that triggered it. One
+    dead/unreachable push subscription is isolated to itself: it never
+    blocks delivery to the user's other devices, to email, or to the
+    in-app inbox row (which is written first and committed on its own)."""
     try:
         field = PREFERENCE_FIELD[kind]
         prefs = await get_or_create_notification_prefs(db, user_id)
         if not getattr(prefs, field):
             return
+
+        db.add(Notification(user_id=user_id, kind=kind, title=title, body=body, url=url))
+        await db.commit()
 
         result = await db.execute(select(PushSubscription).where(PushSubscription.user_id == user_id))
         subscriptions = result.scalars().all()

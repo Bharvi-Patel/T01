@@ -17,10 +17,11 @@ import SidePanel from "./components/SidePanel";
 import Calendar from "./components/Calendar";
 import Analytics, { RANGE_OPTIONS } from "./components/Analytics";
 import Inbox, { KIND_TABS } from "./components/Inbox";
+import Notifications from "./components/Notifications";
 import HelpCenter from "./components/HelpCenter";
 import Members from "./components/Members";
 import { MODE_TABS } from "./components/Form";
-import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft, getProfile, getWorkspace } from "./api";
+import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft, getProfile, getWorkspace, getNotifications } from "./api";
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem("auth_token"));
@@ -36,6 +37,7 @@ export default function App() {
 
   const [connections, setConnections] = useState({}); // { linkedin: { profile_name, profile_picture_url }, ... } — key present means connected
   const [profile, setProfile] = useState(null); // { username, email, avatar_url, timezone, ... } — the logged-in user's own account, from GET /me
+  const [unreadNotifications, setUnreadNotifications] = useState(0); // badge count for the sidebar bell
   // Workspaces are never auto-generated server-side - a brand new account
   // has none until they go through CreateWorkspacePrompt. null = haven't
   // checked yet (don't flash the prompt while this is still loading).
@@ -107,6 +109,21 @@ export default function App() {
   }
 
   useEffect(refreshConnections, [token, step]);
+
+  // Polls just the unread count (not the full list) so the bell badge stays
+  // current even while the user is off on another tab. Notifications.jsx
+  // does its own richer polling once the tab is actually open.
+  useEffect(() => {
+    if (!token) { setUnreadNotifications(0); return; }
+    function poll() {
+      getNotifications({ token, unreadOnly: true })
+        .then((res) => setUnreadNotifications(res.unread_count ?? 0))
+        .catch(() => {});
+    }
+    poll();
+    const interval = setInterval(poll, 30000);
+    return () => clearInterval(interval);
+  }, [token]);
 
   function refreshProfile() {
     if (!token) { setProfile(null); return; }
@@ -422,6 +439,7 @@ export default function App() {
         onAccountDeleted={handleAccountDeleted}
         theme={theme}
         onSetTheme={setThemeState}
+        unreadNotifications={unreadNotifications}
       />
 
       {step === "publish" && (
@@ -541,10 +559,14 @@ export default function App() {
             <Members token={token} onAuthError={handleLogout} profile={profile} />
           )}
 
-          {["billing", "notifications"].includes(step) && (
+          {step === "notifications" && (
+            <Notifications token={token} onAuthError={handleLogout} onUnreadCountChange={setUnreadNotifications} />
+          )}
+
+          {step === "billing" && (
             <div style={{ padding: "3rem 0", textAlign: "center", color: "var(--text-secondary)" }}>
               <p style={{ fontFamily: "var(--font-display)", fontSize: "22px", color: "var(--ink)", marginBottom: 8 }}>
-                {{ billing: "Billing", notifications: "Notifications" }[step]}
+                Billing
               </p>
               <p>This section is coming soon.</p>
             </div>
