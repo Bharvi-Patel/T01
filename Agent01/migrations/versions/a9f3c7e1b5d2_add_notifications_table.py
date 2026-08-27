@@ -5,8 +5,8 @@ placeholder. notify_user() now writes a row here alongside its existing
 push+email send, so every existing call site (draft-ready, publish-failed,
 approval-granted, weekly digest) starts populating the inbox automatically.
 
-Revision ID: a1b2c3d4e5f6
-Revises: f1a2b3c4d5e6
+Revision ID: a9f3c7e1b5d2
+Revises: d5e6f7a8b9c0
 Create Date: 2026-08-26 00:00:00.000000
 
 """
@@ -17,8 +17,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'a1b2c3d4e5f6'
-down_revision: Union[str, Sequence[str], None] = 'f1a2b3c4d5e6'
+revision: str = 'a9f3c7e1b5d2'
+down_revision: Union[str, Sequence[str], None] = 'd5e6f7a8b9c0'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
