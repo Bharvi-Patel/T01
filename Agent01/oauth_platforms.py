@@ -216,6 +216,46 @@ def _subscribe_page_to_webhooks(page_id: str, page_access_token: str, fields: st
     _attempt(requested)
 
 
+def send_page_message(page_access_token: str, recipient_id: str, text: str) -> str:
+    """Sends a text DM reply on behalf of a connected Facebook Page or its
+    linked Instagram account, via Meta's unified Send API - the same
+    /me/messages endpoint handles both Messenger and Instagram Direct,
+    whichever platform's page_access_token is passed in. `recipient_id` is
+    the sender's platform-scoped id from the original inbound message
+    (InboxItem.sender_external_id) - Meta uses that same id as the
+    recipient for a reply, not the Page/IG account's own id.
+
+    "RESPONSE" messaging_type marks this as a reply to a user-initiated
+    conversation (as opposed to a business-initiated one), which is the
+    correct type for anything sent through the app's inbox rather than an
+    outbound campaign - using the wrong type here is a policy violation on
+    Meta's side, not just a technical detail.
+
+    Raises ValueError with Meta's own error message on failure, so the
+    caller can surface something meaningful to the user instead of a
+    generic 500 - unlike the best-effort webhook subscription above, a
+    reply the user explicitly asked to send should fail loudly if it
+    didn't actually go out.
+    """
+    resp = requests.post(
+        "https://graph.facebook.com/v21.0/me/messages",
+        params={"access_token": page_access_token},
+        json={
+            "recipient": {"id": recipient_id},
+            "messaging_type": "RESPONSE",
+            "message": {"text": text},
+        },
+        timeout=15,
+    )
+    if not resp.ok:
+        try:
+            err_msg = resp.json().get("error", {}).get("message", resp.text)
+        except ValueError:
+            err_msg = resp.text
+        raise ValueError(f"Meta rejected the reply: {err_msg}")
+    return resp.json().get("message_id", "")
+
+
 def facebook_credentials_from_page(page: dict) -> dict:
     _subscribe_page_to_webhooks(page["id"], page["access_token"], "feed,messages")
     return {
@@ -349,7 +389,7 @@ def threads_authorize_url(state: str) -> str:
     return (
         "https://www.threads.com/oauth/authorize"
         f"?client_id={THREADS_CLIENT_ID}&redirect_uri={_redirect_uri('threads')}"
-        f"&scope=threads_basic,threads_content_publish&response_type=code&state={state}"
+        f"&scope=threads_basic,threads_content_publish,threads_manage_insights&response_type=code&state={state}"
     )
 
 

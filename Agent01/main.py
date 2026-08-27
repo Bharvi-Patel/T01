@@ -44,7 +44,7 @@ from oauth_platforms import (
     instagram_fetch_media, facebook_fetch_posts, threads_fetch_posts,
     facebook_fetch_follower_count, instagram_fetch_follower_count, threads_fetch_follower_count,
     facebook_fetch_post_engagement, instagram_fetch_post_engagement,
-    threads_fetch_post_engagement, linkedin_fetch_post_engagement,
+    threads_fetch_post_engagement, linkedin_fetch_post_engagement, send_page_message,
 )
 
 PENDING_PAGE_SELECTIONS: dict[str, dict] = {} # pending_id -> {"user_id","platform","pages","expires_at"}
@@ -3486,7 +3486,7 @@ async def list_inbox(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = De
     membership = await get_or_create_membership(db, user_id)
     result = await db.execute(
         select(InboxItem)
-        .where(InboxItem.workspace_id == membership.workspace_id)
+        .where(InboxItem.workspace_id == membership.workspace_id, InboxItem.deleted_at.is_(None))
         .order_by(InboxItem.created_at.desc())
         .limit(200)
     )
@@ -3501,6 +3501,7 @@ async def list_inbox(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = De
                 "sender_name": item.sender_name,
                 "body": item.body,
                 "is_read": item.is_read,
+                "is_outbound": item.is_outbound,
                 "created_at": item.created_at.isoformat(),
             }
             for item in items
@@ -3524,6 +3525,111 @@ async def mark_inbox_item_read(
     item.is_read = True
     await db.commit()
     return {"id": str(item.id), "is_read": True}
+
+
+class InboxReplyRequest(BaseModel):
+    text: str
+
+
+@app.post("/inbox/{item_id}/reply")
+async def reply_to_inbox_item(
+    item_id: uuid.UUID,
+    body: InboxReplyRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """Sends a real DM reply back through Meta's Send API on behalf of the
+    connected Page/Instagram account, then records the reply as its own
+    InboxItem (is_outbound=True) so the thread view shows a real
+    conversation. Only message-kind items are reply-able - comments and
+    mentions aren't part of a DM thread and use a different, unbuilt Graph
+    API surface (comment replies), so those are rejected here rather than
+    silently failing against the wrong endpoint."""
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Reply text can't be empty")
+
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(
+        select(InboxItem).where(
+            InboxItem.id == item_id,
+            InboxItem.workspace_id == membership.workspace_id,
+            InboxItem.deleted_at.is_(None),
+        )
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Inbox item not found")
+    if item.kind != InboxKind.MESSAGE:
+        raise HTTPException(status_code=400, detail="Only messages can be replied to here")
+    if not item.sender_external_id:
+        raise HTTPException(status_code=400, detail="This message has no known sender to reply to")
+
+    conn_result = await db.execute(
+        select(PlatformConnection.credentials).where(
+            PlatformConnection.workspace_id == membership.workspace_id,
+            PlatformConnection.platform == item.platform,
+        )
+    )
+    row = conn_result.first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"{item.platform.value} isn't connected")
+    page_access_token = decrypt_secret(dict(row[0] or {})["page_access_token"])
+
+    try:
+        message_id = await run_in_threadpool(send_page_message, page_access_token, item.sender_external_id, text)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    reply_item = InboxItem(
+        workspace_id=membership.workspace_id,
+        platform=item.platform,
+        kind=InboxKind.MESSAGE,
+        external_id=message_id or f"outbound_{uuid.uuid4()}",
+        thread_id=item.thread_id,
+        sender_name="You",
+        sender_external_id=None,
+        body=text,
+        is_read=True,
+        is_outbound=True,
+        raw_payload={},
+    )
+    db.add(reply_item)
+    await db.commit()
+    await db.refresh(reply_item)
+
+    return {
+        "id": str(reply_item.id),
+        "platform": reply_item.platform.value,
+        "kind": reply_item.kind.value,
+        "thread_id": reply_item.thread_id,
+        "sender_name": reply_item.sender_name,
+        "body": reply_item.body,
+        "is_read": reply_item.is_read,
+        "is_outbound": reply_item.is_outbound,
+        "created_at": reply_item.created_at.isoformat(),
+    }
+
+
+@app.delete("/inbox/{item_id}")
+async def delete_inbox_item(
+    item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """Soft-delete only (sets deleted_at) - see the InboxItem model
+    docstring for why a hard delete would let a webhook redelivery of the
+    same external_id silently resurrect a deliberately-deleted item."""
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(
+        select(InboxItem).where(InboxItem.id == item_id, InboxItem.workspace_id == membership.workspace_id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Inbox item not found")
+    item.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"id": str(item.id), "deleted": True}
 
 
 # ---------------------------------------------------------------------------

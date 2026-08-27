@@ -575,6 +575,33 @@ export async function markInboxItemRead({ token, itemId }) {
 }
 
 /*
+  Send a DM reply through the connected Page/Instagram account. Only valid
+  for kind: "message" items - the backend rejects comments/mentions since
+  those need a different (unbuilt) Graph API surface. Expected response:
+  { id, platform, kind, thread_id, sender_name, body, is_read, is_outbound, created_at }
+ */
+export async function replyToInboxItem({ token, itemId, text }) {
+  const res = await fetch(`${API_BASE}/inbox/${itemId}/reply`, {
+    method: "POST",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  return handle(res);
+}
+
+/*
+  Delete (soft-delete) a single inbox item. Expected response:
+  { id, deleted: true }
+ */
+export async function deleteInboxItem({ token, itemId }) {
+  const res = await fetch(`${API_BASE}/inbox/${itemId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  return handle(res);
+}
+
+/*
   Fetch the current user's in-app notifications (draft-ready, publish-failed,
   approval-granted, weekly digest, etc). Expected backend response:
   { items: [{ id, kind, title, body, url, is_read, created_at }], unread_count }

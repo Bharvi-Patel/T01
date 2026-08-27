@@ -573,6 +573,16 @@ class InboxItem(Base):
     sender_external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # True for a reply the business sent back through T01 (see
+    # /inbox/{id}/reply); False (the default) for everything received via
+    # webhook. Lets the thread view show a real back-and-forth conversation
+    # instead of only ever showing what came in.
+    is_outbound: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Soft-delete: set by DELETE /inbox/{id} instead of removing the row,
+    # so a webhook redelivery of the same external_id (see the
+    # UniqueConstraint above) can't resurrect something the user
+    # deliberately deleted from their inbox.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     raw_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { getInbox, markInboxItemRead } from "../api";
+import { getInbox, markInboxItemRead, replyToInboxItem, deleteInboxItem } from "../api";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
 // LinkedIn has no comment/message API access (see engineering notes) so it
@@ -34,57 +34,120 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-function InboxItemCard({ item, onMarkRead }) {
+function InboxItemCard({ item, isExpanded, onToggleExpand, onDelete, onReply }) {
   const platform = INBOX_PLATFORMS.find((p) => p.key === item.platform);
+  const [replyText, setReplyText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [replyError, setReplyError] = useState(null);
+
+  // Only inbound messages (not comments/mentions/story replies, and not
+  // an outbound reply itself) can be replied to - matches the backend's
+  // POST /inbox/{id}/reply restriction exactly, so there's never a Send
+  // button here that would just 400 if clicked.
+  const canReply = item.kind === "message" && !item.is_outbound;
+
+  function handleSend() {
+    const text = replyText.trim();
+    if (!text || sending) return;
+    setSending(true);
+    setReplyError(null);
+    onReply(item.id, text)
+      .then(() => setReplyText(""))
+      .catch((e) => setReplyError(e.message || "Failed to send reply"))
+      .finally(() => setSending(false));
+  }
+
   return (
     <div
-      onClick={() => !item.is_read && onMarkRead(item.id)}
       style={{
-        display: "flex",
-        gap: 12,
-        alignItems: "flex-start",
-        padding: "12px 14px",
         borderRadius: 8,
-        background: item.is_read ? "var(--paper-raised)" : "var(--paper)",
-        border: item.is_read ? "0.5px solid var(--border)" : "1.5px solid var(--accent)",
-        cursor: item.is_read ? "default" : "pointer",
+        background: item.is_outbound ? "var(--accent-subtle, var(--paper-raised))" : (item.is_read ? "var(--paper-raised)" : "var(--paper)"),
+        border: item.is_read || item.is_outbound ? "0.5px solid var(--border)" : "1.5px solid var(--accent)",
+        overflow: "hidden",
       }}
     >
       <div
-        style={{
-          width: 30, height: 30, borderRadius: "50%", flexShrink: 0,
-          background: "var(--border)", display: "flex", alignItems: "center", justifyContent: "center",
-        }}
+        onClick={() => { if (!item.is_read) onToggleExpand(item.id, true); else onToggleExpand(item.id); }}
+        style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 14px", cursor: "pointer" }}
       >
-        {platform ? <PlatformLogo platform={platform} size={15} /> : null}
+        <div
+          style={{
+            width: 30, height: 30, borderRadius: "50%", flexShrink: 0,
+            background: "var(--border)", display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          {platform ? <PlatformLogo platform={platform} size={15} /> : null}
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+            <span style={{ fontSize: 13, fontWeight: item.is_read ? 400 : 600, color: "var(--ink)" }}>
+              {item.sender_name || "Unknown"}
+            </span>
+            <span
+              style={{
+                fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.3,
+                color: "var(--text-muted)", background: "var(--border)",
+                borderRadius: 4, padding: "1px 6px",
+              }}
+            >
+              {item.is_outbound ? "Reply sent" : (KIND_LABELS[item.kind] || item.kind)}
+            </span>
+            {!item.is_read && (
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", flexShrink: 0 }} />
+            )}
+          </div>
+          <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0, wordBreak: "break-word" }}>
+            {item.body || <em>No text content</em>}
+          </p>
+        </div>
+
+        <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0, whiteSpace: "nowrap" }}>
+          {timeAgo(item.created_at)}
+        </span>
       </div>
 
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
-          <span style={{ fontSize: 13, fontWeight: item.is_read ? 400 : 600, color: "var(--ink)" }}>
-            {item.sender_name || "Unknown"}
-          </span>
-          <span
+      {isExpanded && (
+        <div style={{ padding: "0 14px 14px 56px", display: "flex", flexDirection: "column", gap: 8 }}>
+          {canReply && (
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="text"
+                placeholder="Type a reply…"
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
+                disabled={sending}
+                style={{
+                  flex: 1, fontSize: 13, padding: "7px 10px",
+                  border: "0.5px solid var(--border-strong)", borderRadius: 6,
+                  background: "var(--paper)", color: "var(--ink)",
+                }}
+              />
+              <button
+                onClick={handleSend}
+                disabled={sending || !replyText.trim()}
+                style={{ width: "auto", fontSize: 12.5, padding: "0 14px" }}
+              >
+                {sending ? "Sending…" : "Send"}
+              </button>
+            </div>
+          )}
+          {replyError && (
+            <p style={{ fontSize: 12, color: "var(--danger)", margin: 0 }}>{replyError}</p>
+          )}
+          <button
+            onClick={() => onDelete(item.id)}
             style={{
-              fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.3,
-              color: "var(--text-muted)", background: "var(--border)",
-              borderRadius: 4, padding: "1px 6px",
+              width: "auto", alignSelf: "flex-start", fontSize: 12, padding: "4px 10px",
+              border: "0.5px solid var(--border-strong)", borderRadius: 6,
+              background: "transparent", color: "var(--text-muted)",
             }}
           >
-            {KIND_LABELS[item.kind] || item.kind}
-          </span>
-          {!item.is_read && (
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", flexShrink: 0 }} />
-          )}
+            Delete
+          </button>
         </div>
-        <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0, wordBreak: "break-word" }}>
-          {item.body || <em>No text content</em>}
-        </p>
-      </div>
-
-      <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0, whiteSpace: "nowrap" }}>
-        {timeAgo(item.created_at)}
-      </span>
+      )}
     </div>
   );
 }
@@ -99,6 +162,7 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
   const [platformFilter, setPlatformFilter] = useState("all");
   const [pendingOnly, setPendingOnly] = useState(false);
   const [search, setSearch] = useState("");
+  const [expandedId, setExpandedId] = useState(null);
 
   // Same segmented "All / [connected account]" pill bar Calendar uses,
   // scoped to platforms that can actually appear in inbox data.
@@ -133,6 +197,27 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
     // Optimistic — flip locally right away, reconcile silently if it fails.
     setItems((prev) => prev.map((i) => (i.id === itemId ? { ...i, is_read: true } : i)));
     markInboxItemRead({ token, itemId }).catch(() => load());
+  }
+
+  // markRead=true is passed the first time an unread item is clicked, so
+  // opening it both expands the card and clears its unread dot in one
+  // click, instead of needing a second click to mark it read.
+  function handleToggleExpand(itemId, markRead = false) {
+    if (markRead) handleMarkRead(itemId);
+    setExpandedId((prev) => (prev === itemId ? null : itemId));
+  }
+
+  function handleReply(itemId, text) {
+    return replyToInboxItem({ token, itemId, text }).then((reply) => {
+      setItems((prev) => [reply, ...prev]);
+    });
+  }
+
+  function handleDelete(itemId) {
+    // Optimistic — remove locally right away, reconcile silently if it fails.
+    setItems((prev) => prev.filter((i) => i.id !== itemId));
+    setExpandedId((prev) => (prev === itemId ? null : prev));
+    deleteInboxItem({ token, itemId }).catch(() => load());
   }
 
   const filtered = useMemo(() => {
@@ -256,7 +341,14 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {filtered.map((item) => (
-            <InboxItemCard key={item.id} item={item} onMarkRead={handleMarkRead} />
+            <InboxItemCard
+              key={item.id}
+              item={item}
+              isExpanded={expandedId === item.id}
+              onToggleExpand={handleToggleExpand}
+              onReply={handleReply}
+              onDelete={handleDelete}
+            />
           ))}
         </div>
       )}
