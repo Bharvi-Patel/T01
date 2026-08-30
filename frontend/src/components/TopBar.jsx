@@ -38,7 +38,7 @@ function GearIcon({ size = 14 }) {
   );
 }
 
-export default function TopBar({ token, onAuthError }) {
+export default function TopBar({ token, onAuthError, widthClass = "" }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [workspaces, setWorkspaces] = useState(null); // null = not loaded yet
@@ -117,6 +117,7 @@ export default function TopBar({ token, onAuthError }) {
 
   return (
     <div className="topbar">
+      <div className={`topbar-inner${widthClass ? " " + widthClass : ""}`}>
       <div className="topbar-workspace-wrap" ref={wrapRef}>
         <button className="topbar-workspace" onClick={() => setOpen((o) => !o)}>
           <span className="topbar-workspace-text">
@@ -212,6 +213,7 @@ export default function TopBar({ token, onAuthError }) {
             )}
           </div>
         )}
+      </div>
       </div>
 
       {settingsWorkspace && (
