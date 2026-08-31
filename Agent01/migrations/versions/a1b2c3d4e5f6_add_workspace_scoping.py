@@ -58,8 +58,8 @@ def upgrade() -> None:
     # SQLAlchemy's Enum(SomePyEnum) binds each member by its .name (e.g.
     # "ADMIN"), not its .value ("admin") - see c1c875d2cf6b's docstring for
     # where this project already got bitten by that once before.
-    workspace_role_enum = postgresql.ENUM("ADMIN", "MEMBER", name="workspace_role_enum")
-    access_level_enum = postgresql.ENUM("FULL", "NEEDS_APPROVAL", name="access_level_enum")
+    workspace_role_enum = postgresql.ENUM("ADMIN", "MEMBER", name="workspace_role_enum", create_type=False)
+    access_level_enum = postgresql.ENUM("FULL", "NEEDS_APPROVAL", name="access_level_enum", create_type=False)
     workspace_role_enum.create(bind, checkfirst=True)
     access_level_enum.create(bind, checkfirst=True)
     platform_enum = postgresql.ENUM(name="platform_enum", create_type=False)

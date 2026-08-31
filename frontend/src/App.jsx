@@ -463,7 +463,7 @@ export default function App() {
       )}
 
       <div className="main-panel" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <TopBar token={token} onAuthError={handleLogout} />
+        <TopBar token={token} onAuthError={handleLogout} widthClass={step === "publish" || step === "dashboard" ? "is-wide" : step === "calendar" ? "is-wider-calendar" : ""} />
         <button
           className="mobile-menu-button"
           onClick={() => setMobileMenuOpen(true)}
@@ -483,7 +483,7 @@ export default function App() {
           </button>
         )}
 
-        <div className={`page-container${step === "publish" ? " is-wide" : step === "calendar" ? " is-wider-calendar" : ""}`}>
+        <div className={`page-container${step === "publish" || step === "dashboard" ? " is-wide" : step === "calendar" ? " is-wider-calendar" : ""}`}>
           {step === "dashboard" && (
             <Dashboard
               token={token}
