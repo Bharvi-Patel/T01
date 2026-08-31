@@ -40,11 +40,16 @@ function InboxItemCard({ item, isExpanded, onToggleExpand, onDelete, onReply }) 
   const [sending, setSending] = useState(false);
   const [replyError, setReplyError] = useState(null);
 
-  // Only inbound messages (not comments/mentions/story replies, and not
-  // an outbound reply itself) can be replied to - matches the backend's
-  // POST /inbox/{id}/reply restriction exactly, so there's never a Send
-  // button here that would just 400 if clicked.
-  const canReply = item.kind === "message" && !item.is_outbound;
+  // Matches the backend's POST /inbox/{id}/reply restriction exactly, so
+  // there's never a Send button here that would just 400 if clicked:
+  // inbound messages (any platform) are reply-able via Meta's Send API,
+  // and inbound comments/mentions on Threads specifically are reply-able
+  // too (a public reply, via Threads' own container/publish flow) -
+  // Threads has no DMs, so "message" never applies there. Other platforms'
+  // comments/mentions/story replies, and any outbound item, aren't
+  // reply-able yet.
+  const isThreadsReply = item.platform === "threads" && (item.kind === "comment" || item.kind === "mention");
+  const canReply = !item.is_outbound && (item.kind === "message" || isThreadsReply);
 
   function handleSend() {
     const text = replyText.trim();

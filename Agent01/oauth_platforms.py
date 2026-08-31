@@ -256,6 +256,56 @@ def send_page_message(page_access_token: str, recipient_id: str, text: str) -> s
     return resp.json().get("message_id", "")
 
 
+def reply_to_thread(access_token: str, threads_user_id: str, reply_to_id: str, text: str) -> str:
+    """Posts a public reply to an existing Threads post or reply, on behalf
+    of the connected Threads profile. Unlike Meta's Send API (used for FB/IG
+    DMs above), Threads has no private-messaging surface - a "reply" here is
+    itself a new, publicly visible Threads post, created via the same
+    two-step container flow as a top-level post (see Agent.py's
+    publish_threads), just with `reply_to_id` set so Threads attaches it
+    under the post/reply being answered instead of posting standalone.
+
+    `reply_to_id` is the platform id of the reply/mention being answered
+    (InboxItem.external_id) - this is what threads_manage_replies actually
+    gates: without it, both the container-creation and publish calls below
+    are rejected by Meta.
+
+    Raises ValueError with Meta's own error message on failure, mirroring
+    send_page_message's behavior for a user-initiated action that should
+    fail loudly rather than silently.
+    """
+    container_resp = requests.post(
+        f"https://graph.threads.net/v1.0/{threads_user_id}/threads",
+        data={
+            "media_type": "TEXT",
+            "text": text,
+            "reply_to_id": reply_to_id,
+            "access_token": access_token,
+        },
+        timeout=15,
+    )
+    if not container_resp.ok:
+        try:
+            err_msg = container_resp.json().get("error", {}).get("message", container_resp.text)
+        except ValueError:
+            err_msg = container_resp.text
+        raise ValueError(f"Meta rejected the reply: {err_msg}")
+    creation_id = container_resp.json()["id"]
+
+    publish_resp = requests.post(
+        f"https://graph.threads.net/v1.0/{threads_user_id}/threads_publish",
+        data={"creation_id": creation_id, "access_token": access_token},
+        timeout=15,
+    )
+    if not publish_resp.ok:
+        try:
+            err_msg = publish_resp.json().get("error", {}).get("message", publish_resp.text)
+        except ValueError:
+            err_msg = publish_resp.text
+        raise ValueError(f"Meta rejected the reply: {err_msg}")
+    return publish_resp.json().get("id", "")
+
+
 def facebook_credentials_from_page(page: dict) -> dict:
     _subscribe_page_to_webhooks(page["id"], page["access_token"], "feed,messages")
     return {

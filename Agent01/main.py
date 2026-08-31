@@ -45,6 +45,7 @@ from oauth_platforms import (
     facebook_fetch_follower_count, instagram_fetch_follower_count, threads_fetch_follower_count,
     facebook_fetch_post_engagement, instagram_fetch_post_engagement,
     threads_fetch_post_engagement, linkedin_fetch_post_engagement, send_page_message,
+    reply_to_thread,
 )
 
 PENDING_PAGE_SELECTIONS: dict[str, dict] = {} # pending_id -> {"user_id","platform","pages","expires_at"}
@@ -3538,12 +3539,19 @@ async def reply_to_inbox_item(
     db: AsyncSession = Depends(get_db),
     user_id: uuid.UUID = Depends(require_auth),
 ):
-    """Sends a real DM reply back through Meta's Send API on behalf of the
-    connected Page/Instagram account, then records the reply as its own
-    InboxItem (is_outbound=True) so the thread view shows a real
-    conversation. Only message-kind items are reply-able - comments and
-    mentions aren't part of a DM thread and use a different, unbuilt Graph
-    API surface (comment replies), so those are rejected here rather than
+    """Sends a real reply back on behalf of the connected account, then
+    records the reply as its own InboxItem (is_outbound=True) so the thread
+    view shows a real conversation.
+
+    Two distinct reply surfaces are dispatched from here:
+      - MESSAGE-kind items (Facebook/Instagram DMs) go through Meta's Send
+        API (send_page_message) - a private reply to the original sender.
+      - COMMENT-kind items on Threads (a public reply to one of the
+        connected profile's posts) go through Threads' own container/publish
+        flow (reply_to_thread) - the reply itself becomes a new, publicly
+        visible Threads post attached under the original.
+    Any other combination (e.g. Facebook/Instagram comments, which use a
+    different, unbuilt Graph API surface) is rejected here rather than
     silently failing against the wrong endpoint."""
     text = body.text.strip()
     if not text:
@@ -3560,10 +3568,10 @@ async def reply_to_inbox_item(
     item = result.scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=404, detail="Inbox item not found")
-    if item.kind != InboxKind.MESSAGE:
-        raise HTTPException(status_code=400, detail="Only messages can be replied to here")
-    if not item.sender_external_id:
-        raise HTTPException(status_code=400, detail="This message has no known sender to reply to")
+
+    is_threads_reply = item.platform == Platform.THREADS and item.kind in (InboxKind.COMMENT, InboxKind.MENTION)
+    if item.kind != InboxKind.MESSAGE and not is_threads_reply:
+        raise HTTPException(status_code=400, detail="This item can't be replied to here")
 
     conn_result = await db.execute(
         select(PlatformConnection.credentials).where(
@@ -3574,17 +3582,31 @@ async def reply_to_inbox_item(
     row = conn_result.first()
     if not row:
         raise HTTPException(status_code=404, detail=f"{item.platform.value} isn't connected")
-    page_access_token = decrypt_secret(dict(row[0] or {})["page_access_token"])
+    creds = dict(row[0] or {})
 
-    try:
-        message_id = await run_in_threadpool(send_page_message, page_access_token, item.sender_external_id, text)
-    except ValueError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    if is_threads_reply:
+        access_token = decrypt_secret(creds["access_token"])
+        try:
+            message_id = await run_in_threadpool(
+                reply_to_thread, access_token, creds["threads_user_id"], item.external_id, text
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        reply_kind = InboxKind.COMMENT
+    else:
+        if not item.sender_external_id:
+            raise HTTPException(status_code=400, detail="This message has no known sender to reply to")
+        page_access_token = decrypt_secret(creds["page_access_token"])
+        try:
+            message_id = await run_in_threadpool(send_page_message, page_access_token, item.sender_external_id, text)
+        except ValueError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        reply_kind = InboxKind.MESSAGE
 
     reply_item = InboxItem(
         workspace_id=membership.workspace_id,
         platform=item.platform,
-        kind=InboxKind.MESSAGE,
+        kind=reply_kind,
         external_id=message_id or f"outbound_{uuid.uuid4()}",
         thread_id=item.thread_id,
         sender_name="You",
