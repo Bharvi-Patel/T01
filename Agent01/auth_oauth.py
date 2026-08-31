@@ -25,6 +25,10 @@ GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 X_CLIENT_ID = os.environ.get("X_CLIENT_ID")
 X_CLIENT_SECRET = os.environ.get("X_CLIENT_SECRET")
+# Config ID from Facebook Login for Business > Configurations - required
+# because this app is Business-type and the classic scope= login param is
+# rejected with "Invalid Scopes: email" for that app type.
+META_LOGIN_CONFIG_ID = os.environ.get("META_LOGIN_CONFIG_ID")
 
 
 def _redirect_uri(provider: str) -> str:
@@ -124,10 +128,24 @@ def linkedin_login_finish(code: str) -> dict:
 # oauth_platforms.py's connector flow requests)
 
 def facebook_login_authorize_url(state: str) -> str:
+    # Business-type apps (which this app is, since it already uses the Meta
+    # Page/Instagram/Threads connector flow) don't support the classic
+    # scope= parameter for login - the app only has "Facebook Login for
+    # Business", which requires a config_id created in the App Dashboard's
+    # Facebook Login for Business > Configurations panel instead. Passing
+    # scope= alone here is what produced "Invalid Scopes: email".
+    #
+    # Meta's docs say public_profile/email are granted automatically once
+    # the config has at least one other permission (pages_show_list here),
+    # but in practice the issued token came back with no email grant at
+    # all. Meta's own docs say scope= can still be passed alongside
+    # config_id (just not recommended as the primary mechanism) - adding
+    # it explicitly here to force the grant since the "automatic" behavior
+    # wasn't actually happening.
     return (
         "https://www.facebook.com/v21.0/dialog/oauth"
         f"?client_id={META_APP_ID}&redirect_uri={_redirect_uri('facebook')}&state={state}"
-        "&scope=public_profile,email"
+        f"&config_id={META_LOGIN_CONFIG_ID}&response_type=code"
     )
 
 
@@ -144,6 +162,7 @@ def facebook_login_finish(code: str) -> dict:
     )
     resp.raise_for_status()
     access_token = resp.json()["access_token"]
+    print("[facebook_login_finish] access_token:", access_token, flush=True)
 
     profile = requests.get(
         "https://graph.facebook.com/me",
@@ -152,6 +171,11 @@ def facebook_login_finish(code: str) -> dict:
     )
     profile.raise_for_status()
     info = profile.json()
+    # TEMP DEBUG - remove once email/name are confirmed working. Prints the
+    # raw /me payload so we can see whether Meta is omitting name/email
+    # entirely (account has no verified email / token scope issue) versus
+    # our code mishandling a response that does contain them.
+    print("[facebook_login_finish] raw /me response:", info, flush=True)
     return {
         "provider_user_id": info["id"],
         "email": info.get("email"),

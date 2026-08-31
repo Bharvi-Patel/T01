@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { suggestHashtags } from "../api";
 import { EMOJI_CATEGORIES, EMOJI_RECENTS_KEY, DEFAULT_RECENT_EMOJIS } from "../emojiCategories";
+import GeneratingProgress from "./GeneratingProgress";
 
 const CATEGORIES = [
   "Technology",
@@ -40,6 +41,15 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
   const [modeState, setModeState] = useState("ai"); // "ai" | "manual" — used when mode isn't controlled from outside
   const mode = modeProp ?? modeState;
   const setMode = onModeChange ?? setModeState;
+
+  // Kept true from the moment an AI generation starts until the
+  // GeneratingProgress completion swipe finishes (not just while `loading`
+  // is true), so the 100% swipe can actually play before switching back to
+  // the plain submit button.
+  const [showGenerating, setShowGenerating] = useState(false);
+  useEffect(() => {
+    if (loading && mode === "ai") setShowGenerating(true);
+  }, [loading, mode]);
 
   const [category, setCategory] = useState("Business");
   const [subtopic, setSubtopic] = useState("");
@@ -574,11 +584,15 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
         </p>
       )}
 
-      <button type="submit" className="composer-submit" disabled={loading}>
-        {loading
-          ? mode === "ai" ? "Generating…" : "Creating draft…"
-          : mode === "ai" ? "Generate draft" : "Create draft"}
-      </button>
+      {showGenerating && (
+        <GeneratingProgress loading={loading} onComplete={() => setShowGenerating(false)} />
+      )}
+
+      {!showGenerating && (
+        <button type="submit" className="composer-submit" disabled={loading}>
+          {mode === "ai" ? "Generate draft" : loading ? "Creating draft…" : "Create draft"}
+        </button>
+      )}
     </form>
   );
 }

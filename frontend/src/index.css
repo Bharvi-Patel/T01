@@ -966,12 +966,12 @@ button {
 button:hover { border-color: var(--accent); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-button.primary {
+.primary {
   background: var(--accent);
   color: var(--accent-ink);
   border-color: var(--accent);
 }
-button.primary:hover { opacity: 0.88; }
+.primary:hover { opacity: 0.88; }
 
 input, select, textarea {
   font-family: var(--font-sans);

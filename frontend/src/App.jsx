@@ -261,7 +261,17 @@ export default function App() {
           : await generateDraft({ token, ...formValues });
       setDraftId(res.draft_id);
       setDraft(res.draft);
-      setStep("draft");
+      if (formValues.mode === "manual") {
+        setStep("draft");
+      } else {
+        // Let GeneratingProgress's completion swipe (100% + brief hold,
+        // ~650ms) finish playing before switching screens - otherwise
+        // Form unmounts in the same instant loading flips to false and the
+        // swipe never gets a chance to render.
+        setLoading(false);
+        setTimeout(() => setStep("draft"), 700);
+        return;
+      }
     } catch (e) {
       if (e.status === 401) return handleLogout();
       setError(e.message || "Something went wrong creating the draft.");

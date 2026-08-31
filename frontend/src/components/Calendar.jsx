@@ -134,7 +134,7 @@ function externalPostToDraft(platform, post) {
   };
 }
 
-function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, busy }) {
+function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, busy, connections }) {
   const published = isPublished(draft);
   const external = !!draft.is_external;
   const scheduledAt = draft.scheduled_at ? new Date(draft.scheduled_at) : null;
@@ -196,7 +196,7 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
                   }}
                 >
                   <PlatformLogo platform={p} size={13} />
-                  <span style={{ flex: 1 }}>{p.label}</span>
+                  <span style={{ flex: 1 }}>{connections?.[key]?.profile_name || p.label}</span>
                   <span style={{ color: r?.success ? "#4CAF7D" : "#E88A8A", fontSize: 11.5 }}>
                     {r?.success ? "Published" : r ? "Failed" : "Unknown"}
                   </span>
@@ -224,7 +224,7 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
                     }}
                   >
                     <PlatformLogo platform={p} size={13} />
-                    {p.label}
+                    {connections?.[key]?.profile_name || p.label}
                   </span>
                 );
               })}
@@ -317,6 +317,10 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
   const [expandedContent, setExpandedContent] = useState({});
   const [expandLoadingId, setExpandLoadingId] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+  // Day cells (keyed the same way as `key` below) whose "+N more" has been
+  // clicked, so every post for that day renders inline instead of being
+  // truncated to maxChipsPerDay.
+  const [expandedDays, setExpandedDays] = useState(() => new Set());
   // Which connected account to show full post history for ("all" = normal,
   // date-bounded calendar view). Picking a platform switches to loading every
   // post ever scheduled/published on that account, regardless of the month/
@@ -725,7 +729,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {items.slice(0, maxChipsPerDay).map((d) => {
+                  {items.slice(0, expandedDays.has(key) ? items.length : maxChipsPerDay).map((d) => {
                     const chipKeys = chipPlatforms(d);
                     const published = isPublished(d);
                     const thumb = d.featured_image?.url;
@@ -805,16 +809,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
 
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
                           <span style={{ fontSize: 13, color: "var(--text-muted)", letterSpacing: 1 }}>•••</span>
-                          {d.is_external ? (
-                            <span
-                              style={{
-                                fontSize: 10, fontWeight: 500, borderRadius: 4, padding: "2px 6px",
-                                color: "#9BA79E", background: "rgba(155,167,158,0.14)",
-                              }}
-                            >
-                              From {accountFilter}
-                            </span>
-                          ) : published && (
+                          {!d.is_external && published && (
                             <span
                               style={{
                                 fontSize: 10, fontWeight: 500, borderRadius: 4, padding: "2px 6px",
@@ -829,12 +824,25 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
                     );
                   })}
                   {items.length > maxChipsPerDay && (
-                    <button
-                      onClick={() => setSelectedDraftId(items[maxChipsPerDay].draft_id)}
-                      style={{ width: "auto", background: "transparent", border: "none", padding: 0, fontSize: 11, color: "var(--text-muted)", textAlign: "left" }}
-                    >
-                      +{items.length - maxChipsPerDay} more
-                    </button>
+                    expandedDays.has(key) ? (
+                      <button
+                        onClick={() => {
+                          const next = new Set(expandedDays);
+                          next.delete(key);
+                          setExpandedDays(next);
+                        }}
+                        style={{ width: "auto", background: "transparent", border: "none", padding: 0, fontSize: 11, color: "var(--text-muted)", textAlign: "left" }}
+                      >
+                        Show less
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setExpandedDays(new Set(expandedDays).add(key))}
+                        style={{ width: "auto", background: "transparent", border: "none", padding: 0, fontSize: 11, color: "var(--text-muted)", textAlign: "left" }}
+                      >
+                        +{items.length - maxChipsPerDay} more
+                      </button>
+                    )
                   )}
                 </div>
               </div>
@@ -848,6 +856,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
         <DraftDetailPanel                                    
           draft={selectedDraft}                           
           busy={busy}                                 
+          connections={connections}
           onClose={() => setSelectedDraftId(null)}
           onReschedule={handleReschedule}    
           onUnschedule={handleUnschedule}

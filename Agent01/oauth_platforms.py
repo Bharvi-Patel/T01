@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # before main.py's load_dotenv() call (that ordering bug is exactly what
 # caused every OAuth provider to read client_id as None).
 load_dotenv(override=False)
-print("THREADS_APP_ID:", repr(os.environ.get("THREADS_APP_ID")))
+# print("THREADS_APP_ID:", repr(os.environ.get("THREADS_APP_ID")))
 
 LINKEDIN_CLIENT_ID = os.environ.get("LINKEDIN_CLIENT_ID")
 LINKEDIN_CLIENT_SECRET = os.environ.get("LINKEDIN_CLIENT_SECRET")

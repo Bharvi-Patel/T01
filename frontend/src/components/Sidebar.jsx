@@ -191,10 +191,17 @@ export default function Sidebar({
               data-tooltip="Account"
               aria-label="Account"
             >
-              <span className="sidebar-account-avatar">
+              <span
+                className="sidebar-account-avatar"
+                style={!profile?.avatar_url ? {
+                  background: "var(--accent)", color: "var(--accent-ink)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 11, fontWeight: 700,
+                } : undefined}
+              >
                 {profile?.avatar_url
                   ? <img src={profile.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-                  : <Icon name="user" size={14} />}
+                  : initials(profile?.username)}
               </span>
               {!collapsed && <span>{profile?.username || "Account"}</span>}
             </button>

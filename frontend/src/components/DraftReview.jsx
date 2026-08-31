@@ -9,8 +9,17 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
   const [feedback, setFeedback] = useState("");
   const [live, setLive] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
+  const [closingSchedule, setClosingSchedule] = useState(false);
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("09:00");
+
+  function closeSchedulePanel() {
+    setClosingSchedule(true);
+    setTimeout(() => {
+      setShowSchedule(false);
+      setClosingSchedule(false);
+    }, 300);
+  }
 
   useEffect(() => {
     setShowReject(false);
@@ -149,61 +158,104 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
               </button>
             </div>
           </>
-        ) : showSchedule ? (
-          <>
-            <p className="eyebrow" style={{ marginBottom: 10 }}>Schedule for</p>
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <input
-                type="date" min={todayStr} value={scheduleDate}
-                onChange={(e) => setScheduleDate(e.target.value)}
-                style={{ flex: 1 }}
-              />
-              <input
-                type="time" value={scheduleTime}
-                onChange={(e) => setScheduleTime(e.target.value)}
-                style={{ flex: 1 }}
-              />
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => setShowSchedule(false)} disabled={loading}>Cancel</button>
-              <button
-                className="primary"
-                onClick={handleScheduleSubmit}
-                disabled={loading || selected.size === 0 || !scheduleDate}
-              >
-                {loading ? "Scheduling…" : "Confirm schedule"}
-              </button>
-            </div>
-          </>
         ) : (
           <>
-            {!selected.has("linkedin") && !selected.has("facebook") && !selected.has("instagram") && !selected.has("threads") && (
-              <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, cursor: "pointer" }}>
-                <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} style={{ width: "auto", height: "auto" }} />
-                <span style={{ fontSize: 13, fontFamily: "var(--font-sans)" }}>Publish live on finto.day</span>
-              </label>
-            )}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button onClick={() => setShowReject(true)} disabled={loading}>Reject</button>
-              {onSaveAsDraft && (
-                <button onClick={onSaveAsDraft} disabled={loading}>
-                  Save as draft
+            <style>{`
+              @keyframes dr-fade-in {
+                from { opacity: 0; transform: translateY(-6px); filter: blur(4px); }
+                to   { opacity: 1; transform: translateY(0);    filter: blur(0);  }
+              }
+              @keyframes dr-fade-out {
+                from { opacity: 1; transform: translateY(0);    filter: blur(0);  }
+                to   { opacity: 0; transform: translateY(-6px); filter: blur(4px); }
+              }
+              .dr-fade-in-el  { animation: dr-fade-in 0.35s ease-out; }
+              .dr-fade-in-buttons { animation: dr-fade-in 0.35s ease-out; }
+              .dr-fade-out-el { animation: dr-fade-out 0.3s ease-in forwards; }
+              .dr-schedule-pill {
+                display: flex; align-items: center; gap: 0;
+                border: 1px solid var(--border-strong); border-radius: 999px;
+                overflow: hidden; background: var(--paper-raised); margin-bottom: 10px;
+              }
+              .dr-schedule-pill input {
+                border: none; border-radius: 0; background: transparent;
+                height: 40px; font-size: 14px;
+              }
+              .dr-schedule-pill input[type="date"] {
+                flex: 1.3; border-right: 1px solid var(--border);
+              }
+              .dr-schedule-pill input[type="time"] { flex: 1; }
+              .dr-schedule-close {
+                width: 40px; height: 40px; flex-shrink: 0; border: none; border-radius: 0;
+                background: transparent; display: flex; align-items: center; justify-content: center;
+                color: var(--text-secondary); cursor: pointer;
+              }
+              .dr-schedule-close:hover { color: var(--text); }
+              .dr-schedule-summary {
+                font-size: 12px; color: var(--text-secondary); text-align: center;
+                margin: 10px 0 0; animation: dr-fade-in 0.3s ease-out;
+              }
+            `}</style>
+
+            {(showSchedule || closingSchedule) ? (
+              <div className={closingSchedule ? "dr-fade-out-el" : "dr-fade-in-el"}>
+                <p className="eyebrow" style={{ marginBottom: 10 }}>Schedule for</p>
+                <div className="dr-schedule-pill">
+                  <input
+                    type="date" min={todayStr} value={scheduleDate}
+                    onChange={(e) => setScheduleDate(e.target.value)}
+                  />
+                  <input
+                    type="time" value={scheduleTime}
+                    onChange={(e) => setScheduleTime(e.target.value)}
+                  />
+                  <button
+                    type="button" title="Cancel" className="dr-schedule-close"
+                    onClick={closeSchedulePanel} disabled={loading}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <button
+                  className="primary" style={{ width: "100%" }}
+                  onClick={handleScheduleSubmit}
+                  disabled={loading || selected.size === 0 || !scheduleDate}
+                >
+                  {loading ? "Scheduling…" : "Confirm schedule"}
                 </button>
-              )}
-              <button
-                onClick={() => { setScheduleDate(todayStr); setShowSchedule(true); }}
-                disabled={loading || selected.size === 0}
-              >
-                Schedule…
-              </button>
-              <button
-                className="primary"
-                onClick={() => onApprove(live, Array.from(selected))}
-                disabled={loading || selected.size === 0}
-              >
-                {loading ? "Publishing…" : "Approve & publish"}
-              </button>
-            </div>
+
+                {scheduleDate && scheduleTime && (
+                  <p className="dr-schedule-summary">
+                    Will be posted on{" "}
+                    {new Date(`${scheduleDate}T${scheduleTime}`).toLocaleString(undefined, {
+                      dateStyle: "medium", timeStyle: "short",
+                    })}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="dr-fade-in-buttons" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button onClick={() => setShowReject(true)} disabled={loading}>Reject</button>
+                {onSaveAsDraft && (
+                  <button onClick={onSaveAsDraft} disabled={loading}>
+                    Save as draft
+                  </button>
+                )}
+                <button
+                  onClick={() => { setScheduleDate(todayStr); setShowSchedule(true); }}
+                  disabled={loading || selected.size === 0}
+                >
+                  Schedule
+                </button>
+                <button
+                  className="primary"
+                  onClick={() => onApprove(live, Array.from(selected))}
+                  disabled={loading || selected.size === 0}
+                >
+                  {loading ? "Publishing…" : "Approve & publish"}
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
