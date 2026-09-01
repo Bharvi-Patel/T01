@@ -144,6 +144,17 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
       ? `${String(scheduledAt.getHours()).padStart(2, "0")}:${String(scheduledAt.getMinutes()).padStart(2, "0")}`
       : "09:00"
   );
+  // Plays the exit animation before actually unmounting (onClose), so
+  // closing eases out instead of cutting instantly - mirrors the open
+  // animation added alongside this. Skips straight to onClose for
+  // prefers-reduced-motion, since the exit CSS animation is disabled there
+  // and would otherwise never fire the animationend that triggers onClose.
+  const [closing, setClosing] = useState(false);
+  function handleClose() {
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) { onClose(); return; }
+    setClosing(true);
+  }
 
   function submitReschedule() {
     const local = new Date(`${date}T${time}`);
@@ -158,13 +169,16 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
 
   return (
     <div
+      className={closing ? "modal-overlay-exit" : "modal-overlay-enter"}
       style={{
         position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
         display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
       }}
-      onClick={onClose}
+      onClick={handleClose}
+      onAnimationEnd={() => { if (closing) onClose(); }}
     >
       <div
+        className={closing ? "modal-panel-exit" : "modal-panel-enter"}
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "#16222A", border: "0.5px solid #22303A", borderRadius: 12,
@@ -239,7 +253,7 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
         )}
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={onClose} disabled={busy}>Close</button>
+          <button onClick={handleClose} disabled={busy}>Close</button>
           {external ? (
             draft.permalink && (
               <a

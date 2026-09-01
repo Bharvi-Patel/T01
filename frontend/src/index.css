@@ -941,6 +941,28 @@ button.danger:hover { border-color: var(--danger); }
 }
 @keyframes draw-in { to { transform: scaleX(1); } }
 
+/* Reusable modal entrance - fade the overlay in, scale+fade the panel in
+   slightly faster so it doesn't lag behind the backdrop. Used by any
+   popup/detail-panel that currently just mounts with no transition (e.g.
+   Calendar.jsx's DraftDetailPanel) so opening one doesn't feel like a cut. */
+.modal-overlay-enter { animation: modal-overlay-fade-in 0.18s ease-out; }
+.modal-panel-enter { animation: modal-panel-scale-in 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+.modal-overlay-exit { animation: modal-overlay-fade-out 0.16s ease-in forwards; }
+.modal-panel-exit { animation: modal-panel-scale-out 0.16s ease-in forwards; }
+@keyframes modal-overlay-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modal-overlay-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes modal-panel-scale-in {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes modal-panel-scale-out {
+  from { opacity: 1; transform: scale(1) translateY(0); }
+  to { opacity: 0; transform: scale(0.97) translateY(2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .modal-overlay-enter, .modal-panel-enter, .modal-overlay-exit, .modal-panel-exit { animation: none; }
+}
+
 .eyebrow {
   font-family: var(--font-mono);
   font-size: 11px;
