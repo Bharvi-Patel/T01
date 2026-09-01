@@ -186,6 +186,7 @@ export default function TopBar({ token, onAuthError, widthClass = "" }) {
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="Workspace name"
                   autoFocus
+                  autoComplete="off"
                   style={{ fontSize: 13 }}
                 />
                 {createError && <div style={{ fontSize: 12, color: "var(--danger)" }}>{createError}</div>}

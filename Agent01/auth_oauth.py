@@ -116,10 +116,17 @@ def linkedin_login_finish(code: str) -> dict:
     )
     userinfo.raise_for_status()
     info = userinfo.json()
+    # TEMP DEBUG - remove once name is confirmed working. Prints the raw
+    # userinfo payload so we can see whether LinkedIn omits "name" for this
+    # account (e.g. returns given_name/family_name instead) versus our code
+    # mishandling a response that does contain it.
+    print("[linkedin_login_finish] raw userinfo response:", info, flush=True)
     return {
         "provider_user_id": info["sub"],
         "email": info.get("email"),
-        "profile_name": info.get("name"),
+        "profile_name": info.get("name") or " ".join(
+            p for p in (info.get("given_name"), info.get("family_name")) if p
+        ) or None,
         "profile_picture_url": info.get("picture"),
     }
 
@@ -145,7 +152,7 @@ def facebook_login_authorize_url(state: str) -> str:
     return (
         "https://www.facebook.com/v21.0/dialog/oauth"
         f"?client_id={META_APP_ID}&redirect_uri={_redirect_uri('facebook')}&state={state}"
-        f"&config_id={META_LOGIN_CONFIG_ID}&response_type=code"
+        f"&config_id={META_LOGIN_CONFIG_ID}&response_type=code&scope=email%20public_profile"
     )
 
 

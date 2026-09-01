@@ -288,6 +288,33 @@ async def _get_or_create_oauth_user(db: AsyncSession, provider: str, identity: d
                 await db.commit()
         return existing.user_id, bool(user and user.is_verified)
 
+    # Real account linking: a brand-new (provider, provider_user_id) pair
+    # doesn't necessarily mean a brand-new person. If this provider's email
+    # matches an existing, already-verified account, attach this OAuth
+    # identity to that account instead of creating a duplicate - this is
+    # what makes "log in with LinkedIn" and "log in with Facebook" resolve
+    # to the same account when they share an email. Only linking against a
+    # verified account matters here: an unverified account's email hasn't
+    # been proven to belong to that account owner, so linking against it
+    # would let anyone claim someone else's in-progress signup by logging
+    # in via a provider that happens to report the same (unconfirmed)
+    # address.
+    incoming_email = identity.get("email")
+    if incoming_email:
+        linkable = (await db.execute(
+            select(User).where(User.email == incoming_email, User.is_verified.is_(True))
+        )).scalar_one_or_none()
+        if linkable is not None:
+            db.add(OAuthIdentity(
+                user_id=linkable.id, provider=provider,
+                provider_user_id=identity["provider_user_id"], email=incoming_email,
+            ))
+            provider_full_name = identity.get("profile_name")
+            if provider_full_name and not linkable.full_name:
+                linkable.full_name = provider_full_name
+            await db.commit()
+            return linkable.id, True
+
     # Prefer the provider's real display name (e.g. Google's "name" field)
     # over the raw email/provider-id fallback, so a first-time OAuth login
     # doesn't leave someone greeted by their email address everywhere the

@@ -43,11 +43,12 @@ export default function CreateWorkspacePrompt({ token }) {
           Create a workspace to get started. You can invite teammates and create more workspaces later.
         </p>
         <div style={{ marginBottom: 8 }}>
-          <label htmlFor="create-workspace-name">Workspace name</label>
+          <label htmlFor="ws-title">Workspace name</label>
           <input
-            id="create-workspace-name"
+            id="ws-title"
             type="text"
             autoFocus
+            autoComplete="off"
             value={name}
             onChange={(e) => setName(e.target.value)}
             maxLength={120}

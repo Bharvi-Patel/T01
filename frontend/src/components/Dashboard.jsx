@@ -570,7 +570,7 @@ function IntegrationsSection() {
             }}>
               X
             </span>
-            Twitter
+            (Twitter)
             <span style={{
               fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.03em", textTransform: "uppercase",
               color: "var(--text-muted)", border: "0.5px solid var(--border)", borderRadius: 3, padding: "1px 4px",
