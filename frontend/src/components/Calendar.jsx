@@ -640,52 +640,61 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
       )}
 
       {isListView ? (
-        <div style={{ border: "0.5px solid var(--border)", borderRadius: 10, overflow: "hidden", opacity: loading ? 0.6 : 1 }}>
+        <div style={{ opacity: loading ? 0.6 : 1 }}>
           {listItems.length === 0 && !loading && (
             <p style={{ fontSize: 13, color: "var(--text-muted)", margin: 0, padding: "24px 16px", textAlign: "center" }}>
               No posts yet.
             </p>
           )}
-          {listItems.map((d) => {
-            const thumb = d.featured_image?.url;
-            const published = isPublished(d);
-            const names = accountNamesForDraft(d);
-            return (
-              <div
-                key={d.draft_id}
-                onClick={() => setSelectedDraftId(d.draft_id)}
-                style={{
-                  display: "flex", gap: 12, alignItems: "center", padding: "10px 14px", cursor: "pointer",
-                  borderBottom: "0.5px solid var(--border)",
-                }}
-              >
-                {thumb ? (
-                  <img src={thumb} alt="" style={{ width: 44, height: 44, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
-                ) : (
-                  <div style={{ width: 44, height: 44, borderRadius: 6, background: "var(--paper-raised)", flexShrink: 0 }} />
-                )}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ margin: "0 0 3px", fontSize: 13, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {d.title || d.subtopic}
-                  </p>
-                  <p style={{ margin: 0, fontSize: 11.5, color: "var(--text-muted)" }}>
-                    {names.join(", ")} · {new Date(effectiveDate(d)).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
-                  </p>
-                </div>
-                {!d.is_external && (
-                  <span
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 3 }}>
+            {listItems.map((d) => {
+              const thumb = d.featured_image?.url;
+              const published = isPublished(d);
+              const dt = new Date(effectiveDate(d));
+              const dayNum = dt.getDate();
+              const monthAbbrev = dt.toLocaleDateString(undefined, { month: "short" });
+              return (
+                <div
+                  key={d.draft_id}
+                  onClick={() => setSelectedDraftId(d.draft_id)}
+                  style={{
+                    position: "relative", cursor: "pointer", aspectRatio: "1", overflow: "hidden",
+                    background: "var(--paper-raised)", borderRadius: 4,
+                  }}
+                >
+                  {thumb ? (
+                    <img src={thumb} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  ) : (
+                    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <span style={{ fontSize: 11, color: "var(--text-muted)", padding: "0 10px", textAlign: "center", lineHeight: 1.3 }}>
+                        {d.title || d.subtopic}
+                      </span>
+                    </div>
+                  )}
+                  {/* date badge - mirrors the day/month tile in an Instagram stories archive */}
+                  <div
                     style={{
-                      fontSize: 10, fontWeight: 500, borderRadius: 4, padding: "2px 8px", flexShrink: 0,
-                      color: published ? "#4CAF7D" : "var(--accent)",
-                      background: published ? "rgba(76,175,125,0.12)" : "var(--paper-raised)",
+                      position: "absolute", top: 6, left: 6, background: "rgba(0,0,0,0.6)", color: "#fff",
+                      borderRadius: 4, padding: "3px 6px", textAlign: "center", lineHeight: 1.15, minWidth: 26,
                     }}
                   >
-                    {published ? "Published" : "Scheduled"}
-                  </span>
-                )}
-              </div>
-            );
-          })}
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>{dayNum}</div>
+                    <div style={{ fontSize: 9, textTransform: "capitalize" }}>{monthAbbrev}</div>
+                  </div>
+                  {!d.is_external && (
+                    <div
+                      style={{
+                        position: "absolute", bottom: 6, left: 6, fontSize: 9.5, fontWeight: 600,
+                        color: "#fff", background: "rgba(0,0,0,0.6)", borderRadius: 4, padding: "2px 6px",
+                      }}
+                    >
+                      {published ? "Published" : "Scheduled"}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : (
       <div style={{ border: "0.5px solid var(--border)", borderRadius: 10, overflow: "hidden", opacity: loading ? 0.6 : 1 }}>

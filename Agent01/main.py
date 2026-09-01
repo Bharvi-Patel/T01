@@ -34,7 +34,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 from auth_oauth import LOGIN_PROVIDERS, x_start, x_finish
-from emailer import send_verification_email
+from emailer import send_verification_email, send_password_reset_email
 
 import time
 from fastapi.responses import RedirectResponse
@@ -64,6 +64,7 @@ OAUTH_STATES: dict[str, dict] = {}
 MEDIA_DIR = Path(__file__).resolve().parent / "media"
 MEDIA_DIR.mkdir(exist_ok=True)
 EMAIL_VERIFICATION_TOKEN_TTL_HOURS = int(os.environ.get("EMAIL_VERIFICATION_TOKEN_TTL_HOURS", "24"))
+PASSWORD_RESET_TOKEN_TTL_HOURS = int(os.environ.get("PASSWORD_RESET_TOKEN_TTL_HOURS", "1"))
 
 # Per-user media library (Publish page's "Media" tab). Each user's uploads
 # live under MEDIA_DIR/<user_id>/ so one person's files never collide with
@@ -562,6 +563,13 @@ class DeleteAccountRequest(BaseModel):
 
 class VerifyEmailRequest(BaseModel):
     token: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
 
 
 class GenerateRequest(BaseModel):
@@ -1528,6 +1536,61 @@ async def resend_verification(req: ResendVerificationRequest, db: AsyncSession =
         user.verification_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=EMAIL_VERIFICATION_TOKEN_TTL_HOURS)
         await db.commit()
         await run_in_threadpool(send_verification_email, email, token, FRONTEND_BASE_URL)
+
+    return {"status": "ok"}
+
+
+@app.post("/forgot-password")
+async def forgot_password(req: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+    email = req.email.strip().lower()
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    # Same response whether or not the account exists, has a password, or
+    # a request was actually issued - this endpoint can't be used to probe
+    # which emails are registered. OAuth-only accounts (no password_hash)
+    # are silently skipped since there's no password to reset.
+    if user is not None and user.password_hash:
+        token = secrets.token_urlsafe(32)
+        user.reset_token = token
+        user.reset_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=PASSWORD_RESET_TOKEN_TTL_HOURS)
+        await db.commit()
+        try:
+            await run_in_threadpool(
+                send_password_reset_email, email, token, FRONTEND_BASE_URL, PASSWORD_RESET_TOKEN_TTL_HOURS
+            )
+        except Exception:
+            # A broken mail config (bad host, auth failure, timeout) shouldn't
+            # 500 the request or let a caller distinguish "email failed to
+            # send" from "no account with that email" - log it for us to
+            # notice and debug, but the response to the caller stays identical.
+            logging.getLogger("auth").exception("Failed to send password reset email to %s", email)
+
+    return {"status": "ok"}
+
+
+@app.post("/reset-password")
+async def reset_password(req: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+    if len(req.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    result = await db.execute(select(User).where(User.reset_token == req.token))
+    user = result.scalar_one_or_none()
+
+    if user is None:
+        raise HTTPException(status_code=400, detail="Invalid or already-used reset link.")
+
+    if user.reset_token_expires_at and user.reset_token_expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="This reset link has expired. Request a new one.")
+
+    user.password_hash = hash_password(req.new_password)
+    user.reset_token = None
+    user.reset_token_expires_at = None
+    # Sign the user out everywhere - a password reset almost always means
+    # the old password (and any session opened with it) shouldn't be
+    # trusted anymore.
+    await db.execute(delete(AuthSession).where(AuthSession.user_id == user.id))
+    await db.commit()
 
     return {"status": "ok"}
 

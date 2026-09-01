@@ -24,10 +24,22 @@ SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", "no-reply@starttrack.app")
 SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() != "false"
+# Without an explicit timeout, smtplib.SMTP() will hang indefinitely if the
+# host is unreachable (wrong hostname, blocked port, network issue) - and
+# since send_email() is awaited by request handlers (e.g. /forgot-password),
+# that hang takes the whole HTTP request down with it, with no error and no
+# way to recover short of restarting the server.
+SMTP_CONNECT_TIMEOUT_SECONDS = int(os.environ.get("SMTP_CONNECT_TIMEOUT_SECONDS", "10"))
 
 
 def send_email(to_email: str, subject: str, body: str) -> None:
-    """Send a plaintext email, or print it to the console if SMTP isn't configured."""
+    """Send a plaintext email, or print it to the console if SMTP isn't configured.
+
+    Raises on failure (bad host, auth failure, timeout, etc.) - callers that
+    can't afford to fail the whole request over a broken mail config (e.g.
+    /forgot-password, which must respond the same way whether or not the
+    email actually went out) should catch and log rather than let it propagate.
+    """
     if not SMTP_HOST:
         logger.warning("SMTP_HOST not set - printing email instead of sending it.")
         print(
@@ -42,7 +54,7 @@ def send_email(to_email: str, subject: str, body: str) -> None:
     msg["From"] = SMTP_FROM_EMAIL
     msg["To"] = to_email
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=SMTP_CONNECT_TIMEOUT_SECONDS) as server:
         if SMTP_USE_TLS:
             server.starttls()
         if SMTP_USERNAME and SMTP_PASSWORD:
@@ -59,5 +71,19 @@ def send_verification_email(to_email: str, token: str, frontend_base_url: str) -
         f"{verify_url}\n\n"
         "This link expires in 24 hours. If you didn't create this account, "
         "you can safely ignore this email."
+    )
+    send_email(to_email, subject, body)
+
+
+def send_password_reset_email(to_email: str, token: str, frontend_base_url: str, ttl_hours: int) -> None:
+    reset_url = f"{frontend_base_url.rstrip('/')}/?reset_token={token}"
+    subject = "Reset your startTrack password"
+    body = (
+        "We received a request to reset your startTrack password.\n\n"
+        "Open the link below to choose a new one:\n\n"
+        f"{reset_url}\n\n"
+        f"This link expires in {ttl_hours} hour{'s' if ttl_hours != 1 else ''}. "
+        "If you didn't request this, you can safely ignore this email — "
+        "your password won't be changed."
     )
     send_email(to_email, subject, body)

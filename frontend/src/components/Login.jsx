@@ -75,18 +75,89 @@ export default function Login({
   onLogin, onSignUp, loading, error,
   verifyMessage, pendingVerificationEmail, onResendVerification,
   resendLoading, resendMessage, onBackToSignIn,
+  onForgotPassword, forgotLoading, forgotSent, forgotError,
+  resetToken, onResetPassword, resetLoading, resetError, resetDone,
 }) {
-  const [mode, setMode] = useState("login"); // "login" | "signup"
+  const [mode, setMode] = useState("login"); // "login" | "signup" | "forgot"
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [mismatchError, setMismatchError] = useState("");
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [resetMismatchError, setResetMismatchError] = useState("");
 
   useEffect(() => {
     setMismatchError("");
     setConfirmPassword("");
   }, [mode]);
+
+  function handleForgotSubmit(e) {
+    e.preventDefault();
+    onForgotPassword(forgotEmail);
+  }
+
+  function handleResetSubmit(e) {
+    e.preventDefault();
+    if (newPassword !== confirmNewPassword) {
+      setResetMismatchError("Passwords don't match.");
+      return;
+    }
+    setResetMismatchError("");
+    onResetPassword({ token: resetToken, newPassword });
+  }
+
+  // A reset link ("?reset_token=...") takes over the whole screen until
+  // it's used or the user backs out — same treatment as the "check your
+  // email" verification screen below, just for the opposite end of the flow.
+  if (resetToken) {
+    if (resetDone) {
+      return (
+        <div style={{ width: "100%", maxWidth: 380 }}>
+          <h1 className="masthead">Password updated</h1>
+          <hr className="masthead-rule" />
+          <div style={{ background: "var(--paper-raised)", borderRadius: "var(--radius)", border: "1px solid var(--border)", padding: "1.5rem" }}>
+            <p style={{ margin: "0 0 1rem" }}>Your password has been reset. Sign in with your new password.</p>
+            <button type="button" className="primary" style={{ width: "100%" }} onClick={onBackToSignIn}>
+              Back to sign in
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div style={{ width: "100%", maxWidth: 380 }}>
+        <h1 className="masthead">Reset your password</h1>
+        <hr className="masthead-rule" />
+        <form
+          onSubmit={handleResetSubmit}
+          style={{ background: "var(--paper-raised)", borderRadius: "var(--radius)", border: "1px solid var(--border)", padding: "1.5rem" }}
+        >
+          <div style={{ marginBottom: "1rem" }}>
+            <label htmlFor="new-password">New password</label>
+            <PasswordField id="new-password" autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} minLength={8} />
+          </div>
+          <div style={{ marginBottom: "1.5rem" }}>
+            <label htmlFor="confirm-new-password">Confirm new password</label>
+            <PasswordField id="confirm-new-password" autoComplete="new-password" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} minLength={8} />
+          </div>
+          {(resetMismatchError || resetError) && (
+            <p style={{ fontSize: 13, color: "var(--danger)", background: "var(--danger-bg)", borderRadius: "var(--radius)", padding: "8px 12px", margin: "0 0 1rem" }}>
+              {resetMismatchError || resetError}
+            </p>
+          )}
+          <button type="submit" className="primary" style={{ width: "100%" }} disabled={resetLoading}>
+            {resetLoading ? "Updating…" : "Update password"}
+          </button>
+        </form>
+        <button type="button" className="text-link" style={{ display: "block", width: "100%", textAlign: "center", marginTop: 16 }} onClick={onBackToSignIn}>
+          Back to sign in
+        </button>
+      </div>
+    );
+  }
 
 
   async function handleOAuthLogin(provider) {
@@ -132,6 +203,49 @@ export default function Login({
     );
   }
 
+  if (mode === "forgot") {
+    return (
+      <div style={{ width: "100%", maxWidth: 380 }}>
+        <h1 className="masthead">Reset password</h1>
+        <hr className="masthead-rule" />
+        {forgotSent ? (
+          <div style={{ background: "var(--paper-raised)", borderRadius: "var(--radius)", border: "1px solid var(--border)", padding: "1.5rem" }}>
+            <p style={{ margin: "0 0 1rem" }}>
+              If an account exists for <strong>{forgotEmail}</strong>, we've sent a link to reset the password. Check your inbox.
+            </p>
+            <button type="button" className="text-link" style={{ display: "block", width: "100%", textAlign: "center" }} onClick={() => setMode("login")}>
+              Back to sign in
+            </button>
+          </div>
+        ) : (
+          <form
+            onSubmit={handleForgotSubmit}
+            style={{ background: "var(--paper-raised)", borderRadius: "var(--radius)", border: "1px solid var(--border)", padding: "1.5rem" }}
+          >
+            <p style={{ margin: "0 0 1rem", fontSize: 13, color: "var(--text-muted)" }}>
+              Enter the email on your account and we'll send you a link to reset your password.
+            </p>
+            <div style={{ marginBottom: "1.5rem" }}>
+              <label htmlFor="forgot-email">Email</label>
+              <input id="forgot-email" type="email" autoComplete="email" value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)} required />
+            </div>
+            {forgotError && (
+              <p style={{ fontSize: 13, color: "var(--danger)", background: "var(--danger-bg)", borderRadius: "var(--radius)", padding: "8px 12px", margin: "0 0 1rem" }}>
+                {forgotError}
+              </p>
+            )}
+            <button type="submit" className="primary" style={{ width: "100%" }} disabled={forgotLoading}>
+              {forgotLoading ? "Sending…" : "Send reset link"}
+            </button>
+          </form>
+        )}
+        <button type="button" className="text-link" style={{ display: "block", width: "100%", textAlign: "center", marginTop: 16 }} onClick={() => setMode("login")}>
+          Back to sign in
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div style={{ width: "100%", maxWidth: 380 }}>
       {/* <p className="eyebrow" style={{ margin: "0 0 6px" }}>hehe</p> */}
@@ -167,7 +281,19 @@ export default function Login({
         )}
 
         <div style={{ marginBottom: mode === "signup" ? "1rem" : "1.5rem" }}>
-          <label htmlFor="password">Password</label>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+            <label htmlFor="password">Password</label>
+            {mode === "login" && (
+              <button
+                type="button"
+                className="text-link"
+                style={{ fontSize: 13 }}
+                onClick={() => setMode("forgot")}
+              >
+                Forgot password?
+              </button>
+            )}
+          </div>
           <PasswordField
             id="password"
             autoComplete={mode === "login" ? "current-password" : "new-password"}

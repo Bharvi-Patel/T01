@@ -177,6 +177,13 @@ class User(Base):
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     verification_token: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     verification_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # "Forgot password" flow (see /forgot-password and /reset-password in
+    # main.py). Separate columns from verification_token above so an
+    # in-flight signup-verification link and an in-flight password-reset
+    # link can't invalidate each other. Nullable/None means no reset is
+    # currently pending; cleared the moment the token is used or replaced.
+    reset_token: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    reset_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Profile settings (bottom-left account popup in the sidebar). avatar_url
     # points at a file under MEDIA_DIR/<user_id>/ served via /media-files,
     # same convention as MediaAsset - see save_avatar in main.py. timezone is

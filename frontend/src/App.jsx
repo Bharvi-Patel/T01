@@ -21,7 +21,7 @@ import Notifications from "./components/Notifications";
 import HelpCenter from "./components/HelpCenter";
 import Members from "./components/Members";
 import { MODE_TABS } from "./components/Form";
-import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft, getProfile, getWorkspace, getNotifications } from "./api";
+import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, forgotPassword as apiForgotPassword, resetPassword as apiResetPassword, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft, getProfile, getWorkspace, getNotifications } from "./api";
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem("auth_token"));
@@ -34,6 +34,14 @@ export default function App() {
   const [verifyMessage, setVerifyMessage] = useState(null); // { type, text } from a clicked email link
   const [resendLoading, setResendLoading] = useState(false);
   const [resendMessage, setResendMessage] = useState("");
+
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
+  const [forgotError, setForgotError] = useState("");
+  const [resetToken, setResetToken] = useState(null);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState("");
+  const [resetDone, setResetDone] = useState(false);
 
   const [connections, setConnections] = useState({}); // { linkedin: { profile_name, profile_picture_url }, ... } — key present means connected
   const [profile, setProfile] = useState(null); // { username, email, avatar_url, timezone, ... } — the logged-in user's own account, from GET /me
@@ -160,6 +168,16 @@ export default function App() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const token = params.get("reset_token");
+    if (token) {
+      window.history.replaceState({}, "", window.location.pathname);
+      setShowAuth(true);
+      setResetToken(token);
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
     const loginToken = params.get("login_token");
     if (loginToken) {
       localStorage.setItem("auth_token", loginToken);
@@ -214,6 +232,37 @@ export default function App() {
   function handleBackToSignIn() {
     setPendingVerificationEmail(null);
     setResendMessage("");
+    setForgotSent(false);
+    setForgotError("");
+    setResetToken(null);
+    setResetError("");
+    setResetDone(false);
+  }
+
+  async function handleForgotPassword(email) {
+    setForgotLoading(true);
+    setForgotError("");
+    try {
+      await apiForgotPassword({ email });
+      setForgotSent(true);
+    } catch (e) {
+      setForgotError(e.message || "Could not send the reset email. Try again in a moment.");
+    } finally {
+      setForgotLoading(false);
+    }
+  }
+
+  async function handleResetPassword({ token, newPassword }) {
+    setResetLoading(true);
+    setResetError("");
+    try {
+      await apiResetPassword({ token, newPassword });
+      setResetDone(true);
+    } catch (e) {
+      setResetError(e.message || "That reset link is invalid or expired.");
+    } finally {
+      setResetLoading(false);
+    }
   }
   
 
@@ -383,6 +432,15 @@ export default function App() {
               resendLoading={resendLoading}
               resendMessage={resendMessage}
               onBackToSignIn={handleBackToSignIn}
+              onForgotPassword={handleForgotPassword}
+              forgotLoading={forgotLoading}
+              forgotSent={forgotSent}
+              forgotError={forgotError}
+              resetToken={resetToken}
+              onResetPassword={handleResetPassword}
+              resetLoading={resetLoading}
+              resetError={resetError}
+              resetDone={resetDone}
             />
           </div>
         </div>

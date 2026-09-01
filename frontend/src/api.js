@@ -45,6 +45,27 @@ export async function resendVerification({ email }) {
   return handle(res);
 }
 
+// request a "reset your password" email — always resolves the same way
+// whether or not the address is registered, so this can't be used to probe
+export async function forgotPassword({ email }) {
+  const res = await fetch(`${API_BASE}/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  return handle(res);
+}
+
+// confirm the token from the "?reset_token=" link in the reset email and set a new password
+export async function resetPassword({ token, newPassword }) {
+  const res = await fetch(`${API_BASE}/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+  return handle(res);
+}
+
 
 
 export async function getLoginAuthorizeUrl({ provider }) {
