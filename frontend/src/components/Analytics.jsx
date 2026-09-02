@@ -16,25 +16,43 @@ function platformByKey(key) {
 // shape as the reference dashboard's metric cards, just built from real
 // publish-attempt counts instead of pulled-in follower/reach data.
 function Sparkline({ daily, metric }) {
+  const [selected, setSelected] = useState(null); // date of the clicked bar, or null
   if (!daily.length) {
     return <div style={{ height: 32 }} />;
   }
   const max = Math.max(1, ...daily.map((d) => d[metric]));
   return (
     <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 32 }}>
-      {daily.map((d) => (
-        <div
-          key={d.date}
-          title={`${d.date}: ${d[metric]}`}
-          style={{
-            width: 5,
-            height: Math.max(2, (d[metric] / max) * 32),
-            borderRadius: 2,
-            background: metric === "failure" ? "var(--danger)" : "var(--accent)",
-            opacity: d[metric] === 0 ? 0.25 : 1,
-          }}
-        />
-      ))}
+      {daily.map((d) => {
+        const isSelected = selected === d.date;
+        return (
+          <div key={d.date} style={{ position: "relative", flex: "1 1 0" }}>
+            {isSelected && (
+              <div
+                style={{
+                  position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
+                  marginBottom: 6, background: "var(--ink)", color: "var(--paper)",
+                  borderRadius: 6, padding: "4px 8px", fontSize: 11, whiteSpace: "nowrap",
+                  zIndex: 10, pointerEvents: "none",
+                }}
+              >
+                {d.date}: {d[metric]} {metric === "failure" ? "failed" : "successful"} {d[metric] === 1 ? "publish" : "publishes"}
+              </div>
+            )}
+            <div
+              onClick={() => setSelected((s) => (s === d.date ? null : d.date))}
+              title={`${d.date}: ${d[metric]} ${metric === "failure" ? "failed" : "successful"} ${d[metric] === 1 ? "publish" : "publishes"}`}
+              style={{
+                width: "100%", height: Math.max(2, (d[metric] / max) * 32),
+                borderRadius: 2,
+                background: metric === "failure" ? "var(--danger)" : "var(--accent)",
+                opacity: d[metric] === 0 ? 0.25 : 1,
+                cursor: "pointer",
+              }}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -68,28 +86,48 @@ function MetricCard({ label, value, delta, daily, metric }) {
 }
 
 function CadenceChart({ cadence }) {
+  const [selected, setSelected] = useState(null); // weekday of the clicked bar, or null
   const max = Math.max(1, ...cadence.map((d) => d.count));
   return (
     <div style={{ display: "flex", alignItems: "flex-end", gap: 10, height: 90, padding: "0 4px" }}>
-      {cadence.map((d) => (
-        <div key={d.weekday} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{d.count || ""}</span>
-          <div
-            title={`${d.weekday}: ${d.count}`}
-            style={{
-              width: "100%", maxWidth: 26, height: Math.max(3, (d.count / max) * 56),
-              borderRadius: 3, background: "var(--accent)", opacity: d.count === 0 ? 0.2 : 1,
-            }}
-          />
-          <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{d.weekday}</span>
-        </div>
-      ))}
+      {cadence.map((d) => {
+        const isSelected = selected === d.weekday;
+        return (
+          <div key={d.weekday} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+            <div style={{ position: "relative", width: "100%", display: "flex", justifyContent: "center" }}>
+              {isSelected && (
+                <div
+                  style={{
+                    position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
+                    marginBottom: 6, background: "var(--ink)", color: "var(--paper)",
+                    borderRadius: 6, padding: "4px 8px", fontSize: 11, whiteSpace: "nowrap",
+                    zIndex: 10, pointerEvents: "none",
+                  }}
+                >
+                  {d.weekday}: {d.count} {d.count === 1 ? "post" : "posts"} published
+                </div>
+              )}
+              <div
+                onClick={() => setSelected((s) => (s === d.weekday ? null : d.weekday))}
+                title={`${d.weekday}: ${d.count} ${d.count === 1 ? "post" : "posts"} published`}
+                style={{
+                  width: "100%", maxWidth: 26, height: Math.max(3, (d.count / max) * 56),
+                  borderRadius: 3, background: "var(--accent)", opacity: d.count === 0 ? 0.2 : 1,
+                  cursor: "pointer",
+                }}
+              />
+            </div>
+            <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{d.weekday}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 function PlatformReliabilityRow({ platformKey, entries }) {
   const p = platformByKey(platformKey);
+  const [selected, setSelected] = useState(null); // date of the clicked bar, or null
   const withRate = entries.map((e) => ({ ...e, rate: e.total ? e.success / e.total : 0 }));
   return (
     <div style={{ marginBottom: 14 }}>
@@ -98,16 +136,34 @@ function PlatformReliabilityRow({ platformKey, entries }) {
         <span style={{ fontSize: 12.5, color: "var(--ink)" }}>{p?.label || platformKey}</span>
       </div>
       <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 30 }}>
-        {withRate.map((e) => (
-          <div
-            key={e.date}
-            title={`${e.date}: ${e.success}/${e.total}`}
-            style={{
-              flex: 1, maxWidth: 10, height: Math.max(2, e.rate * 30), borderRadius: 2,
-              background: e.rate === 1 ? "#4CAF7D" : e.rate === 0 ? "var(--danger)" : "#D9A441",
-            }}
-          />
-        ))}
+        {withRate.map((e) => {
+          const isSelected = selected === e.date;
+          return (
+            <div key={e.date} style={{ position: "relative", flex: 1, maxWidth: 10 }}>
+              {isSelected && (
+                <div
+                  style={{
+                    position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
+                    marginBottom: 6, background: "var(--ink)", color: "var(--paper)",
+                    borderRadius: 6, padding: "4px 8px", fontSize: 11, whiteSpace: "nowrap",
+                    zIndex: 10, pointerEvents: "none",
+                  }}
+                >
+                  {e.date}: {e.success} of {e.total} publish {e.total === 1 ? "attempt" : "attempts"} succeeded
+                </div>
+              )}
+              <div
+                onClick={() => setSelected((s) => (s === e.date ? null : e.date))}
+                title={`${e.date}: ${e.success} of ${e.total} publish ${e.total === 1 ? "attempt" : "attempts"} succeeded`}
+                style={{
+                  width: "100%", height: Math.max(2, e.rate * 30), borderRadius: 2,
+                  background: e.rate === 1 ? "#4CAF7D" : e.rate === 0 ? "var(--danger)" : "#D9A441",
+                  cursor: "pointer",
+                }}
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -119,6 +175,7 @@ function PlatformReliabilityRow({ platformKey, entries }) {
 // point can't show direction.
 function FollowerCard({ platformKey, count, series }) {
   const p = platformByKey(platformKey);
+  const [selected, setSelected] = useState(null); // date of the clicked bar, or null
   const first = series?.[0]?.count;
   const delta = series && series.length > 1 && first != null ? count - first : null;
   const max = Math.max(1, ...(series || []).map((d) => d.count));
@@ -151,16 +208,33 @@ function FollowerCard({ platformKey, count, series }) {
       </div>
       {series && series.length > 1 ? (
         <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 32 }}>
-          {series.map((d) => (
-            <div
-              key={d.date}
-              title={`${d.date}: ${d.count}`}
-              style={{
-                flex: 1, height: Math.max(2, ((d.count - min) / range) * 32),
-                borderRadius: 2, background: "var(--accent)",
-              }}
-            />
-          ))}
+          {series.map((d) => {
+            const isSelected = selected === d.date;
+            return (
+              <div key={d.date} style={{ position: "relative", flex: 1 }}>
+                {isSelected && (
+                  <div
+                    style={{
+                      position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
+                      marginBottom: 6, background: "var(--ink)", color: "var(--paper)",
+                      borderRadius: 6, padding: "4px 8px", fontSize: 11, whiteSpace: "nowrap",
+                      zIndex: 10, pointerEvents: "none",
+                    }}
+                  >
+                    {d.date}: {d.count.toLocaleString()} {p?.label || platformKey} followers
+                  </div>
+                )}
+                <div
+                  onClick={() => setSelected((s) => (s === d.date ? null : d.date))}
+                  title={`${d.date}: ${d.count.toLocaleString()} ${p?.label || platformKey} followers`}
+                  style={{
+                    width: "100%", height: Math.max(2, ((d.count - min) / range) * 32),
+                    borderRadius: 2, background: "var(--accent)", cursor: "pointer",
+                  }}
+                />
+              </div>
+            );
+          })}
         </div>
       ) : (
         <p style={{ fontSize: 11, color: "var(--text-muted)", margin: 0 }}>Refresh again on a later day to see growth.</p>
@@ -264,7 +338,7 @@ function PostPerformanceChart({ posts }) {
                 <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 110, position: "relative" }}>
                   {series.map((s) => {
                     const value = post[s.key];
-                    const height = value != null ? Math.max(2, (value / maxByMetric[s.key]) * 110) : 0;
+                    const height = value != null ? Math.max(2, (value / maxByMetric[s.key]) * 110) : 2;
                     const isHovered = hover && hover.postIndex === i && hover.key === s.key;
                     return (
                       <div
@@ -272,7 +346,10 @@ function PostPerformanceChart({ posts }) {
                         onMouseEnter={() => setHover({ postIndex: i, key: s.key })}
                         onMouseLeave={() => setHover((h) => (h && h.postIndex === i && h.key === s.key ? null : h))}
                         onClick={() => setHover((h) => (h && h.postIndex === i && h.key === s.key ? null : { postIndex: i, key: s.key }))}
-                        style={{ position: "relative", cursor: "pointer" }}
+                        style={{
+                          position: "relative", cursor: "pointer",
+                          height: 110, width: 8, display: "flex", alignItems: "flex-end",
+                        }}
                       >
                         {isHovered && (
                           <div
@@ -352,6 +429,7 @@ function TopPostsSection({ posts }) {
 }
 
 function EngagementByWeekdaySection({ weekday }) {
+  const [selected, setSelected] = useState(null); // weekday of the clicked bar, or null
   const hasData = weekday && weekday.some((d) => d.avg_engagement > 0);
   const max = Math.max(1, ...(weekday || []).map((d) => d.avg_engagement));
   return (
@@ -367,19 +445,37 @@ function EngagementByWeekdaySection({ weekday }) {
       </p>
       {hasData ? (
         <div style={{ display: "flex", alignItems: "flex-end", gap: 10, height: 90, padding: "0 4px" }}>
-          {weekday.map((d) => (
-            <div key={d.weekday} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{d.avg_engagement || ""}</span>
-              <div
-                title={`${d.weekday}: ${d.avg_engagement} avg engagement`}
-                style={{
-                  width: "100%", maxWidth: 26, height: Math.max(3, (d.avg_engagement / max) * 56),
-                  borderRadius: 3, background: "var(--secondary)", opacity: d.avg_engagement === 0 ? 0.2 : 1,
-                }}
-              />
-              <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{d.weekday}</span>
-            </div>
-          ))}
+          {weekday.map((d) => {
+            const isSelected = selected === d.weekday;
+            return (
+              <div key={d.weekday} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                <div style={{ position: "relative", width: "100%", display: "flex", justifyContent: "center" }}>
+                  {isSelected && (
+                    <div
+                      style={{
+                        position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
+                        marginBottom: 6, background: "var(--ink)", color: "var(--paper)",
+                        borderRadius: 6, padding: "4px 8px", fontSize: 11, whiteSpace: "nowrap",
+                        zIndex: 10, pointerEvents: "none",
+                      }}
+                    >
+                      {d.weekday}: {d.avg_engagement} avg likes + comments per post
+                    </div>
+                  )}
+                  <div
+                    onClick={() => setSelected((s) => (s === d.weekday ? null : d.weekday))}
+                    title={`${d.weekday}: ${d.avg_engagement} avg likes + comments per post`}
+                    style={{
+                      width: "100%", maxWidth: 26, height: Math.max(3, (d.avg_engagement / max) * 56),
+                      borderRadius: 3, background: "var(--secondary)", opacity: d.avg_engagement === 0 ? 0.2 : 1,
+                      cursor: "pointer",
+                    }}
+                  />
+                </div>
+                <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{d.weekday}</span>
+              </div>
+            );
+          })}
         </div>
       ) : (
         <p style={{ fontSize: 12.5, color: "var(--text-muted)" }}>No engagement data yet — hit Refresh to pull likes/comments.</p>
@@ -504,8 +600,6 @@ export default function Analytics({ token, onAuthError, days: daysProp, onDaysCh
         <MetricCard
           label="Total publishes"
           value={data.successes}
-          daily={data.daily}
-          metric="success"
         />
         <MetricCard
           label="Currently scheduled"

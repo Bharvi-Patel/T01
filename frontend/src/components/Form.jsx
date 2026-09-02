@@ -20,6 +20,114 @@ const MAX_IMAGES = 9; // matches LinkedIn's per-post carousel cap, the tightest 
 const CHAR_LIMIT = 5000; // soft limit shown under the composer — finto.day's field, the loosest of the destinations
 const MANUAL_CATEGORY = "Business"; // manual posts skip the category picker — finto.day still needs one to file under
 
+// Web Speech API is Chromium-only (Chrome/Edge) as of this writing - Firefox
+// and Safari don't implement SpeechRecognition at all, so this is checked
+// once at module load and the mic button simply doesn't render where it's
+// unsupported, rather than showing a button that errors on click.
+const SpeechRecognitionCtor =
+  typeof window !== "undefined" ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
+
+// Dictation button for a single text field: tap to start listening, tap
+// again (or the browser auto-stops on silence) to finish. Appends the
+// transcript to whatever's already in the field rather than replacing it,
+// so it composes with typing instead of fighting it.
+function MicButton({ onTranscript, size = 15 }) {
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef(null);
+  const cancelledRef = useRef(false); // true when X was clicked - tells onresult to discard the transcript
+
+  useEffect(() => {
+    return () => recognitionRef.current?.stop();
+  }, []);
+
+  if (!SpeechRecognitionCtor) return null;
+
+  function start() {
+    cancelledRef.current = false;
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (e) => {
+      if (cancelledRef.current) return;
+      const transcript = Array.from(e.results).map((r) => r[0].transcript).join(" ").trim();
+      if (transcript) onTranscript(transcript);
+    };
+    recognition.onend = () => setListening(false);
+    recognition.onerror = () => setListening(false);
+    recognitionRef.current = recognition;
+    recognition.start();
+    setListening(true);
+  }
+
+  function confirm() {
+    cancelledRef.current = false;
+    recognitionRef.current?.stop(); // fires onresult with whatever was captured so far, then onend
+  }
+
+  function cancel() {
+    cancelledRef.current = true;
+    recognitionRef.current?.stop(); // onresult still fires but is discarded above
+  }
+
+  if (listening) {
+    return (
+      <div
+        style={{
+          display: "flex", alignItems: "center", background: "var(--ink)", borderRadius: 999,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.18)", overflow: "hidden",
+        }}
+      >
+        <button
+          type="button"
+          onClick={cancel}
+          title="Cancel dictation"
+          style={{
+            width: 28, height: 26, border: "none", background: "none", color: "var(--paper)",
+            display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+          }}
+        >
+          <svg width={size - 2} height={size - 2} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+        </button>
+        <div style={{ width: 1, height: 14, background: "var(--paper)", opacity: 0.25 }} />
+        <button
+          type="button"
+          onClick={confirm}
+          title="Use this text"
+          style={{
+            width: 28, height: 26, border: "none", background: "none", color: "var(--paper)",
+            display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+          }}
+        >
+          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 13l4 4L19 7" />
+          </svg>
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={start}
+      title="Speak instead of typing"
+      style={{
+        width: 22, height: 22, flexShrink: 0, padding: 0, border: "none",
+        background: "none", color: "var(--text-muted)",
+        display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+      }}
+    >
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
+        <path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8" />
+      </svg>
+    </button>
+  );
+}
+
 // Networks the "customize post per network" toggle can override. finto.day
 // isn't in PLATFORMS (frontend/src/components/platforms.jsx) since it isn't
 // an OAuth connector, but it's still a publish destination, so it's added
@@ -368,13 +476,17 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
 
           <div className="composer-field">
             <label htmlFor="subtopic">Subtopic</label>
-            <input
-              id="subtopic"
-              type="text"
-              value={subtopic}
-              onChange={(e) => setSubtopic(e.target.value)}
-              required
-            />
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                id="subtopic"
+                type="text"
+                value={subtopic}
+                onChange={(e) => setSubtopic(e.target.value)}
+                required
+                style={{ flex: 1 }}
+              />
+              <MicButton onTranscript={(text) => setSubtopic((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))} />
+            </div>
           </div>
 
           <div className="composer-field">
