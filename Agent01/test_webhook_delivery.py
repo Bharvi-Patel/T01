@@ -1,6 +1,6 @@
-"""One-off diagnostic: send a correctly-signed fake Instagram DM webhook
-straight to your own /webhooks/meta endpoint, bypassing Meta's dashboard
-"Send to server" button entirely.
+"""One-off diagnostic: send a correctly-signed fake Meta webhook straight to
+your own /webhooks/meta endpoint, bypassing Meta's dashboard "Send to
+server" button entirely.
 
 Why this exists: Meta's dashboard test button can report "sent
 successfully" even when nothing actually reaches your callback URL - the
@@ -11,14 +11,20 @@ exact JSON shape meta_webhook_receive() parses, signs it with your own
 APP_SECRET as Meta would, and POSTs it directly to your ngrok URL. If this
 arrives and processes cleanly, your entire pipeline (ngrok -> FastAPI ->
 signature check -> DB write) is proven correct, and the problem is
-isolated to Meta's delivery (Development Mode's block on real events, or a
-dashboard config issue) rather than anything in this codebase.
+isolated to Meta's delivery (Development Mode's block on real events, a
+dashboard config issue, or the account never actually being enrolled via
+/subscribed_apps for the field in question) rather than anything in this
+codebase.
 
 Run from Agent01/:
     python test_webhook_delivery.py
 
-By default this targets your Instagram connection. Pass --platform
-facebook to test the Facebook Page path instead.
+By default this targets your Instagram connection and sends a fake DM.
+Pass --platform facebook to test the Facebook Page path instead, and
+--event comment to simulate a Page/media comment instead of a DM (comments
+arrive under the "feed" field for Facebook, "comments" for Instagram - a
+different code path than messaging, so a passing DM test does NOT prove
+the comment path works too).
 """
 import argparse
 import asyncio
@@ -36,6 +42,14 @@ from oauth_platforms import META_APP_SECRET
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--platform", choices=["instagram", "facebook"], default="instagram")
+parser.add_argument(
+    "--event",
+    choices=["message", "comment"],
+    default="message",
+    help="'message' (default) simulates an inbound DM via entry[].messaging[]. "
+         "'comment' simulates a Page/media comment via entry[].changes[] - "
+         "field='feed' for facebook, field='comments' for instagram.",
+)
 parser.add_argument(
     "--callback-url",
     default=None,
@@ -63,7 +77,7 @@ async def _find_page_id(platform: Platform) -> str | None:
         return (conn.credentials or {}).get(field)
 
 
-def _build_payload(object_type: str, page_id: str) -> dict:
+def _build_message_payload(object_type: str, page_id: str) -> dict:
     """Matches exactly what meta_webhook_receive() expects under
     entry[].messaging[] for an inbound (non-echo) text DM. The message id
     is unique per run (not a fixed "test_mid_001") because
@@ -90,6 +104,51 @@ def _build_payload(object_type: str, page_id: str) -> dict:
                         },
                     }
                 ],
+            }
+        ],
+    }
+
+
+def _build_comment_payload(object_type: str, platform: Platform, page_id: str) -> dict:
+    """Matches what meta_webhook_receive() expects under entry[].changes[]
+    for an inbound comment. Facebook Page comments arrive under the "feed"
+    field (filtered there to item=="comment", verb=="add"/"edit"/"edited" -
+    see the matching comment in main.py); Instagram comments arrive under
+    a dedicated "comments" field instead. These are two separate code
+    paths from the messaging one above - a passing --event message run does
+    NOT exercise this branch, which is exactly why comments can be broken
+    while DMs work fine. The comment/post id is unique per run for the same
+    redelivery-dedup reason as the message mid above."""
+    ts = int(time.time() * 1000)
+    if platform == Platform.FACEBOOK:
+        change = {
+            "field": "feed",
+            "value": {
+                "item": "comment",
+                "verb": "add",
+                "comment_id": f"test_comment_{ts}",
+                "post_id": f"{page_id}_test_post",
+                "from": {"id": "TEST_COMMENTER_123", "name": "Test Commenter"},
+                "message": "This is a test comment sent by test_webhook_delivery.py",
+            },
+        }
+    else:
+        change = {
+            "field": "comments",
+            "value": {
+                "id": f"test_comment_{ts}",
+                "text": "This is a test comment sent by test_webhook_delivery.py",
+                "from": {"id": "TEST_COMMENTER_123", "username": "test_commenter"},
+                "media": {"id": f"{page_id}_test_media"},
+            },
+        }
+    return {
+        "object": object_type,
+        "entry": [
+            {
+                "id": page_id,
+                "time": 0,
+                "changes": [change],
             }
         ],
     }
@@ -123,11 +182,14 @@ async def main():
     ).strip().rstrip("/")
     url = f"{callback_base}/webhooks/meta"
 
-    payload = _build_payload(object_type, page_id)
+    if args.event == "comment":
+        payload = _build_comment_payload(object_type, platform, page_id)
+    else:
+        payload = _build_message_payload(object_type, page_id)
     raw_body = json.dumps(payload).encode()
     signature = _sign(raw_body)
 
-    print(f"POSTing signed test payload to {url} ...")
+    print(f"POSTing signed test {args.event} payload to {url} ...")
     resp = requests.post(
         url,
         data=raw_body,
@@ -139,9 +201,15 @@ async def main():
     )
     print(f"Response: {resp.status_code} {resp.text!r}")
     if resp.status_code == 200:
-        print("\nSuccess - now check your FastAPI terminal for the "
-              "'[webhooks/meta] received payload' line, and your app's "
-              "Inbox tab for a new test message.")
+        print(f"\nSuccess - now check your FastAPI terminal for the "
+              f"'[webhooks/meta] received payload' line, and your app's "
+              f"Inbox tab for a new test {args.event}.\n"
+              f"If it shows up here but real comments still never arrive, "
+              f"your code is fine and this is purely a Meta-side delivery "
+              f"issue - most likely the Page was never actually enrolled "
+              f"for the 'feed' field via /subscribed_apps (check your "
+              f"server logs for the '[oauth_platforms] subscribed_apps' "
+              f"line from when you connected this Page).")
     else:
         print("\nSomething rejected this request - see the status/body above. "
               "A 403 usually means APP_SECRET here doesn't match what's "
