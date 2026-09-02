@@ -53,7 +53,18 @@ export default function App() {
 
   const [showAuth, setShowAuth] = useState(false);
   
-  const [step, setStep] = useState("dashboard"); // dashboard | generate | draft | done | settings | ...
+  // Nav position survives a full page reload the same way sidebarCollapsed/
+  // theme do below - only for "stable" destinations that are self-sufficient
+  // from a fresh load (they fetch their own data). "generate"/"draft"/"done"
+  // depend on in-memory draft state built up during the compose/review flow
+  // that a reload can't reconstruct, so those are deliberately excluded -
+  // restoring straight into "draft" with no draft loaded would just be a
+  // broken blank page instead of the dashboard fallback.
+  const PERSISTABLE_STEPS = ["dashboard", "inbox", "settings", "publish", "calendar", "analytics", "members", "billing", "notifications"];
+  const [step, setStep] = useState(() => {
+    const saved = localStorage.getItem("last_step");
+    return PERSISTABLE_STEPS.includes(saved) ? saved : "dashboard";
+  }); // dashboard | generate | draft | done | settings | ...
   const [connectStatus, setConnectStatus] = useState(null); // { type: "success"|"error", platform }
   const [draftId, setDraftId] = useState(null);
   const [draft, setDraft] = useState(null);
@@ -91,6 +102,11 @@ export default function App() {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
+  useEffect(() => {
+    if (PERSISTABLE_STEPS.includes(step)) {
+      localStorage.setItem("last_step", step);
+    }
+  }, [step]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);

@@ -3544,6 +3544,7 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
                     print(f"[webhooks/meta] dropped mention - connection {connection.id} "
                           f"missing page_access_token/ig_page_id in credentials", file=sys.stderr)
                     continue
+                page_access_token = decrypt_secret(page_access_token)
                 context = await run_in_threadpool(_fetch_mention_context, page_access_token, ig_page_id, value)
                 await _upsert_inbox_item(
                     db, workspace_id=connection.workspace_id, platform=Platform.INSTAGRAM, kind=InboxKind.MENTION,
@@ -3552,6 +3553,52 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
                     sender_name=context.get("sender_name"),
                     sender_external_id=None,
                     body=context.get("body") or "Mentioned your account",
+                    raw_payload=change,
+                )
+
+            elif field == "feed":
+                # Facebook Page comments arrive under the general "feed"
+                # field, not a dedicated "comments" field the way
+                # Instagram has - feed also carries post/like/reaction
+                # events we don't want in the inbox, so only item=="comment"
+                # is recorded. Edits reuse the same comment_id as
+                # external_id, so _upsert_inbox_item naturally updates the
+                # existing row in place; deletions ("remove") are skipped.
+                if value.get("item") == "comment" and value.get("verb") in ("add", "edit", "edited"):
+                    workspace_id = await _workspace_id_for_page(db, Platform.FACEBOOK, page_id)
+                    if workspace_id is None:
+                        print(f"[webhooks/meta] dropped feed comment - no PlatformConnection matches "
+                              f"platform=facebook page_id={page_id!r}", file=sys.stderr)
+                        continue
+                    await _upsert_inbox_item(
+                        db, workspace_id=workspace_id, platform=Platform.FACEBOOK, kind=InboxKind.COMMENT,
+                        external_id=str(value.get("comment_id")),
+                        thread_id=str(value.get("post_id") or ""),
+                        sender_name=(value.get("from") or {}).get("name"),
+                        sender_external_id=(value.get("from") or {}).get("id"),
+                        body=value.get("message"),
+                        raw_payload=change,
+                    )
+
+            elif field == "mention":
+                # Facebook Page mentions (someone @-mentions the Page in a
+                # post or comment). Meta's docs note "from" is only
+                # populated for Workplace communities - for a normal Page
+                # it's typically absent, so sender_name stays unset (falls
+                # back to "Unknown" in the UI), same as an Instagram
+                # caption mention.
+                workspace_id = await _workspace_id_for_page(db, Platform.FACEBOOK, page_id)
+                if workspace_id is None:
+                    print(f"[webhooks/meta] dropped mention - no PlatformConnection matches "
+                          f"platform=facebook page_id={page_id!r}", file=sys.stderr)
+                    continue
+                await _upsert_inbox_item(
+                    db, workspace_id=workspace_id, platform=Platform.FACEBOOK, kind=InboxKind.MENTION,
+                    external_id=str(value.get("comment_id") or value.get("post_id")),
+                    thread_id=str(value.get("post_id") or ""),
+                    sender_name=(value.get("from") or {}).get("name"),
+                    sender_external_id=(value.get("from") or {}).get("id"),
+                    body=value.get("message") or "Mentioned your Page",
                     raw_payload=change,
                 )
 
@@ -3567,6 +3614,8 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
                 continue
             workspace_id = connection.workspace_id
             page_access_token = (connection.credentials or {}).get("page_access_token")
+            if page_access_token:
+                page_access_token = decrypt_secret(page_access_token)
             message = messaging_event.get("message", {})
             if message.get("is_echo"):
                 continue  # our own outgoing message, echoed back - not an inbound item
@@ -3909,8 +3958,8 @@ async def threads_webhook_receive(request: _Request, db: AsyncSession = Depends(
 
     for entry in payload.get("entry", []):
         threads_user_id = str(entry.get("id", ""))
-        user_id = await _user_id_for_threads_account(db, threads_user_id)
-        if user_id is None:
+        workspace_id = await _workspace_id_for_threads_account(db, threads_user_id)
+        if workspace_id is None:
             print(f"[webhooks/threads] dropped entry - no PlatformConnection matches "
                   f"threads_user_id={threads_user_id!r}", file=sys.stderr)
             continue
@@ -3923,7 +3972,7 @@ async def threads_webhook_receive(request: _Request, db: AsyncSession = Depends(
             value = change.get("value", {})
             kind = InboxKind.COMMENT if field == "replies" else InboxKind.MENTION
             await _upsert_inbox_item(
-                db, user_id=user_id, platform=Platform.THREADS, kind=kind,
+                db, workspace_id=workspace_id, platform=Platform.THREADS, kind=kind,
                 external_id=str(value.get("id")),
                 thread_id=str(value.get("root_post", {}).get("id") or value.get("replied_to", {}).get("id") or ""),
                 sender_name=(value.get("from") or {}).get("username"),
@@ -3931,7 +3980,6 @@ async def threads_webhook_receive(request: _Request, db: AsyncSession = Depends(
                 body=value.get("text"),
                 raw_payload=change,
             )
-
     try:
         await db.commit()
     except Exception:

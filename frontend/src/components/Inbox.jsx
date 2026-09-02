@@ -202,16 +202,7 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-        <p style={{ fontFamily: "var(--font-display)", fontSize: 22, color: "var(--ink)", margin: 0 }}>
-          Social Inbox
-          {unreadCount > 0 && (
-            <span style={{ fontSize: 12.5, color: "var(--text-muted)", fontFamily: "var(--font-sans)", marginLeft: 8 }}>
-              {unreadCount} unread
-            </span>
-          )}
-        </p>
-
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <input
           type="text"
           placeholder="Search messages…"
@@ -242,15 +233,17 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
       ) : (
         <div
           style={{
-            display: "flex", height: 620, border: "0.5px solid var(--border-strong)",
+            display: "flex", height: 760, border: "0.5px solid var(--border-strong)",
             borderRadius: 12, overflow: "hidden", background: "var(--paper-raised)",
           }}
         >
           {/* Left: conversation list */}
           <div style={{ width: 300, flexShrink: 0, borderRight: "0.5px solid var(--border)", display: "flex", flexDirection: "column", minHeight: 0 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
-              <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }}>DMs</span>
-              <select
+            <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }}>
+                {KIND_TABS.find((t) => t.key === kindFilter)?.label ?? "All"}
+              </span>
+              <select 
                 value={unreadOnly ? "unread" : "all"}
                 onChange={(e) => setUnreadOnly(e.target.value === "unread")}
                 style={{

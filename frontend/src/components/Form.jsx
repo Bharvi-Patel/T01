@@ -37,8 +37,35 @@ export const MODE_TABS = [
   { key: "manual", label: "Write it myself" },
 ];
 
+// Recovers unsubmitted composer text across a full page reload (see
+// App.jsx's PERSISTABLE_STEPS for the same idea applied to nav position).
+// Only plain text/serializable fields are covered - images/video are File
+// objects the browser can't hand back after a reload, so those are left
+// out and simply need re-selecting if lost. Cleared the moment a submit
+// actually goes through, since at that point the content lives in a real
+// server-side draft and re-showing stale local text next visit would be
+// confusing, not helpful.
+const COMPOSER_AUTOSAVE_KEY = "composer_draft_autosave";
+
+function readComposerAutosave() {
+  try {
+    const raw = localStorage.getItem(COMPOSER_AUTOSAVE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function clearComposerAutosave() {
+  try {
+    localStorage.removeItem(COMPOSER_AUTOSAVE_KEY);
+  } catch {
+    // ignore - worst case the stale autosave lingers and gets overwritten later
+  }
+}
+
 export default function Form({ onSubmit, loading, error, token, initialManualAsset, onConsumeInitialAsset, mode: modeProp, onModeChange }) {
-  const [modeState, setModeState] = useState("ai"); // "ai" | "manual" — used when mode isn't controlled from outside
+  const [modeState, setModeState] = useState(() => readComposerAutosave().mode || "ai"); // "ai" | "manual" — used when mode isn't controlled from outside
   const mode = modeProp ?? modeState;
   const setMode = onModeChange ?? setModeState;
 
@@ -51,19 +78,55 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
     if (loading && mode === "ai") setShowGenerating(true);
   }, [loading, mode]);
 
-  const [category, setCategory] = useState("Business");
-  const [subtopic, setSubtopic] = useState("");
-  const [wordCount, setWordCount] = useState(100);
+  const [category, setCategory] = useState(() => readComposerAutosave().category || "Business");
+  const [subtopic, setSubtopic] = useState(() => readComposerAutosave().subtopic || "");
+  const [wordCount, setWordCount] = useState(() => readComposerAutosave().wordCount || 100);
 
-  const [body, setBody] = useState("");
-  const [images, setImages] = useState([]); // File[]
-  const [video, setVideo] = useState(null); // File | null
+  const [body, setBody] = useState(() => readComposerAutosave().body || "");
+  const [images, setImages] = useState([]); // File[] — not autosaved, see COMPOSER_AUTOSAVE_KEY note above
+  const [video, setVideo] = useState(null); // File | null — not autosaved, see COMPOSER_AUTOSAVE_KEY note above
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
   const bodyRef = useRef(null);
 
-  const [customizePerNetwork, setCustomizePerNetwork] = useState(false);
-  const [networkText, setNetworkText] = useState({}); // { [key]: string } — falls back to `body` when blank
+  const [customizePerNetwork, setCustomizePerNetwork] = useState(() => readComposerAutosave().customizePerNetwork || false);
+  const [networkText, setNetworkText] = useState(() => readComposerAutosave().networkText || {}); // { [key]: string } — falls back to `body` when blank
+
+  // Whether there was actual unsubmitted text sitting in the autosave when
+  // this form mounted - drives the small "restored your draft" banner
+  // below. Computed once at mount; doesn't re-check as the user types.
+  const [hasRestoredDraft, setHasRestoredDraft] = useState(() => {
+    const saved = readComposerAutosave();
+    return Boolean((saved.subtopic || "").trim() || (saved.body || "").trim());
+  });
+
+  function discardRestoredDraft() {
+    clearComposerAutosave();
+    setCategory("Business");
+    setSubtopic("");
+    setWordCount(100);
+    setBody("");
+    setCustomizePerNetwork(false);
+    setNetworkText({});
+    setHasRestoredDraft(false);
+  }
+
+  // Debounced autosave of everything restorable above - runs on every
+  // relevant change, not just unmount, since a hard reload gives no chance
+  // to flush on the way out.
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      try {
+        localStorage.setItem(COMPOSER_AUTOSAVE_KEY, JSON.stringify({
+          mode, category, subtopic, wordCount, body, customizePerNetwork, networkText,
+        }));
+      } catch {
+        // localStorage full/unavailable (private browsing etc.) - autosave
+        // just silently stops working rather than breaking the composer
+      }
+    }, 400);
+    return () => clearTimeout(timeout);
+  }, [mode, category, subtopic, wordCount, body, customizePerNetwork, networkText]);
 
   // A media/text asset handed off from the Media tab's "Send to composer" -
   // consumed once on mount only, then cleared in the parent so it doesn't
@@ -234,6 +297,8 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
     e.preventDefault();
     if (mode === "ai") {
       if (!subtopic.trim()) return;
+      clearComposerAutosave();
+      setHasRestoredDraft(false);
       onSubmit({ mode: "ai", category, subtopic: subtopic.trim(), wordCount });
     } else {
       const trimmedBody = body.trim();
@@ -243,6 +308,8 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
       // want something to show), and file everything under one fixed
       // category since there's no picker to choose from here.
       const derivedTitle = trimmedBody.split("\n")[0].slice(0, 80) || "Untitled post";
+      clearComposerAutosave();
+      setHasRestoredDraft(false);
       onSubmit({
         mode: "manual",
         category: MANUAL_CATEGORY,
@@ -266,6 +333,25 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
         <h2 className="composer-title">Generate a new post</h2>
         {/* <span className="stamp composer-stamp">{mode === "ai" ? "AI Draft" : "Manual Draft"}</span> */}
       </div>
+
+      {hasRestoredDraft && (
+        <div
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+            fontSize: 12.5, color: "var(--text-muted)", background: "var(--paper-raised)",
+            border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px", marginBottom: 14,
+          }}
+        >
+          <span>Restored your unsaved draft from last time.</span>
+          <button
+            type="button"
+            onClick={discardRestoredDraft}
+            style={{ background: "none", border: "none", color: "var(--text-muted)", textDecoration: "underline", cursor: "pointer", fontSize: 12.5, padding: 0 }}
+          >
+            Discard
+          </button>
+        </div>
+      )}
 
       {mode === "ai" ? (
         <div className="composer-fields">

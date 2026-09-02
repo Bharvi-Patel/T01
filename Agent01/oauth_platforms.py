@@ -308,7 +308,12 @@ def reply_to_thread(access_token: str, threads_user_id: str, reply_to_id: str, t
 
 
 def facebook_credentials_from_page(page: dict) -> dict:
-    _subscribe_page_to_webhooks(page["id"], page["access_token"], "feed,messages")
+    # "feed" delivers Page comments (as item="comment" within the feed
+    # payload - Facebook has no dedicated "comments" field the way
+    # Instagram does); "mention" delivers @-mentions of the Page in a
+    # post or comment. Both route through meta_webhook_receive alongside
+    # "messages".
+    _subscribe_page_to_webhooks(page["id"], page["access_token"], "feed, mention, messages")
     return {
         "page_access_token": page["access_token"],
         "page_id": page["id"],
