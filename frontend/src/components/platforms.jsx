@@ -4,7 +4,7 @@ export const PLATFORMS = [
   { key: "linkedin", label: "LinkedIn", color: "#0A66C2" },
   { key: "facebook", label: "Facebook", color: "#1877F2" },
   { key: "instagram", label: "Instagram", color: "#C13584" },
-  { key: "threads", label: "Threads", color: "#ECEFEA" },
+  { key: "threads", label: "Threads", color: "#EDF3DC" },
 ];
 
 // Logo glyphs, keyed the same as PLATFORMS. finto.day isn't a public brand,
@@ -23,7 +23,7 @@ threads:
 
 // Renders a platform's logo mark. finto.day (no public brand) falls back to
 // a monogram in its own brand color; everything else renders its real glyph.
-export function PlatformLogo({ platform, size = 16 }) {
+export function PlatformLogo({ platform, size = 16, color }) {
 // if (platform.key === "finto" || !LOGO_PATHS[platform.key]) {
 //   return (
 //     <span
@@ -45,7 +45,7 @@ return (
     width={size}
     height={size}
     viewBox="0 0 24 24"
-    fill={platform.key === "threads" ? "var(--ink, #111)" : platform.color}
+    fill={color || (platform.key === "threads" ? "var(--ink, #111)" : platform.color)}
     style={{ flexShrink: 0 }}
     aria-label={platform.label}
   >

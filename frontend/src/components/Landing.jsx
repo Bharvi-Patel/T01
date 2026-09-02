@@ -264,14 +264,14 @@ export default function Landing({ onGetStarted }) {
 
             <div className="landing-footer-nav">
               <div className="landing-footer-col">
-                <p className="eyebrow" style={{ color: "#7FA687" }}>Product</p>
+                <p className="eyebrow" style={{ color: "#6FA39A" }}>Product</p>
                 <button className="landing-footer-link" onClick={() => document.getElementById("features")?.scrollIntoView({ behavior: "smooth" })}>Features</button>
                 <button className="landing-footer-link" onClick={() => document.getElementById("platforms")?.scrollIntoView({ behavior: "smooth" })}>Platforms</button>
                 <span className="landing-footer-link landing-footer-link--soon">Pricing</span>
               </div>
 
               <div className="landing-footer-col">
-                <p className="eyebrow" style={{ color: "#7FA687" }}>Account</p>
+                <p className="eyebrow" style={{ color: "#6FA39A" }}>Account</p>
                 <button className="landing-footer-link" onClick={onGetStarted}>Log in</button>
                 <button className="landing-footer-link" onClick={onGetStarted}>Sign up</button>
               </div>

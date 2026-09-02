@@ -197,8 +197,17 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
         </form>
       </div> */}
 
-      <div style={{ background: "var(--paper-raised)", borderRadius: 12, border: "0.5px solid var(--border-strong)", padding: "0.5rem 1.25rem" }}>
-        {["linkedin", "facebook", "instagram", "threads"].map((platform, i, arr) => {
+      <div>
+        <h1 style={{ margin: "0 0 4px", fontFamily: "var(--font-display)", fontWeight: 500, fontSize: 24, color: "var(--ink)" }}>
+          Social accounts
+        </h1>
+        <p style={{ margin: 0, fontSize: 14, color: "var(--text-secondary)" }}>
+          Manage which platforms Agent01 can publish to on your behalf.
+        </p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
+        {["linkedin", "facebook", "instagram", "threads"].map((platform) => {
           const connection = connections?.[platform];
           const connected = Boolean(connection);
           const profileName = connection?.profile_name;
@@ -207,44 +216,49 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
             <div
               key={platform}
               style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-                padding: "14px 0",
-                borderBottom: i < arr.length - 1 ? "0.5px solid var(--border)" : "none",
+                background: "var(--paper-raised)", borderRadius: 12,
+                border: connected ? "0.5px solid var(--border-strong)" : "0.5px solid var(--border)",
+                padding: "1.25rem", display: "flex", flexDirection: "column", gap: 14,
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                <PlatformBadge platform={platform} connected={connected} />
-                <div style={{ minWidth: 0 }}>
-                  <p style={{ margin: 0, fontWeight: 500, fontSize: 14, color: "var(--ink)" }}>
-                    {PLATFORM_LABELS[platform] || platform}
-                  </p>
-                  {connected ? (
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                      {profilePictureUrl ? (
-                        <img
-                          src={profilePictureUrl}
-                          alt=""
-                          style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover", display: "block", flexShrink: 0 }}
-                        />
-                      ) : (
-                        <span style={{ width: 16, height: 16, borderRadius: "50%", background: "var(--border)", flexShrink: 0 }} />
-                      )}
-                      <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
-                        {profileName || "Account connected"}
-                      </p>
-                    </div>
-                  ) : (
-                    <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>Not connected</p>
-                  )}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                  <PlatformBadge platform={platform} connected={connected} />
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ margin: 0, fontWeight: 500, fontSize: 14, color: "var(--ink)" }}>
+                      {PLATFORM_LABELS[platform] || platform}
+                    </p>
+                    {connected ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                        {profilePictureUrl ? (
+                          <img
+                            src={profilePictureUrl}
+                            alt=""
+                            style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover", display: "block", flexShrink: 0 }}
+                          />
+                        ) : (
+                          <span style={{ width: 16, height: 16, borderRadius: "50%", background: "var(--border)", flexShrink: 0 }} />
+                        )}
+                        <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+                          {profileName || "Account connected"}
+                        </p>
+                      </div>
+                    ) : (
+                      <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>Not connected</p>
+                    )}
+                  </div>
                 </div>
               </div>
               <button
                 onClick={() => handleToggleConnect(platform, connected)}
                 disabled={disconnectingPlatform === platform}
                 style={{
-                  background: "transparent", border: "none", padding: 0, width: "auto", flexShrink: 0,
-                  fontSize: 11, fontFamily: "var(--font-mono)", cursor: "pointer", fontWeight: 600,
-                  color: disconnectingPlatform === platform ? "var(--text-secondary)" : "var(--accent)",
+                  width: "100%", height: 34,
+                  background: connected ? "transparent" : "var(--accent)",
+                  color: connected ? "var(--text-secondary)" : "var(--accent-ink)",
+                  border: connected ? "0.5px solid var(--border-strong)" : "none",
+                  borderRadius: "var(--radius)",
+                  fontSize: 12, fontFamily: "var(--font-mono)", cursor: "pointer", fontWeight: 600,
                 }}
               >
                 {disconnectingPlatform === platform ? "Disconnecting…" : connected ? "Connected" : "Connect"}

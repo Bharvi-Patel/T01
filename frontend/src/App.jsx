@@ -551,7 +551,7 @@ export default function App() {
           </button>
         )}
 
-        <div className={`page-container${step === "publish" || step === "dashboard" ? " is-wide" : step === "calendar" ? " is-wider-calendar" : ""}`}>
+        <div className={`page-container${step === "publish" || step === "dashboard" ? " is-wide" : step === "calendar" || step === "settings" || step === "inbox" ? " is-wider-calendar" : ""}`}>
           {step === "dashboard" && (
             <Dashboard
               token={token}

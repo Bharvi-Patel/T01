@@ -96,7 +96,7 @@ const SECTIONS = [
     articles: [
       {
         q: "What shows up in the Inbox?",
-        a: "Comments and direct messages from your connected Meta accounts (Instagram and Facebook) are pulled into one place so you don't have to check each platform separately.",
+        a: "Comments and Direct Messages from your connected Meta accounts (Instagram and Facebook) are pulled into one place so you don't have to check each platform separately.",
       },
       {
         q: "How does read/unread work?",

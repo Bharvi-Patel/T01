@@ -3404,6 +3404,45 @@ def _fetch_mention_context(page_access_token: str, ig_page_id: str, value: dict)
     return {}
 
 
+def _fetch_sender_name(page_access_token: str, sender_id: str, platform: "Platform") -> str | None:
+    """DM messaging events (Messenger + Instagram) never include the
+    sender's display name, just their psid/igsid, so it's looked up via a
+    follow-up Graph API call the same way mention context is. Best-effort:
+    returns None on any error - the inbox item is still recorded, just
+    with sender_name unset, rather than dropping the event.
+
+    Facebook Messenger's PSID profile node doesn't actually expose a
+    combined `name` field - only `first_name`/`last_name` - unlike
+    Instagram's igsid node, which does support `name` directly. Using the
+    wrong field for the platform makes the whole call fail even when the
+    profile clearly has a name, so this branches by platform instead of
+    using one field list for both.
+    """
+    import requests
+
+    fields = "name,username" if platform == Platform.INSTAGRAM else "first_name,last_name"
+    try:
+        resp = requests.get(
+            f"https://graph.facebook.com/v21.0/{sender_id}",
+            params={"fields": fields, "access_token": page_access_token},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if platform == Platform.INSTAGRAM:
+            name = data.get("name") or data.get("username")
+        else:
+            name = " ".join(p for p in (data.get("first_name"), data.get("last_name")) if p) or None
+        if not name:
+            print(f"[inbox] sender name lookup for {sender_id} ({platform.value}) returned no usable name: {resp.text}", file=sys.stderr)
+        return name
+    except Exception as exc:
+        body = getattr(exc, "response", None)
+        body_text = body.text if body is not None else ""
+        print(f"[inbox] sender name lookup for {sender_id} ({platform.value}) failed: {exc} {body_text}", file=sys.stderr)
+        return None
+
+
 async def _workspace_id_for_threads_account(db: AsyncSession, threads_user_id: str) -> uuid.UUID | None:
     result = await db.execute(
         select(PlatformConnection.workspace_id).where(
@@ -3521,16 +3560,25 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
 
         for messaging_event in entry.get("messaging", []):
             platform = Platform.INSTAGRAM if payload.get("object") == "instagram" else Platform.FACEBOOK
-            workspace_id = await _workspace_id_for_page(db, platform, page_id)
-            if workspace_id is None:
+            connection = await _connection_for_page(db, platform, page_id)
+            if connection is None:
                 print(f"[webhooks/meta] dropped messaging event - no PlatformConnection matches "
                       f"platform={platform.value} page_id={page_id!r}", file=sys.stderr)
                 continue
+            workspace_id = connection.workspace_id
+            page_access_token = (connection.credentials or {}).get("page_access_token")
             message = messaging_event.get("message", {})
             if message.get("is_echo"):
                 continue  # our own outgoing message, echoed back - not an inbound item
 
             sender_id = (messaging_event.get("sender") or {}).get("id")
+            # Best-effort display-name lookup - the webhook payload only
+            # gives us the sender's psid/igsid, never a name. Skipped
+            # (falls back to None -> "Unknown" in the UI) if we don't have
+            # a page token or sender id to look it up with.
+            sender_name = None
+            if sender_id and page_access_token:
+                sender_name = await run_in_threadpool(_fetch_sender_name, page_access_token, sender_id, platform)
 
             # Story mentions arrive as a messaging event with a
             # story_mention-typed attachment rather than as a "changes"
@@ -3546,7 +3594,7 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
                     db, workspace_id=workspace_id, platform=platform, kind=InboxKind.STORY_REPLY,
                     external_id=str(message.get("mid") or f"story-{sender_id}-{messaging_event.get('timestamp')}"),
                     thread_id=str(sender_id or ""),
-                    sender_name=None,  # not included in this event shape either
+                    sender_name=sender_name,
                     sender_external_id=sender_id,
                     body="Mentioned you in their story",
                     raw_payload=messaging_event,
@@ -3557,7 +3605,7 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
                 db, workspace_id=workspace_id, platform=platform, kind=InboxKind.MESSAGE,
                 external_id=str(message.get("mid") or f"{sender_id}-{messaging_event.get('timestamp')}"),
                 thread_id=str(sender_id or ""),
-                sender_name=None,  # Meta doesn't include a display name on the messaging event itself
+                sender_name=sender_name,
                 sender_external_id=sender_id,
                 body=message.get("text"),
                 raw_payload=messaging_event,

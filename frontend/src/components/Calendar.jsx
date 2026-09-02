@@ -181,21 +181,21 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
         className={closing ? "modal-panel-exit" : "modal-panel-enter"}
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: "#16222A", border: "0.5px solid #22303A", borderRadius: 12,
+          background: "#0E3841", border: "0.5px solid #163C44", borderRadius: 12,
           padding: "1.5rem", width: "100%", maxWidth: 420, margin: "0 1rem",
         }}
       >
-        <p style={{ fontWeight: 500, fontSize: 15, margin: "0 0 4px", color: "#ECEFEA" }}>
+        <p style={{ fontWeight: 500, fontSize: 15, margin: "0 0 4px", color: "#EDF3DC" }}>
           {draft.title || draft.subtopic}
         </p>
-        <p style={{ fontSize: 12, color: "#66716C", margin: "0 0 16px", textTransform: "capitalize" }}>
+        <p style={{ fontSize: 12, color: "#5C7A78", margin: "0 0 16px", textTransform: "capitalize" }}>
           {draft.category} · {external ? "Posted outside T01" : published ? "Published" : "Scheduled"}
         </p>
 
         {published ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
             {platforms.length === 0 && (
-              <p style={{ fontSize: 12.5, color: "#66716C", margin: 0 }}>No publish attempts recorded.</p>
+              <p style={{ fontSize: 12.5, color: "#5C7A78", margin: 0 }}>No publish attempts recorded.</p>
             )}
             {platforms.map((key) => {
               const p = platformByKey(key);
@@ -205,8 +205,8 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
                 <div
                   key={key}
                   style={{
-                    display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#ECEFEA",
-                    background: "#101A20", border: "0.5px solid #22303A", borderRadius: 6, padding: "6px 10px",
+                    display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#EDF3DC",
+                    background: "#082D34", border: "0.5px solid #163C44", borderRadius: 6, padding: "6px 10px",
                   }}
                 >
                   <PlatformLogo platform={p} size={13} />
@@ -218,7 +218,7 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
               );
             })}
             {draft.published_at && (
-              <p style={{ fontSize: 11.5, color: "#66716C", margin: "4px 0 0" }}>
+              <p style={{ fontSize: 11.5, color: "#5C7A78", margin: "4px 0 0" }}>
                 First went out {new Date(draft.published_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
               </p>
             )}
@@ -233,8 +233,8 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
                   <span
                     key={key}
                     style={{
-                      display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#ECEFEA",
-                      background: "#101A20", border: "0.5px solid #22303A", borderRadius: 6, padding: "4px 8px",
+                      display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#EDF3DC",
+                      background: "#082D34", border: "0.5px solid #163C44", borderRadius: 6, padding: "4px 8px",
                     }}
                   >
                     <PlatformLogo platform={p} size={13} />
@@ -244,7 +244,7 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
               })}
             </div>
 
-            <p style={{ fontSize: 12, color: "#9BA79E", margin: "0 0 6px" }}>Scheduled for</p>
+            <p style={{ fontSize: 12, color: "#8FA9A5", margin: "0 0 6px" }}>Scheduled for</p>
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
               <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ flex: 1 }} />
               <input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ flex: 1 }} />

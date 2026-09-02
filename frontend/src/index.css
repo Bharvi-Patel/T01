@@ -2,17 +2,17 @@
 @import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
 :root {
-  --ink: #1F2933;
-  --paper: #F4F6F2;
-  --paper-raised: #FFFFFF;
-  --primary: #172A3A;
-  --secondary: #344E41;
-  --accent: #588157;
-  --accent-ink: #101A20;
-  --border: #D8DDD4;
-  --border-strong: #B7BFB0;
-  --text-secondary: #4E5A52;
-  --text-muted: #838F84;
+  --ink: #0E2A30;
+  --paper: #F1F8DD;
+  --paper-raised: #FDFDF6;
+  --primary: #082D34;
+  --secondary: #2C5049;
+  --accent: #C96A3E;
+  --accent-ink: #082D34;
+  --border: #E3EFC9;
+  --border-strong: #C9D9A0;
+  --text-secondary: #3E5B57;
+  --text-muted: #6F8A82;
   --danger: #A32D2D;
   --danger-bg: #FCEBEB;
   --radius: 4px;
@@ -31,17 +31,17 @@
 
 /* dark is the default identity, not a media-query fallback */
 :root, [data-theme="dark"] {
-  --ink: #ECEFEA;
-  --paper: #101A20;
-  --paper-raised: #16222A;
-  --primary: #ECEFEA;
-  --secondary: #7FA687;
-  --accent: #6FA96C;
-  --accent-ink: #101A20;
-  --border: #22303A;
-  --border-strong: #34434F;
-  --text-secondary: #9BA79E;
-  --text-muted: #66716C;
+  --ink: #EDF3DC;
+  --paper: #082D34;
+  --paper-raised: #0E3841;
+  --primary: #EDF3DC;
+  --secondary: #6FA39A;
+  --accent: #D98257;
+  --accent-ink: #082D34;
+  --border: #163C44;
+  --border-strong: #24515A;
+  --text-secondary: #8FA9A5;
+  --text-muted: #5C7A78;
   --danger: #E88A8A;
   --danger-bg: #2E1717;
   --surface-2: var(--paper-raised);
@@ -51,17 +51,17 @@
 }
 
 [data-theme="light"] {
-  --ink: #1F2933;
-  --paper: #F4F6F2;
-  --paper-raised: #FFFFFF;
-  --primary: #172A3A;
-  --secondary: #344E41;
-  --accent: #588157;
-  --accent-ink: #FFFFFF;
-  --border: #D8DDD4;
-  --border-strong: #B7BFB0;
-  --text-secondary: #4E5A52;
-  --text-muted: #838F84;
+  --ink: #0E2A30;
+  --paper: #F1F8DD;
+  --paper-raised: #FDFDF6;
+  --primary: #082D34;
+  --secondary: #2C5049;
+  --accent: #C96A3E;
+  --accent-ink: #FDFDF6;
+  --border: #E3EFC9;
+  --border-strong: #C9D9A0;
+  --text-secondary: #3E5B57;
+  --text-muted: #6F8A82;
   --danger: #A32D2D;
   --danger-bg: #FCEBEB;
   --surface-2: var(--paper-raised);
@@ -236,19 +236,19 @@ body::before {
    (not just background) means every child component's ink/border/paper
    colors automatically follow suit. --- */
 .main-panel {
-  background: #F4F6F2;
+  background: #F1F8DD;
   min-height: 100vh;
-  --ink: #1F2933;
-  --paper: #F4F6F2;
-  --paper-raised: #FFFFFF;
-  --primary: #172A3A;
-  --secondary: #344E41;
-  --accent: #588157;
-  --accent-ink: #FFFFFF;
-  --border: #D8DDD4;
-  --border-strong: #B7BFB0;
-  --text-secondary: #4E5A52;
-  --text-muted: #838F84;
+  --ink: #0E2A30;
+  --paper: #F1F8DD;
+  --paper-raised: #FDFDF6;
+  --primary: #082D34;
+  --secondary: #2C5049;
+  --accent: #C96A3E;
+  --accent-ink: #FDFDF6;
+  --border: #E3EFC9;
+  --border-strong: #C9D9A0;
+  --text-secondary: #3E5B57;
+  --text-muted: #6F8A82;
   --danger: #A32D2D;
   --danger-bg: #FCEBEB;
   color: var(--ink);
@@ -1110,7 +1110,7 @@ input[type="number"] { -moz-appearance: textfield; }
   color: var(--ink);
   white-space: nowrap;
 }
-.landing-logo--dark { color: #ECEFEA; }
+.landing-logo--dark { color: #EDF3DC; }
 .landing-logo-mark { color: var(--accent); font-size: 14px; }
 
 .landing-nav-links {
@@ -1190,8 +1190,8 @@ input[type="number"] { -moz-appearance: textfield; }
   margin-bottom: 20px;
 }
 .landing-pill--dark {
-  color: #B9C7BC;
-  border-color: #33473B;
+  color: #9FC2B8;
+  border-color: #1B4048;
 }
 
 /* --- hero --- */
@@ -1227,7 +1227,7 @@ input[type="number"] { -moz-appearance: textfield; }
   max-width: 560px;
   margin: 0 0 32px;
 }
-.landing-subtext--dark { color: #A9B7AD; }
+.landing-subtext--dark { color: #93B6AC; }
 
 .landing-hero-ctas {
   display: flex;
@@ -1267,7 +1267,7 @@ input[type="number"] { -moz-appearance: textfield; }
   color: var(--ink);
   margin: 0 0 14px;
 }
-.landing-h2--dark { color: #ECEFEA; }
+.landing-h2--dark { color: #EDF3DC; }
 
 #how-it-works > .landing-pill,
 #how-it-works > .landing-h2,
@@ -1393,7 +1393,7 @@ input[type="number"] { -moz-appearance: textfield; }
 /* --- dark band (integrations + CTA) --- */
 .landing-dark-band {
   width: 100%;
-  background: #16261E;
+  background: #0A333A;
 }
 .landing-dark-band .landing-section { text-align: center; }
 .landing-dark-band .landing-pill,
@@ -1418,22 +1418,22 @@ input[type="number"] { -moz-appearance: textfield; }
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  background: #1D2F25;
-  border: 1px solid #2C3F33;
+  background: #0C3A43;
+  border: 1px solid #17444D;
   border-radius: 10px;
   padding: 20px 12px;
   font-size: 13px;
   font-weight: 500;
-  color: #DCE5DF;
+  color: #D7E6E2;
 }
 .landing-integration-tile--muted {
-  color: #6E7E73;
+  color: #5E7D78;
   border-style: dashed;
 }
 .landing-integration-plus {
   font-size: 20px;
   line-height: 1;
-  color: #6E7E73;
+  color: #5E7D78;
 }
 
 /* --- pull quote --- */
@@ -1472,14 +1472,14 @@ input[type="number"] { -moz-appearance: textfield; }
 .landing-cta-buttons { display: flex; gap: 12px; flex-wrap: wrap; }
 .landing-btn-ghost-dark {
   background: transparent;
-  border-color: #3C5245;
-  color: #ECEFEA;
+  border-color: #1F4750;
+  color: #EDF3DC;
 }
-.landing-btn-ghost-dark:hover { border-color: #6FA96C; }
+.landing-btn-ghost-dark:hover { border-color: #D98257; }
 
 /* --- footer --- */
 .landing-footer {
-  border-top: 1px solid #22332A;
+  border-top: 1px solid #123840;
 }
 .landing-footer-inner {
   display: flex;
@@ -1501,7 +1501,7 @@ input[type="number"] { -moz-appearance: textfield; }
 }
 .landing-footer-brand p {
   font-size: 13px;
-  color: #8CA090;
+  color: #6FA39A;
   margin: 10px 0 0;
 }
 .landing-footer-col {
@@ -1516,23 +1516,23 @@ input[type="number"] { -moz-appearance: textfield; }
   padding: 0;
   text-align: left;
   font-size: 14px;
-  color: #C4D0C7;
+  color: #A9C9C2;
   cursor: pointer;
   width: fit-content;
 }
-.landing-footer-link:hover { color: #ECEFEA; }
+.landing-footer-link:hover { color: #EDF3DC; }
 .landing-footer-link--soon {
   cursor: default;
-  color: #6E7E73;
+  color: #5E7D78;
 }
-.landing-footer-link--soon:hover { color: #6E7E73; }
+.landing-footer-link--soon:hover { color: #5E7D78; }
 
 .landing-footer-bottom {
   padding-top: 1.5rem;
   padding-bottom: 2.5rem;
-  border-top: 1px solid #22332A;
+  border-top: 1px solid #123840;
   font-size: 12px;
-  color: #6E7E73;
+  color: #5E7D78;
   font-family: var(--font-mono);
 }
 /* ============================================================
