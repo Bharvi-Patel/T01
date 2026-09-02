@@ -82,7 +82,7 @@ def facebook_authorize_url(state: str) -> str:
         "https://www.facebook.com/v21.0/dialog/oauth"
         f"?client_id={META_APP_ID}&redirect_uri={_redirect_uri('facebook')}&state={state}"
         "&scope=pages_manage_posts,pages_read_engagement,pages_show_list,business_management,"
-        "pages_messaging,pages_manage_metadata"
+        "pages_messaging,pages_manage_metadata,read_insights"
     )
 
 
@@ -423,7 +423,8 @@ def instagram_authorize_url(state: str) -> str:
         "https://www.facebook.com/v21.0/dialog/oauth"
         f"?client_id={META_APP_ID}&redirect_uri={_redirect_uri('instagram')}&state={state}"
         "&scope=pages_show_list,pages_read_engagement,business_management,instagram_basic,"
-        "instagram_content_publish,instagram_manage_messages,pages_messaging,pages_manage_metadata"
+        "instagram_content_publish,instagram_manage_messages,pages_messaging,pages_manage_metadata,"
+        "instagram_manage_insights"
     )
 
 
@@ -583,12 +584,34 @@ def facebook_fetch_post_engagement(page_access_token: str, post_id: str) -> dict
         )
         resp.raise_for_status()
         data = resp.json()
-        return {
+        result = {
             "likes": data.get("likes", {}).get("summary", {}).get("total_count", 0),
             "comments": data.get("comments", {}).get("summary", {}).get("total_count", 0),
         }
     except requests.RequestException:
         return None
+
+    # Reach/impressions live on a separate insights edge, not the post
+    # node itself, and need the read_insights scope - a workspace
+    # connected before that scope was added won't have it, so this is
+    # best-effort and left out of the result (not defaulted to 0) on any
+    # failure rather than failing the whole likes/comments fetch over it.
+    try:
+        insights_resp = requests.get(
+            f"https://graph.facebook.com/v21.0/{post_id}/insights",
+            params={"metric": "post_impressions,post_impressions_unique", "access_token": page_access_token},
+            timeout=15,
+        )
+        insights_resp.raise_for_status()
+        values = {m["name"]: m["values"][0]["value"] for m in insights_resp.json().get("data", []) if m.get("values")}
+        if "post_impressions" in values:
+            result["views"] = values["post_impressions"]
+        if "post_impressions_unique" in values:
+            result["reach"] = values["post_impressions_unique"]
+    except (requests.RequestException, KeyError, IndexError):
+        pass
+
+    return result
 
 
 def instagram_fetch_post_engagement(page_access_token: str, media_id: str) -> dict | None:
@@ -600,25 +623,53 @@ def instagram_fetch_post_engagement(page_access_token: str, media_id: str) -> di
         )
         resp.raise_for_status()
         data = resp.json()
-        return {"likes": data.get("like_count", 0), "comments": data.get("comments_count", 0)}
+        result = {"likes": data.get("like_count", 0), "comments": data.get("comments_count", 0)}
     except requests.RequestException:
         return None
+
+    # Same best-effort split as Facebook above - needs instagram_manage_insights,
+    # which a workspace connected before that scope was added won't have.
+    # "views" replaced the old "impressions"/"plays" metrics on newer API
+    # versions and works across photo/carousel/video/reel media, unlike
+    # impressions (deprecated for non-Reels) or plays (video-only) - so
+    # it's requested alone rather than alongside those older names.
+    try:
+        insights_resp = requests.get(
+            f"https://graph.facebook.com/v21.0/{media_id}/insights",
+            params={"metric": "reach,views", "access_token": page_access_token},
+            timeout=15,
+        )
+        insights_resp.raise_for_status()
+        values = {m["name"]: m["values"][0]["value"] for m in insights_resp.json().get("data", []) if m.get("values")}
+        if "reach" in values:
+            result["reach"] = values["reach"]
+        if "views" in values:
+            result["views"] = values["views"]
+    except (requests.RequestException, KeyError, IndexError):
+        pass
+
+    return result
 
 
 def threads_fetch_post_engagement(access_token: str, media_id: str) -> dict | None:
     # Threads has no direct like/comment-count field on the media object
     # itself (unlike Instagram) — only the separate /insights endpoint,
     # which needs threads_manage_insights and reports "likes"/"replies" as
-    # named metrics rather than plain counts.
+    # named metrics rather than plain counts. That scope is already part
+    # of our Threads OAuth request, so views comes back in this same call
+    # for every workspace - no reconnect needed, unlike Facebook/Instagram.
     try:
         resp = requests.get(
             f"https://graph.threads.net/v1.0/{media_id}/insights",
-            params={"metric": "likes,replies", "access_token": access_token},
+            params={"metric": "likes,replies,views", "access_token": access_token},
             timeout=15,
         )
         resp.raise_for_status()
         values = {m["name"]: m["values"][0]["value"] for m in resp.json().get("data", []) if m.get("values")}
-        return {"likes": values.get("likes", 0), "comments": values.get("replies", 0)}
+        result = {"likes": values.get("likes", 0), "comments": values.get("replies", 0)}
+        if "views" in values:
+            result["views"] = values["views"]
+        return result
     except (requests.RequestException, KeyError, IndexError):
         return None
 

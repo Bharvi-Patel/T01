@@ -21,7 +21,7 @@ import Notifications from "./components/Notifications";
 import HelpCenter from "./components/HelpCenter";
 import Members from "./components/Members";
 import { MODE_TABS } from "./components/Form";
-import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, forgotPassword as apiForgotPassword, resetPassword as apiResetPassword, generateDraft, createManualDraft, reviewDraft, scheduleDraft, getConnections, getDraft, getProfile, getWorkspace, getNotifications } from "./api";
+import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, forgotPassword as apiForgotPassword, resetPassword as apiResetPassword, generateDraft, createManualDraft, reviewDraft, scheduleDraft, saveDraftAsDraft, getConnections, getDraft, getProfile, getWorkspace, getNotifications } from "./api";
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem("auth_token"));
@@ -390,17 +390,28 @@ export default function App() {
 
 
 
-  function handleSaveAsDraft() {
-    // The draft was already persisted as pending_review the moment it was
-    // generated, so there's nothing to save here — just leave the review
-    // screen without approving/scheduling/rejecting. Land on the Publish
-    // view's "Drafts" tab (pending review) so it's visibly there, waiting.
-    setDraftId(null);
-    setDraft(null);
-    setResult(null);
+  async function handleSaveAsDraft() {
+    // The draft row already exists (persisted at pending_review the
+    // moment it was generated) — this just flips saved_as_draft so it's
+    // the drafts the user actually chose to keep, not every
+    // still-pending-review draft, that show up on the Publish page.
+    if (!draftId) return;
+    setLoading(true);
     setError("");
-    setPublishTab("drafts");
-    setStep("publish");
+    try {
+      await saveDraftAsDraft({ token, draftId });
+      setDraftId(null);
+      setDraft(null);
+      setResult(null);
+      setError("");
+      setPublishTab("drafts");
+      setStep("publish");
+    } catch (e) {
+      if (e.status === 401) return handleLogout();
+      setError(e.message || "Something went wrong saving this draft.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleOpenDraft(id) {

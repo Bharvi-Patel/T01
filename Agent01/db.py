@@ -430,6 +430,17 @@ class Draft(Base):
     # never scheduled" once scheduled_at has been wiped.
     was_scheduled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # True only once the user explicitly clicks "Save as draft" on the
+    # review screen. Every draft is persisted at PENDING_REVIEW the
+    # instant it's generated (so /review's reject-and-revise has
+    # something to work against even if the user never touches the
+    # review screen again) - but that means "status == PENDING_REVIEW"
+    # alone can't be used to decide what belongs in the Publish page's
+    # Drafts tab, or every freshly-generated draft the user hasn't acted
+    # on yet (or ever will) would show up there. This flag is what the
+    # Drafts tab actually filters on; see GET /drafts in main.py.
+    saved_as_draft: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     # Guards the "remind me 15 minutes before a scheduled post goes live"
     # notification against firing on every scheduler poll cycle between
     # T-15min and T-0 - set True the moment the reminder is sent, reset to
@@ -488,12 +499,20 @@ class FollowerSnapshot(Base):
 
 
 class PostEngagement(Base):
-    """Cached like/comment counts for one published post, keyed to the
-    PublishResult that created it (its `detail` JSON holds the platform's
-    post_id on success — see approve_and_publish/publish_dispatch).
+    """Cached like/comment (and, where the platform's API and our OAuth
+    scope allow it, reach/views) counts for one published post, keyed to
+    the PublishResult that created it (its `detail` JSON holds the
+    platform's post_id on success — see approve_and_publish/publish_dispatch).
     Refreshed on-demand by POST /analytics/refresh rather than live on
     every /analytics/summary call, since that would mean one platform API
-    round-trip per post on every page load."""
+    round-trip per post on every page load.
+
+    reach/views are nullable, not defaulted to 0 like likes/comments -
+    None means "not available for this post" (LinkedIn never has it;
+    Facebook/Instagram only have it once the workspace reconnects with
+    the insights scope), which the frontend needs to tell apart from a
+    genuine zero.
+    """
     __tablename__ = "post_engagements"
 
     id: Mapped[uuid.UUID] = _uuid_col()
@@ -502,6 +521,8 @@ class PostEngagement(Base):
     )
     likes_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     comments_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reach: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    views: Mapped[int | None] = mapped_column(Integer, nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
     publish_result: Mapped["PublishResult"] = relationship(back_populates="engagement")

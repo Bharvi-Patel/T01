@@ -169,6 +169,151 @@ function FollowerCard({ platformKey, count, series }) {
   );
 }
 
+// Grouped bar chart: Reach / Views / Engagement per published post, all
+// posts in the selected day range (not just a top-5 slice), filterable
+// by platform. Hand-rolled with divs like the rest of this page's charts
+// (no charting library is installed) rather than a table, per what the
+// per-post section was asked to look like.
+function PostPerformanceChart({ posts }) {
+  const [platformFilter, setPlatformFilter] = useState("all");
+  const [hover, setHover] = useState(null); // { postIndex, key } — which bar's tooltip is showing
+
+  const platformsPresent = Array.from(new Set((posts || []).map((p) => p.platform)));
+  const filtered = platformFilter === "all" ? posts : (posts || []).filter((p) => p.platform === platformFilter);
+
+  const hasReach = filtered.some((p) => p.reach != null);
+  const hasViews = filtered.some((p) => p.views != null);
+
+  const series = [
+    { key: "reach", label: "Reach", color: "#7FA9A0", show: hasReach },
+    { key: "views", label: "Views", color: "#D9A441", show: hasViews },
+    { key: "engagement", label: "Engagement", color: "var(--accent)", show: true },
+  ].filter((s) => s.show);
+
+  // Each metric is scaled against its OWN max, not one shared max across
+  // all three - Views/Reach (impression-style counts) run orders of
+  // magnitude higher than Engagement (likes+comments), so a shared scale
+  // makes Engagement invisible next to them. This keeps every metric's
+  // bars readable relative to that metric's own range.
+  const maxByMetric = Object.fromEntries(
+    series.map((s) => [s.key, Math.max(1, ...filtered.map((p) => p[s.key] || 0))])
+  );
+
+  if (!posts || posts.length === 0) return null;
+
+  return (
+    <div
+      style={{
+        marginTop: 12, background: "var(--paper-raised)", border: "0.5px solid var(--border-strong)",
+        borderRadius: 8, padding: "14px 16px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 13, color: "var(--ink)", fontWeight: 500 }}>Post performance</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button
+            onClick={() => { setPlatformFilter("all"); setHover(null); }}
+            style={{
+              width: "auto", height: 24, padding: "0 10px", fontSize: 11, borderRadius: 999,
+              border: "0.5px solid var(--border-strong)",
+              background: platformFilter === "all" ? "var(--accent)" : "transparent",
+              color: platformFilter === "all" ? "var(--accent-ink)" : "var(--text-secondary)",
+            }}
+          >
+            All
+          </button>
+          {platformsPresent.map((key) => {
+            const p = platformByKey(key);
+            const active = platformFilter === key;
+            return (
+              <button
+                key={key}
+                onClick={() => { setPlatformFilter(key); setHover(null); }}
+                style={{
+                  width: "auto", height: 24, padding: "0 10px", fontSize: 11, borderRadius: 999,
+                  border: "0.5px solid var(--border-strong)", display: "flex", alignItems: "center", gap: 5,
+                  background: active ? "var(--accent)" : "transparent",
+                  color: active ? "var(--accent-ink)" : "var(--text-secondary)",
+                }}
+              >
+                {p ? <PlatformLogo platform={p} size={11} /> : null}
+                {p?.label || key}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, marginBottom: 10 }}>
+        {series.map((s) => (
+          <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-secondary)" }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: s.color, display: "inline-block" }} />
+            {s.label}
+          </div>
+        ))}
+      </div>
+
+      {filtered.length === 0 ? (
+        <p style={{ fontSize: 12.5, color: "var(--text-muted)", margin: 0 }}>No posts for this platform in range.</p>
+      ) : (
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 14, height: 150, overflowX: "auto", overflowY: "visible", paddingBottom: 4, paddingTop: 36 }}>
+          {filtered.map((post, i) => {
+            const p = platformByKey(post.platform);
+            return (
+              <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 46 }}>
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 110, position: "relative" }}>
+                  {series.map((s) => {
+                    const value = post[s.key];
+                    const height = value != null ? Math.max(2, (value / maxByMetric[s.key]) * 110) : 0;
+                    const isHovered = hover && hover.postIndex === i && hover.key === s.key;
+                    return (
+                      <div
+                        key={s.key}
+                        onMouseEnter={() => setHover({ postIndex: i, key: s.key })}
+                        onMouseLeave={() => setHover((h) => (h && h.postIndex === i && h.key === s.key ? null : h))}
+                        onClick={() => setHover((h) => (h && h.postIndex === i && h.key === s.key ? null : { postIndex: i, key: s.key }))}
+                        style={{ position: "relative", cursor: "pointer" }}
+                      >
+                        {isHovered && (
+                          <div
+                            style={{
+                              position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
+                              marginBottom: 6, background: "var(--ink)", color: "var(--paper)",
+                              borderRadius: 6, padding: "6px 9px", fontSize: 11, whiteSpace: "nowrap",
+                              zIndex: 10, pointerEvents: "none",
+                            }}
+                          >
+                            <div style={{ fontWeight: 600, marginBottom: 2, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {post.title}
+                            </div>
+                            <div>{s.label}: {value != null ? value.toLocaleString() : "not available"}</div>
+                          </div>
+                        )}
+                        <div
+                          style={{
+                            width: 8, height, borderRadius: 2,
+                            background: value != null ? s.color : "var(--border)",
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ marginTop: 6, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                  {p ? <PlatformLogo platform={p} size={11} /> : null}
+                  <span style={{ fontSize: 9.5, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                    {new Date(post.published_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TopPostsSection({ posts }) {
   if (!posts || posts.length === 0) return null;
   return (
@@ -473,6 +618,7 @@ export default function Analytics({ token, onAuthError, days: daysProp, onDaysCh
         <EngagementByCategorySection categories={data.engagement_by_category} />
       </div>
 
+      <PostPerformanceChart posts={data.all_posts} />
       <TopPostsSection posts={data.top_posts} />
 
       {data.recent_failures && data.recent_failures.length > 0 && (

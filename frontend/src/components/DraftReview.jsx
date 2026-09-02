@@ -12,6 +12,7 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
   const [closingSchedule, setClosingSchedule] = useState(false);
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("09:00");
+  const [lightboxIndex, setLightboxIndex] = useState(null);
 
   function closeSchedulePanel() {
     setClosingSchedule(true);
@@ -25,7 +26,12 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
     setShowReject(false);
     setFeedback("");
     setShowSchedule(false);
+    setLightboxIndex(null);
   }, [draft]);
+
+  useEffect(() => {
+    setLightboxIndex(null);
+  }, [activePlatform]);
 
   useEffect(() => {
     const connectedKeys = PLATFORMS.filter((p) => connections?.[p.key]).map((p) => p.key);
@@ -35,12 +41,23 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
 
   if (!draft) return null;
 
-  const { title, meta_description, intro, sections = [], conclusion, featured_image, video } = draft;
+  const { title, meta_description, intro, sections = [], conclusion, featured_image, carousel_images, video } = draft;
   const postText = {
     finto: intro, linkedin: draft.linkedin_post, facebook: draft.facebook_post,
     instagram: draft.instagram_caption, threads: draft.threads_post,
   };
   const available = PLATFORMS.filter((p) => connections?.[p.key]);
+
+  // Mirrors build_carousel_images() in Agent.py — that function (not
+  // featured_image alone) is what actually decides which image(s) go out
+  // to every platform at publish time, so the preview needs to show the
+  // same set or "approve" doesn't reflect what's really being approved.
+  const publishImages = (carousel_images && carousel_images.length > 0)
+    ? carousel_images
+    : [
+        ...(featured_image?.url ? [featured_image] : []),
+        ...sections.map((s) => s.image).filter((img) => img?.url),
+      ];
 
   function togglePlatform(key) {
     const next = new Set(selected);
@@ -134,6 +151,16 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
             <p className="eyebrow" style={{ marginBottom: 8 }}>
               {PLATFORMS.find((p) => p.key === activePlatform)?.label} preview
             </p>
+            {!video?.url && publishImages.length > 0 && (
+              <div style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 10 }}>
+                {publishImages.map((img, i) => (
+                  <img
+                    key={i} src={img.url} alt="" onClick={() => setLightboxIndex(i)}
+                    style={{ width: 76, height: 76, objectFit: "cover", borderRadius: 6, flexShrink: 0, cursor: "zoom-in" }}
+                  />
+                ))}
+              </div>
+            )}
             <p style={{ fontSize: 14, whiteSpace: "pre-wrap", margin: 0 }}>
               {postText[activePlatform]}
             </p>
@@ -259,6 +286,68 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
           </>
         )}
       </div>
+
+      {lightboxIndex !== null && publishImages[lightboxIndex] && (
+        <div
+          onClick={() => setLightboxIndex(null)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 1000,
+            display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+          }}
+        >
+          <button
+            onClick={() => setLightboxIndex(null)}
+            aria-label="Close"
+            style={{
+              position: "absolute", top: 16, right: 16, width: 36, height: 36, padding: 0,
+              borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.15)",
+              color: "#fff", fontSize: 16,
+            }}
+          >
+            ✕
+          </button>
+
+          {publishImages.length > 1 && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setLightboxIndex((lightboxIndex - 1 + publishImages.length) % publishImages.length); }}
+              aria-label="Previous image"
+              style={{
+                position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)",
+                width: 40, height: 40, padding: 0, borderRadius: "50%", border: "none",
+                background: "rgba(255,255,255,0.15)", color: "#fff", fontSize: 18,
+              }}
+            >
+              ‹
+            </button>
+          )}
+
+          <img
+            src={publishImages[lightboxIndex].url} alt=""
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "90%", maxHeight: "85vh", borderRadius: 8, display: "block" }}
+          />
+
+          {publishImages.length > 1 && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setLightboxIndex((lightboxIndex + 1) % publishImages.length); }}
+              aria-label="Next image"
+              style={{
+                position: "absolute", right: 16, top: "50%", transform: "translateY(-50%)",
+                width: 40, height: 40, padding: 0, borderRadius: "50%", border: "none",
+                background: "rgba(255,255,255,0.15)", color: "#fff", fontSize: 18,
+              }}
+            >
+              ›
+            </button>
+          )}
+
+          {publishImages.length > 1 && (
+            <p style={{ position: "absolute", bottom: 20, color: "#fff", fontSize: 12.5, margin: 0 }}>
+              {lightboxIndex + 1} / {publishImages.length}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

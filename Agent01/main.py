@@ -1944,11 +1944,22 @@ async def refresh_analytics(
         existing = (
             await db.execute(select(PostEngagement).where(PostEngagement.publish_result_id == pr.id))
         ).scalar_one_or_none()
+        # reach/views only overwrite an existing value when this fetch
+        # actually returned one - a transient insights-endpoint failure on
+        # this particular refresh shouldn't wipe out a number successfully
+        # fetched on a previous refresh.
         if existing:
             existing.likes_count = counts["likes"]
             existing.comments_count = counts["comments"]
+            if "reach" in counts:
+                existing.reach = counts["reach"]
+            if "views" in counts:
+                existing.views = counts["views"]
         else:
-            db.add(PostEngagement(publish_result_id=pr.id, likes_count=counts["likes"], comments_count=counts["comments"]))
+            db.add(PostEngagement(
+                publish_result_id=pr.id, likes_count=counts["likes"], comments_count=counts["comments"],
+                reach=counts.get("reach"), views=counts.get("views"),
+            ))
         engagement_updated += 1
 
     await db.commit()
@@ -1966,9 +1977,10 @@ async def analytics_summary(
     db: AsyncSession = Depends(get_db),
     user_id: uuid.UUID = Depends(require_auth),
 ):
-    """Real usage stats derived from publish attempts — no follower/reach data,
-    since T01 doesn't call any platform's insights API. Everything here is
-    counted from our own PublishResult rows."""
+    """Usage stats derived from our own PublishResult rows, plus
+    follower counts and per-post engagement (likes/comments always;
+    reach/views where the platform and OAuth scope support it) pulled
+    from each platform's API and cached by POST /analytics/refresh."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
     membership = await get_or_create_membership(db, user_id)
 
@@ -2060,6 +2072,7 @@ async def analytics_summary(
                 PublishResult.platform, PublishResult.published_at,
                 Draft.category, Draft.content,
                 PostEngagement.likes_count, PostEngagement.comments_count,
+                PostEngagement.reach, PostEngagement.views,
             )
             .join(Draft, Draft.id == PublishResult.draft_id)
             .join(PostEngagement, PostEngagement.publish_result_id == PublishResult.id)
@@ -2085,6 +2098,30 @@ async def analytics_summary(
         key=lambda p: p["likes"] + p["comments"],
         reverse=True,
     )[:5]
+
+    # Every published post with engagement data in range (not just the
+    # top 5) - backs the Analytics page's per-post reach/views/engagement
+    # chart, which needs the full set to filter by platform client-side
+    # without another round trip. reach/views stay None (not 0) when the
+    # platform/permission doesn't support them - see PostEngagement.
+    all_posts = sorted(
+        (
+            {
+                "platform": r.platform.value if hasattr(r.platform, "value") else r.platform,
+                "title": (r.content or {}).get("title") or (r.content or {}).get("subtopic") or r.category,
+                "category": r.category,
+                "likes": r.likes_count,
+                "comments": r.comments_count,
+                "engagement": _engagement_total(r.likes_count, r.comments_count),
+                "reach": r.reach,
+                "views": r.views,
+                "published_at": r.published_at.isoformat(),
+            }
+            for r in engagement_rows
+        ),
+        key=lambda p: p["published_at"],
+        reverse=True,
+    )
 
     category_engagement: dict[str, dict] = {}
     for r in engagement_rows:
@@ -2155,6 +2192,7 @@ async def analytics_summary(
         "top_categories": top_categories,
         "recent_failures": recent_failures,
         "top_posts": top_posts,
+        "all_posts": all_posts,
         "engagement_by_category": engagement_by_category,
         "engagement_by_weekday": engagement_by_weekday,
         "current_followers": current_followers,
@@ -2169,6 +2207,7 @@ async def list_drafts(
     scheduled_from: datetime | None = None,
     scheduled_to: datetime | None = None,
     was_scheduled: bool | None = None,
+    saved_as_draft: bool | None = None,
     db: AsyncSession = Depends(get_db),
     user_id: uuid.UUID = Depends(require_auth),
 ):
@@ -2212,6 +2251,13 @@ async def list_drafts(
     # unscheduled back to pending_review (was_scheduled is never cleared).
     if was_scheduled is not None:
         query = query.where(Draft.was_scheduled.is_(was_scheduled))
+
+    # The Publish page's Drafts tab passes saved_as_draft=true alongside
+    # status=pending_review so it only lists drafts the user explicitly
+    # chose to save, not every draft still sitting at pending_review
+    # because it's mid-review or was simply abandoned after generation.
+    if saved_as_draft is not None:
+        query = query.where(Draft.saved_as_draft.is_(saved_as_draft))
 
     # A date-range filter matches drafts scheduled in that range OR published
     # in that range, so calendar/scheduled views can pull both upcoming and
@@ -2288,6 +2334,35 @@ async def get_draft(draft_id: uuid.UUID, db: AsyncSession = Depends(get_db), use
     if draft is None:
         raise HTTPException(status_code=404, detail="Unknown draft_id")
     return {"draft_id": str(draft.id), "draft": draft.content, "status": draft.status.value}
+
+
+@app.post("/drafts/{draft_id}/save-as-draft")
+async def save_draft_as_draft(
+    draft_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth),
+):
+    """Backs the review screen's "Save as draft" button. The draft row
+    already exists (every draft is persisted at PENDING_REVIEW the moment
+    it's generated) - this just flips saved_as_draft so it shows up in the
+    Publish page's Drafts tab (GET /drafts?status=pending_review&saved_as_draft=true),
+    distinguishing "the user chose to keep this as a draft" from "this
+    happens to be sitting at pending_review because no one's acted on it
+    yet". Only valid while still pending_review - once a draft has moved
+    on (scheduled, published, rejected, pending_approval) "save as draft"
+    doesn't mean anything anymore.
+    """
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.workspace_id == membership.workspace_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Unknown draft_id")
+    if draft.status != DraftStatus.PENDING_REVIEW:
+        raise HTTPException(status_code=400, detail=f"Draft is {draft.status.value}, not pending_review - can't save as draft")
+
+    draft.saved_as_draft = True
+    await db.commit()
+    await db.refresh(draft)
+    return {"draft_id": str(draft.id), "status": draft.status.value, "saved_as_draft": draft.saved_as_draft}
 
 
 @app.post("/drafts/{draft_id}/schedule")

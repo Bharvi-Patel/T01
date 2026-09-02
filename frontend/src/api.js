@@ -384,14 +384,26 @@ export async function getPlatformHistory({ token, platform, limit, debug }) {
   and/or by a scheduled_at date range (for the calendar view).
   Expected backend response: { drafts: [{ draft_id, category, subtopic, title, status, created_at, updated_at, scheduled_at, scheduled_platforms, scheduled_live }] }
  */
-export async function getDrafts({ token, status, excludeStatus, wasScheduled, scheduledFrom, scheduledTo }) {
+export async function getDrafts({ token, status, excludeStatus, wasScheduled, savedAsDraft, scheduledFrom, scheduledTo }) {
   const url = new URL(`${API_BASE}/drafts`);
   if (status) url.searchParams.set("status", status);
   if (excludeStatus) url.searchParams.set("exclude_status", excludeStatus);
   if (wasScheduled !== undefined) url.searchParams.set("was_scheduled", wasScheduled);
+  if (savedAsDraft !== undefined) url.searchParams.set("saved_as_draft", savedAsDraft);
   if (scheduledFrom) url.searchParams.set("scheduled_from", scheduledFrom);
   if (scheduledTo) url.searchParams.set("scheduled_to", scheduledTo);
   const res = await fetch(url, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+// Backs the review screen's "Save as draft" button - flips the existing
+// pending_review draft's saved_as_draft flag so it shows up in the
+// Publish page's Drafts tab, rather than trying to save something new.
+export async function saveDraftAsDraft({ token, draftId }) {
+  const res = await fetch(`${API_BASE}/drafts/${draftId}/save-as-draft`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
   return handle(res);
 }
 

@@ -66,7 +66,7 @@ function formatDate(iso) {
   }
 }
 
-function DraftList({ token, status, excludeStatus, wasScheduled, onOpenDraft, emptyLabel }) {
+function DraftList({ token, status, excludeStatus, wasScheduled, savedAsDraft, onOpenDraft, emptyLabel }) {
   const [drafts, setDrafts] = useState(null);
   const [error, setError] = useState("");
 
@@ -74,11 +74,11 @@ function DraftList({ token, status, excludeStatus, wasScheduled, onOpenDraft, em
     let cancelled = false;
     setDrafts(null);
     setError("");
-    getDrafts({ token, status, excludeStatus, wasScheduled })
+    getDrafts({ token, status, excludeStatus, wasScheduled, savedAsDraft })
       .then((res) => { if (!cancelled) setDrafts(res.drafts); })
       .catch((e) => { if (!cancelled) setError(e.message || "Could not load drafts."); });
     return () => { cancelled = true; };
-  }, [token, status, excludeStatus, wasScheduled]);
+  }, [token, status, excludeStatus, wasScheduled, savedAsDraft]);
 
   if (error) {
     return <p style={{ fontSize: 13, color: "var(--danger)" }}>{error}</p>;
@@ -559,7 +559,7 @@ export default function Publish({ token, tab, onNewPost, onOpenDraft, onSendMedi
       )}
 
       {tab === "drafts" && (
-        <DraftList token={token} status="pending_review" onOpenDraft={onOpenDraft} emptyLabel="No drafts pending review right now." />
+        <DraftList token={token} status="pending_review" savedAsDraft={true} onOpenDraft={onOpenDraft} emptyLabel="No saved drafts right now." />
       )}
       {tab === "scheduled" && (
         <DraftList
