@@ -45,7 +45,7 @@ from oauth_platforms import (
     facebook_fetch_follower_count, instagram_fetch_follower_count, threads_fetch_follower_count,
     facebook_fetch_post_engagement, instagram_fetch_post_engagement,
     threads_fetch_post_engagement, linkedin_fetch_post_engagement, send_page_message,
-    reply_to_thread,
+    reply_to_thread, instagram_reply_to_comment, facebook_reply_to_comment,
 )
 
 PENDING_PAGE_SELECTIONS: dict[str, dict] = {} # pending_id -> {"user_id","platform","pages","expires_at"}
@@ -3805,16 +3805,19 @@ async def reply_to_inbox_item(
     records the reply as its own InboxItem (is_outbound=True) so the thread
     view shows a real conversation.
 
-    Two distinct reply surfaces are dispatched from here:
+    Three distinct reply surfaces are dispatched from here:
       - MESSAGE-kind items (Facebook/Instagram DMs) go through Meta's Send
         API (send_page_message) - a private reply to the original sender.
       - COMMENT-kind items on Threads (a public reply to one of the
         connected profile's posts) go through Threads' own container/publish
         flow (reply_to_thread) - the reply itself becomes a new, publicly
         visible Threads post attached under the original.
-    Any other combination (e.g. Facebook/Instagram comments, which use a
-    different, unbuilt Graph API surface) is rejected here rather than
-    silently failing against the wrong endpoint."""
+      - COMMENT-kind items on Facebook/Instagram go through each platform's
+        own comment-reply edge (facebook_reply_to_comment /
+        instagram_reply_to_comment) - a public reply nested under the
+        original comment, distinct from both of the above.
+    MENTION-kind items on Facebook/Instagram have no reply endpoint at all
+    on Meta's side and stay unsupported here."""
     text = body.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Reply text can't be empty")
@@ -3832,7 +3835,8 @@ async def reply_to_inbox_item(
         raise HTTPException(status_code=404, detail="Inbox item not found")
 
     is_threads_reply = item.platform == Platform.THREADS and item.kind in (InboxKind.COMMENT, InboxKind.MENTION)
-    if item.kind != InboxKind.MESSAGE and not is_threads_reply:
+    is_meta_comment_reply = item.platform in (Platform.FACEBOOK, Platform.INSTAGRAM) and item.kind == InboxKind.COMMENT
+    if item.kind != InboxKind.MESSAGE and not is_threads_reply and not is_meta_comment_reply:
         raise HTTPException(status_code=400, detail="This item can't be replied to here")
 
     conn_result = await db.execute(
@@ -3852,6 +3856,14 @@ async def reply_to_inbox_item(
             message_id = await run_in_threadpool(
                 reply_to_thread, access_token, creds["threads_user_id"], item.external_id, text
             )
+        except ValueError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        reply_kind = InboxKind.COMMENT
+    elif is_meta_comment_reply:
+        page_access_token = decrypt_secret(creds["page_access_token"])
+        reply_fn = instagram_reply_to_comment if item.platform == Platform.INSTAGRAM else facebook_reply_to_comment
+        try:
+            message_id = await run_in_threadpool(reply_fn, page_access_token, item.external_id, text)
         except ValueError as e:
             raise HTTPException(status_code=502, detail=str(e))
         reply_kind = InboxKind.COMMENT

@@ -155,7 +155,11 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
         // and don't know about this contact.
         const senderName = lastInbound?.sender_name || latest.sender_name || `${platformLabel} contact`;
         const unread = groupItems.filter((i) => !i.is_read && !i.is_outbound).length;
-        const canReply = Boolean(lastInbound) && (lastInbound.kind === "message" || (lastInbound.platform === "threads" && (lastInbound.kind === "comment" || lastInbound.kind === "mention")));
+        const canReply = Boolean(lastInbound) && (
+          lastInbound.kind === "message" ||
+          (lastInbound.platform === "threads" && (lastInbound.kind === "comment" || lastInbound.kind === "mention")) ||
+          ((lastInbound.platform === "facebook" || lastInbound.platform === "instagram") && lastInbound.kind === "comment")
+        );
         return { key, platform: latest.platform, kind: latest.kind, senderName, items: sorted, latest, unread, canReply };
       })
       .sort((a, b) => new Date(b.latest.created_at) - new Date(a.latest.created_at));

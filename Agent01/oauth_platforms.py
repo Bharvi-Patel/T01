@@ -82,7 +82,7 @@ def facebook_authorize_url(state: str) -> str:
         "https://www.facebook.com/v21.0/dialog/oauth"
         f"?client_id={META_APP_ID}&redirect_uri={_redirect_uri('facebook')}&state={state}"
         "&scope=pages_manage_posts,pages_read_engagement,pages_show_list,business_management,"
-        "pages_messaging,pages_manage_metadata,read_insights"
+        "pages_messaging,pages_manage_metadata,read_insights,pages_manage_engagement"
     )
 
 
@@ -307,6 +307,62 @@ def reply_to_thread(access_token: str, threads_user_id: str, reply_to_id: str, t
     return publish_resp.json().get("id", "")
 
 
+def instagram_reply_to_comment(page_access_token: str, comment_id: str, text: str) -> str:
+    """Posts a public reply to an Instagram comment via the dedicated
+    /{comment-id}/replies edge (distinct from posting a new top-level
+    comment) - this is what actually threads the reply under the original
+    comment rather than creating an unrelated comment on the same media.
+    Needs instagram_manage_comments - added to our IG OAuth scope alongside
+    this function, so a workspace connected before this change needs to
+    reconnect Instagram before this will work; it'll fail with a
+    permissions error from Meta until then.
+
+    Raises ValueError with Meta's own error message on failure, mirroring
+    reply_to_thread/send_page_message above.
+    """
+    resp = requests.post(
+        f"https://graph.facebook.com/v21.0/{comment_id}/replies",
+        data={"message": text, "access_token": page_access_token},
+        timeout=15,
+    )
+    if not resp.ok:
+        try:
+            err_msg = resp.json().get("error", {}).get("message", resp.text)
+        except ValueError:
+            err_msg = resp.text
+        raise ValueError(f"Meta rejected the reply: {err_msg}")
+    return resp.json().get("id", "")
+
+
+def facebook_reply_to_comment(page_access_token: str, comment_id: str, text: str) -> str:
+    """Posts a public reply to a Facebook Page comment. Facebook has no
+    separate replies edge like Instagram's - posting to the same
+    comment's own /comments edge is what Facebook itself calls a "reply"
+    and nests it under the parent in the UI, rather than adding a
+    sibling top-level comment on the post.
+
+    Needs pages_manage_engagement - added to our Facebook OAuth scope
+    alongside this function, so a workspace connected before this change
+    needs to reconnect Facebook before this will work; it'll fail with a
+    permissions error from Meta until then.
+
+    Raises ValueError with Meta's own error message on failure, mirroring
+    the other reply functions above.
+    """
+    resp = requests.post(
+        f"https://graph.facebook.com/v21.0/{comment_id}/comments",
+        data={"message": text, "access_token": page_access_token},
+        timeout=15,
+    )
+    if not resp.ok:
+        try:
+            err_msg = resp.json().get("error", {}).get("message", resp.text)
+        except ValueError:
+            err_msg = resp.text
+        raise ValueError(f"Meta rejected the reply: {err_msg}")
+    return resp.json().get("id", "")
+
+
 def facebook_credentials_from_page(page: dict) -> dict:
     # "feed" delivers Page comments (as item="comment" within the feed
     # payload - Facebook has no dedicated "comments" field the way
@@ -424,7 +480,7 @@ def instagram_authorize_url(state: str) -> str:
         f"?client_id={META_APP_ID}&redirect_uri={_redirect_uri('instagram')}&state={state}"
         "&scope=pages_show_list,pages_read_engagement,business_management,instagram_basic,"
         "instagram_content_publish,instagram_manage_messages,pages_messaging,pages_manage_metadata,"
-        "instagram_manage_insights"
+        "instagram_manage_insights,instagram_manage_comments"
     )
 
 
