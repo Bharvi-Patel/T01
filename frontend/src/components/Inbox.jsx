@@ -52,6 +52,36 @@ function threadKey(item) {
   return item.thread_id ? `${item.platform}:${item.thread_id}` : `single:${item.id}`;
 }
 
+// This app has no backend concept of "liking" a comment (Meta doesn't
+// expose that as an API for us, and there's nowhere to persist it) - so
+// this is a local-only, decorative toggle. It fills red on click for a
+// normal-looking interaction, but it isn't sent anywhere and won't
+// survive a page reload.
+function HeartIcon({ size = 14, liked, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={liked ? "Unlike" : "Like"}
+      aria-pressed={liked}
+      style={{
+        width: "auto", height: "auto", padding: 0, background: "transparent", border: "none",
+        cursor: "pointer", flexShrink: 0, display: "inline-flex", lineHeight: 0,
+        transition: "transform 120ms ease",
+        transform: liked ? "scale(1.08)" : "scale(1)",
+      }}
+    >
+      <svg
+        width={size} height={size} viewBox="0 0 24 24"
+        fill={liked ? "#ed4956" : "none"}
+        stroke={liked ? "#ed4956" : "var(--text-muted)"}
+        strokeWidth={1.8}
+      >
+        <path d="M12 21s-6.7-4.35-9.3-8.2C1 10.1 1.6 6.6 4.6 5.1c2.4-1.2 4.9-.2 6.4 1.8.5.65.9 1.3 1 1.5.1-.2.5-.85 1-1.5 1.5-2 4-3 6.4-1.8 3 1.5 3.6 5 1.9 7.7C18.7 16.65 12 21 12 21z" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
 function Avatar({ name, platform, size = 36 }) {
   const platformMeta = INBOX_PLATFORMS.find((p) => p.key === platform);
   const badgeSize = Math.max(14, Math.round(size * 0.5));
@@ -92,8 +122,28 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
   const [search, setSearch] = useState("");
   const [selectedKey, setSelectedKey] = useState(null);
   const [replyText, setReplyText] = useState("");
+  // Local-only "liked" set, keyed by item id - see the HeartIcon comment
+  // for why this can't be a real like. Kept at this level (not reset per
+  // conversation) so it survives switching threads within the session.
+  const [likedIds, setLikedIds] = useState(() => new Set());
+
+  function toggleLike(itemId) {
+    setLikedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  }
   const [sending, setSending] = useState(false);
   const [replyError, setReplyError] = useState(null);
+  // Which specific comment "Reply" was clicked on (comment-style threads
+  // only, where a thread can hold several root comments) - null means
+  // "reply to the most recent inbound item", the old default behavior.
+  const [replyTarget, setReplyTarget] = useState(null);
+  // Root comment id -> whether its replies are expanded, Instagram-style
+  // ("View replies (n)" / "Hide replies"). Collapsed by default.
+  const [expandedReplies, setExpandedReplies] = useState({});
 
   // showSpinner is false for background polls so the list doesn't flash a
   // full loading state every 15s - only the very first load (and token
@@ -181,21 +231,50 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
     setSelectedKey(conv.key);
     setReplyText("");
     setReplyError(null);
+    setReplyTarget(null);
+    setExpandedReplies({});
     conv.items.filter((i) => !i.is_read && !i.is_outbound).forEach((i) => handleMarkRead(i.id));
   }
 
   function handleSend() {
     const text = replyText.trim();
     if (!text || sending || !selected) return;
-    const target = [...selected.items].reverse().find((i) => !i.is_outbound);
+    const target = replyTarget || [...selected.items].reverse().find((i) => !i.is_outbound);
     if (!target) return;
     setSending(true);
     setReplyError(null);
     handleReply(target.id, text)
-      .then(() => setReplyText(""))
+      .then(() => {
+        setReplyText("");
+        setReplyTarget(null);
+      })
       .catch((e) => setReplyError(e.message || "Failed to send reply"))
       .finally(() => setSending(false));
   }
+
+  // Instagram-style comment threads have no true parent/child link in the
+  // data (InboxItem only has thread_id, not a reply-to id) - so an
+  // outbound reply is grouped under whichever inbound comment immediately
+  // preceded it chronologically, which matches how handleSend actually
+  // targets a reply.
+  const commentGroups = useMemo(() => {
+    if (!selected) return [];
+    const groups = [];
+    let current = null;
+    for (const item of selected.items) {
+      if (!item.is_outbound) {
+        current = { root: item, replies: [] };
+        groups.push(current);
+      } else if (current) {
+        current.replies.push(item);
+      } else {
+        groups.push({ root: item, replies: [] });
+      }
+    }
+    return groups;
+  }, [selected]);
+
+  const isCommentThread = Boolean(selected) && selected.items.some((i) => i.kind === "comment" || i.kind === "mention");
 
   if (loading) {
     return <div style={{ padding: "3rem 0", textAlign: "center", color: "var(--text-secondary)" }}>Loading inbox…</div>;
@@ -330,36 +409,102 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
                   </div>
                 </div>
 
-                <div style={{ flex: 1, overflowY: "auto", padding: "18px 16px", display: "flex", flexDirection: "column", gap: 4, minHeight: 0 }}>
-                  {selected.items.map((item, idx) => {
-                    const showDivider = idx === 0 || !sameDay(item.created_at, selected.items[idx - 1].created_at);
-                    return (
-                      <div key={item.id}>
-                        {showDivider && (
-                          <p style={{ textAlign: "center", fontSize: 11.5, color: "var(--text-muted)", margin: "10px 0" }}>
-                            {dayTimeLabel(item.created_at)}
-                          </p>
-                        )}
-                        <div style={{ display: "flex", justifyContent: item.is_outbound ? "flex-end" : "flex-start", marginBottom: 8 }}>
-                          <div
-                            style={{
-                              maxWidth: "70%", padding: "8px 12px", borderRadius: 14,
-                              background: item.is_outbound ? "var(--accent)" : "var(--paper)",
-                              color: item.is_outbound ? "var(--accent-ink)" : "var(--ink)",
-                              border: item.is_outbound ? "none" : "0.5px solid var(--border)",
-                              fontSize: 13.5, wordBreak: "break-word",
-                            }}
-                          >
-                            {item.body || <em>No text content</em>}
+                <div style={{ flex: 1, overflowY: "auto", padding: isCommentThread ? "18px 16px" : "18px 16px", display: "flex", flexDirection: "column", gap: isCommentThread ? 18 : 4, minHeight: 0 }}>
+                  {isCommentThread ? (
+                    commentGroups.map((group) => {
+                      const expanded = Boolean(expandedReplies[group.root.id]);
+                      return (
+                        <div key={group.root.id} style={{ display: "flex", gap: 10 }}>
+                          <Avatar name={group.root.sender_name} platform={selected.platform} size={32} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13.5, color: "var(--ink)", lineHeight: 1.45, wordBreak: "break-word" }}>
+                              <span style={{ fontWeight: 600, marginRight: 6 }}>{group.root.sender_name || "Unknown"}</span>
+                              {group.root.body || <em>No text content</em>}
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 4 }}>
+                              <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{timeAgo(group.root.created_at)}</span>
+                              {selected.canReply && (
+                                <button
+                                  onClick={() => { setReplyTarget(group.root); setReplyText(""); setReplyError(null); }}
+                                  style={{ width: "auto", height: "auto", padding: 0, background: "transparent", border: "none", fontSize: 11.5, fontWeight: 600, color: "var(--text-muted)", cursor: "pointer" }}
+                                >
+                                  Reply
+                                </button>
+                              )}
+                            </div>
+                            {group.replies.length > 0 && (
+                              <button
+                                onClick={() => setExpandedReplies((prev) => ({ ...prev, [group.root.id]: !expanded }))}
+                                style={{
+                                  width: "auto", height: "auto", display: "flex", alignItems: "center", gap: 8,
+                                  padding: 0, marginTop: 10, background: "transparent", border: "none", cursor: "pointer",
+                                  fontSize: 12, fontWeight: 600, color: "var(--text-muted)",
+                                }}
+                              >
+                                <span style={{ width: 24, height: 1, background: "var(--border-strong)", display: "inline-block" }} />
+                                {expanded ? "Hide replies" : `View replies (${group.replies.length})`}
+                              </button>
+                            )}
+                            {expanded && group.replies.map((reply) => (
+                              <div key={reply.id} style={{ display: "flex", gap: 8, marginTop: 12, marginLeft: 12 }}>
+                                <Avatar name={reply.is_outbound ? "You" : reply.sender_name} platform={selected.platform} size={24} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 13, color: "var(--ink)", lineHeight: 1.45, wordBreak: "break-word" }}>
+                                    <span style={{ fontWeight: 600, marginRight: 6 }}>{reply.is_outbound ? "You" : (reply.sender_name || "Unknown")}</span>
+                                    {reply.body || <em>No text content</em>}
+                                  </div>
+                                  <span style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3, display: "inline-block" }}>{timeAgo(reply.created_at)}</span>
+                                </div>
+                                <HeartIcon liked={likedIds.has(reply.id)} onClick={() => toggleLike(reply.id)} />
+                              </div>
+                            ))}
+                          </div>
+                          <HeartIcon liked={likedIds.has(group.root.id)} onClick={() => toggleLike(group.root.id)} />
+                        </div>
+                      );
+                    })
+                  ) : (
+                    selected.items.map((item, idx) => {
+                      const showDivider = idx === 0 || !sameDay(item.created_at, selected.items[idx - 1].created_at);
+                      return (
+                        <div key={item.id}>
+                          {showDivider && (
+                            <p style={{ textAlign: "center", fontSize: 11.5, color: "var(--text-muted)", margin: "10px 0" }}>
+                              {dayTimeLabel(item.created_at)}
+                            </p>
+                          )}
+                          <div style={{ display: "flex", justifyContent: item.is_outbound ? "flex-end" : "flex-start", marginBottom: 8 }}>
+                            <div
+                              style={{
+                                maxWidth: "70%", padding: "8px 12px", borderRadius: 14,
+                                background: item.is_outbound ? "var(--accent)" : "var(--paper)",
+                                color: item.is_outbound ? "var(--accent-ink)" : "var(--ink)",
+                                border: item.is_outbound ? "none" : "0.5px solid var(--border)",
+                                fontSize: 13.5, wordBreak: "break-word",
+                              }}
+                            >
+                              {item.body || <em>No text content</em>}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                 </div>
 
                 {selected.canReply ? (
                   <div style={{ padding: "12px 16px", borderTop: "0.5px solid var(--border)", flexShrink: 0 }}>
+                    {isCommentThread && replyTarget && (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8, fontSize: 11.5, color: "var(--text-muted)" }}>
+                        <span>Replying to <strong style={{ color: "var(--ink)" }}>{replyTarget.sender_name || "Unknown"}</strong></span>
+                        <button
+                          onClick={() => setReplyTarget(null)}
+                          style={{ width: "auto", height: "auto", padding: 0, background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 11.5 }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
                     <div style={{ display: "flex", gap: 8 }}>
                       <input
                         type="text"
