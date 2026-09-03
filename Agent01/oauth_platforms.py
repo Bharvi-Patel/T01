@@ -584,9 +584,14 @@ def facebook_fetch_post_engagement(page_access_token: str, post_id: str) -> dict
         )
         resp.raise_for_status()
         data = resp.json()
+        # Same reasoning as Instagram below: a missing likes/comments edge
+        # (hidden counts, permission gap) shouldn't be recorded as a
+        # confirmed zero - treat it as an unknown/failed fetch instead.
+        if "likes" not in data or "comments" not in data:
+            return None
         result = {
-            "likes": data.get("likes", {}).get("summary", {}).get("total_count", 0),
-            "comments": data.get("comments", {}).get("summary", {}).get("total_count", 0),
+            "likes": data["likes"].get("summary", {}).get("total_count", 0),
+            "comments": data["comments"].get("summary", {}).get("total_count", 0),
         }
     except requests.RequestException:
         return None
@@ -623,7 +628,15 @@ def instagram_fetch_post_engagement(page_access_token: str, media_id: str) -> di
         )
         resp.raise_for_status()
         data = resp.json()
-        result = {"likes": data.get("like_count", 0), "comments": data.get("comments_count", 0)}
+        # Graph API omits like_count/comments_count entirely (rather than
+        # returning 0) when the post owner has "Hide like and view counts"
+        # enabled, or the token lacks the needed permission - .get(..., 0)
+        # would silently record that as genuine zero engagement, which then
+        # gets cached and never corrected. Treat a missing field as unknown
+        # (this whole fetch failed) rather than fabricating a count.
+        if "like_count" not in data or "comments_count" not in data:
+            return None
+        result = {"likes": data["like_count"], "comments": data["comments_count"]}
     except requests.RequestException:
         return None
 

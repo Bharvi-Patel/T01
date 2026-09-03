@@ -250,7 +250,7 @@ function FollowerCard({ platformKey, count, series }) {
 // per-post section was asked to look like.
 function PostPerformanceChart({ posts }) {
   const [platformFilter, setPlatformFilter] = useState("all");
-  const [hover, setHover] = useState(null); // { postIndex, key } — which bar's tooltip is showing
+  const [hover, setHover] = useState(null); // { postIndex, key, x, y } — which bar's tooltip is showing, anchored to viewport coords
 
   const platformsPresent = Array.from(new Set((posts || []).map((p) => p.platform)));
   const filtered = platformFilter === "all" ? posts : (posts || []).filter((p) => p.platform === platformFilter);
@@ -274,6 +274,10 @@ function PostPerformanceChart({ posts }) {
   );
 
   if (!posts || posts.length === 0) return null;
+
+  const hoveredPost = hover ? filtered[hover.postIndex] : null;
+  const hoveredSeries = hover ? series.find((s) => s.key === hover.key) : null;
+  const hoveredValue = hoveredPost ? hoveredPost[hover.key] : null;
 
   return (
     <div
@@ -330,42 +334,28 @@ function PostPerformanceChart({ posts }) {
       {filtered.length === 0 ? (
         <p style={{ fontSize: 12.5, color: "var(--text-muted)", margin: 0 }}>No posts for this platform in range.</p>
       ) : (
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 14, height: 150, overflowX: "auto", overflowY: "visible", paddingBottom: 4, paddingTop: 36 }}>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 14, height: 110, overflowX: "auto", overflowY: "hidden", paddingBottom: 4 }}>
           {filtered.map((post, i) => {
             const p = platformByKey(post.platform);
             return (
               <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, width: 46 }}>
-                <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 110, position: "relative" }}>
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 110 }}>
                   {series.map((s) => {
                     const value = post[s.key];
                     const height = value != null ? Math.max(2, (value / maxByMetric[s.key]) * 110) : 2;
-                    const isHovered = hover && hover.postIndex === i && hover.key === s.key;
                     return (
                       <div
                         key={s.key}
-                        onMouseEnter={() => setHover({ postIndex: i, key: s.key })}
-                        onMouseLeave={() => setHover((h) => (h && h.postIndex === i && h.key === s.key ? null : h))}
-                        onClick={() => setHover((h) => (h && h.postIndex === i && h.key === s.key ? null : { postIndex: i, key: s.key }))}
-                        style={{
-                          position: "relative", cursor: "pointer",
-                          height: 110, width: 8, display: "flex", alignItems: "flex-end",
+                        onClick={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setHover((h) =>
+                            h && h.postIndex === i && h.key === s.key
+                              ? null
+                              : { postIndex: i, key: s.key, x: rect.left + rect.width / 2, y: rect.top }
+                          );
                         }}
+                        style={{ cursor: "pointer", height: 110, width: 8, display: "flex", alignItems: "flex-end" }}
                       >
-                        {isHovered && (
-                          <div
-                            style={{
-                              position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
-                              marginBottom: 6, background: "var(--ink)", color: "var(--paper)",
-                              borderRadius: 6, padding: "6px 9px", fontSize: 11, whiteSpace: "nowrap",
-                              zIndex: 10, pointerEvents: "none",
-                            }}
-                          >
-                            <div style={{ fontWeight: 600, marginBottom: 2, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
-                              {post.title}
-                            </div>
-                            <div>{s.label}: {value != null ? value.toLocaleString() : "not available"}</div>
-                          </div>
-                        )}
                         <div
                           style={{
                             width: 8, height, borderRadius: 2,
@@ -385,6 +375,22 @@ function PostPerformanceChart({ posts }) {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {hover && hoveredPost && hoveredSeries && (
+        <div
+          style={{
+            position: "fixed", left: hover.x, top: hover.y, transform: "translate(-50%, calc(-100% - 6px))",
+            background: "var(--ink)", color: "var(--paper)",
+            borderRadius: 6, padding: "6px 9px", fontSize: 11, whiteSpace: "nowrap",
+            zIndex: 1000, pointerEvents: "none",
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 2, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
+            {hoveredPost.title}
+          </div>
+          <div>{hoveredSeries.label}: {hoveredValue != null ? hoveredValue.toLocaleString() : "not available"}</div>
         </div>
       )}
     </div>

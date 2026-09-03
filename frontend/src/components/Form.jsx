@@ -83,7 +83,7 @@ function MicButton({ onTranscript, size = 15 }) {
           onClick={cancel}
           title="Cancel dictation"
           style={{
-            width: 28, height: 26, border: "none", background: "none", color: "var(--paper)",
+            width: 28, height: 26, padding: 0, border: "none", background: "none", color: "var(--paper)",
             display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
           }}
         >
@@ -97,7 +97,7 @@ function MicButton({ onTranscript, size = 15 }) {
           onClick={confirm}
           title="Use this text"
           style={{
-            width: 28, height: 26, border: "none", background: "none", color: "var(--paper)",
+            width: 28, height: 26, padding: 0, border: "none", background: "none", color: "var(--paper)",
             display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
           }}
         >
@@ -794,5 +794,3 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
     </form>
   );
 }
-
-// testing 123s
