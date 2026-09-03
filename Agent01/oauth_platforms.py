@@ -1,5 +1,8 @@
+import base64
+import hashlib
 import os
 import re
+import secrets
 import sys
 import requests
 from dotenv import load_dotenv
@@ -28,9 +31,22 @@ BACKEND_BASE_URL = os.environ.get("BACKEND_BASE_URL", "http://localhost:8000")
 # BACKEND_BASE_URL alone for everything else.
 THREADS_BACKEND_BASE_URL = os.environ.get("THREADS_BACKEND_BASE_URL", BACKEND_BASE_URL)
 
+# Canva requires the literal IP "127.0.0.1" in redirect URIs, not
+# "localhost" - it rejects "localhost" outright even for local dev, the
+# opposite quirk from Threads above. Same override pattern: Canva gets its
+# own base, everything else stays on BACKEND_BASE_URL.
+CANVA_CLIENT_ID = os.environ.get("CANVA_CLIENT_ID")
+CANVA_CLIENT_SECRET = os.environ.get("CANVA_CLIENT_SECRET")
+CANVA_BACKEND_BASE_URL = os.environ.get("CANVA_BACKEND_BASE_URL", "http://127.0.0.1:8000")
+
 
 def _redirect_uri(platform: str) -> str:
-    base = THREADS_BACKEND_BASE_URL if platform == "threads" else BACKEND_BASE_URL
+    if platform == "threads":
+        base = THREADS_BACKEND_BASE_URL
+    elif platform == "canva":
+        base = CANVA_BACKEND_BASE_URL
+    else:
+        base = BACKEND_BASE_URL
     return f"{base}/connect/{platform}/callback"
 
 
@@ -762,6 +778,90 @@ def linkedin_fetch_post_engagement(access_token: str, post_urn: str) -> dict | N
         }
     except requests.RequestException:
         return None
+
+
+# Canva
+#
+# Unlike LinkedIn/Facebook/Instagram/Threads above, Canva requires PKCE
+# (Authorization Code flow + SHA-256 code_verifier/code_challenge) - same
+# requirement as X/Twitter's login flow in auth_oauth.py, so this mirrors
+# x_start/x_finish's shape rather than the plain authorize_url/finish shape
+# the other platforms use. Because of that it's kept OUT of OAUTH_PROVIDERS
+# below and needs the caller (main.py's /connect/{platform} endpoints) to
+# special-case "canva" exactly like main.py already special-cases "x" for
+# /auth/{provider} - generating + stashing code_verifier at the authorize
+# step, then passing it back in at the callback step.
+
+CANVA_SCOPES = "design:content:read design:content:write design:meta:read asset:read asset:write profile:read"
+
+
+def canva_start(state: str) -> tuple[str, str]:
+    """Returns (authorize_url, code_verifier). Caller must persist
+    code_verifier (keyed by state) and pass it into canva_finish later."""
+    code_verifier = secrets.token_urlsafe(96)[:128]
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest()).decode().rstrip("=")
+    url = (
+        "https://www.canva.com/api/oauth/authorize"
+        f"?response_type=code&client_id={CANVA_CLIENT_ID}"
+        f"&redirect_uri={_redirect_uri('canva')}&state={state}"
+        f"&scope={CANVA_SCOPES.replace(' ', '%20')}"
+        f"&code_challenge={challenge}&code_challenge_method=s256"
+    )
+    return url, code_verifier
+
+
+def canva_finish(code: str, code_verifier: str) -> dict:
+    basic = base64.b64encode(f"{CANVA_CLIENT_ID}:{CANVA_CLIENT_SECRET}".encode()).decode()
+    resp = requests.post(
+        "https://api.canva.com/rest/v1/oauth/token",
+        headers={
+            "Authorization": f"Basic {basic}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "code_verifier": code_verifier,
+            "redirect_uri": _redirect_uri("canva"),
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    token_data = resp.json()
+    access_token = token_data["access_token"]
+    # Access tokens are short-lived (~4h as of this writing) - refresh_token
+    # is what makes the connection usable beyond that window, so it's kept
+    # alongside access_token rather than discarded like LinkedIn's finish
+    # does (LinkedIn's tokens live much longer).
+    refresh_token = token_data.get("refresh_token")
+
+    me = requests.get(
+        "https://api.canva.com/rest/v1/users/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=15,
+    )
+    me.raise_for_status()
+    team_user = me.json().get("team_user", {})
+
+    display_name = None
+    try:
+        profile = requests.get(
+            "https://api.canva.com/rest/v1/users/me/profile",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        profile.raise_for_status()
+        display_name = profile.json().get("profile", {}).get("display_name")
+    except requests.RequestException:
+        pass  # profile:read should be granted, but don't fail the whole connect over a display name
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "canva_user_id": team_user.get("user_id"),
+        "canva_team_id": team_user.get("team_id"),
+        "profile_name": display_name,
+    }
 
 
 OAUTH_PROVIDERS = {

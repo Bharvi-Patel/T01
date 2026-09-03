@@ -46,6 +46,7 @@ from oauth_platforms import (
     facebook_fetch_post_engagement, instagram_fetch_post_engagement,
     threads_fetch_post_engagement, linkedin_fetch_post_engagement, send_page_message,
     reply_to_thread, instagram_reply_to_comment, facebook_reply_to_comment,
+    canva_start, canva_finish,
 )
 
 PENDING_PAGE_SELECTIONS: dict[str, dict] = {} # pending_id -> {"user_id","platform","pages","expires_at"}
@@ -154,6 +155,7 @@ SECRET_CREDENTIAL_FIELDS: dict[Platform, list[str]] = {
     Platform.FACEBOOK: ["page_access_token"],
     Platform.INSTAGRAM: ["page_access_token"],
     Platform.THREADS: ["access_token"],
+    Platform.CANVA: ["access_token", "refresh_token"],
 }
 
 LOGIN_OAUTH_STATES: dict[str, dict] = {} 
@@ -2525,6 +2527,19 @@ async def connect_threads(req: ConnectThreadsRequest, db: AsyncSession = Depends
 
 @app.post("/connect/{platform}/authorize-url")
 def get_authorize_url(platform: str, user_id: uuid.UUID = Depends(require_auth)):
+    # Canva needs PKCE (code_verifier/code_challenge), unlike the other
+    # platforms here - same special-case shape as "x" in the /auth/{provider}
+    # login flow above, since it can't fit OAUTH_PROVIDERS' plain
+    # authorize_url(state)->str signature.
+    if platform == "canva":
+        state = secrets.token_urlsafe(24)
+        url, verifier = canva_start(state)
+        OAUTH_STATES[state] = {
+            "user_id": user_id, "platform": platform, "expires_at": time.time() + 600,
+            "code_verifier": verifier,
+        }
+        return {"authorize_url": url}
+
     provider = OAUTH_PROVIDERS.get(platform)
     if provider is None:
         raise HTTPException(status_code=400, detail=f"No OAuth flow for platform: {platform}")
@@ -2546,6 +2561,20 @@ async def oauth_callback(platform: str, code: str | None = None, state: str | No
     entry = OAUTH_STATES.pop(state, None) if state else None
     if entry is None or entry["platform"] != platform or entry["expires_at"] < time.time():
         return redirect_with("error", "invalid_or_expired_state")
+
+    if platform == "canva":
+        if not code:
+            return redirect_with("error", "missing_code")
+        try:
+            credentials = await run_in_threadpool(canva_finish, code, entry["code_verifier"])
+        except Exception as e:
+            return redirect_with("error", str(e))
+        for field in SECRET_CREDENTIAL_FIELDS.get(Platform(platform), []):
+            if field in credentials:
+                credentials[field] = encrypt_secret(credentials[field])
+        membership = await get_or_create_membership(db, entry["user_id"])
+        await _upsert_connection(db, membership.workspace_id, Platform(platform), credentials, connected_by_user_id=entry["user_id"])
+        return redirect_with("success")
 
     if platform in ("facebook", "instagram"):
         try:

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { suggestHashtags } from "../api";
 import { EMOJI_CATEGORIES, EMOJI_RECENTS_KEY, DEFAULT_RECENT_EMOJIS } from "../emojiCategories";
 import GeneratingProgress from "./GeneratingProgress";
+import StoryComposer from "./StoryComposer";
 
 const CATEGORIES = [
   "Technology",
@@ -143,6 +144,7 @@ const NETWORKS = [
 export const MODE_TABS = [
   { key: "ai", label: "Generate with AI" },
   { key: "manual", label: "Write it myself" },
+  { key: "story", label: "Post a Story" },
 ];
 
 // Recovers unsubmitted composer text across a full page reload (see
@@ -196,6 +198,12 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
   const bodyRef = useRef(null);
+
+  // Story mode — base image lives here since it gates submit; text layers
+  // and the @mention marker live inside StoryComposer itself and are only
+  // pulled out via the ref's flatten()/getUserTags() on submit.
+  const [storyImage, setStoryImage] = useState(null); // File | null
+  const storyComposerRef = useRef(null);
 
   const [customizePerNetwork, setCustomizePerNetwork] = useState(() => readComposerAutosave().customizePerNetwork || false);
   const [networkText, setNetworkText] = useState(() => readComposerAutosave().networkText || {}); // { [key]: string } — falls back to `body` when blank
@@ -401,13 +409,24 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
     requestAnimationFrame(() => { el.focus(); el.setSelectionRange(s + text.length, s + text.length); });
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     if (mode === "ai") {
       if (!subtopic.trim()) return;
       clearComposerAutosave();
       setHasRestoredDraft(false);
       onSubmit({ mode: "ai", category, subtopic: subtopic.trim(), wordCount });
+    } else if (mode === "story") {
+      if (!storyImage) return;
+      clearComposerAutosave();
+      setHasRestoredDraft(false);
+      // Flatten happens here, right before submit, rather than live on every
+      // drag - canvas.toBlob is cheap enough per-call but no need to redo it
+      // on each pointermove.
+      const flattenedImage = await storyComposerRef.current?.flatten();
+      const userTags = storyComposerRef.current?.getUserTags() || [];
+      if (!flattenedImage) return;
+      onSubmit({ mode: "story", image: flattenedImage, userTags });
     } else {
       const trimmedBody = body.trim();
       if (!trimmedBody) return;
@@ -461,7 +480,9 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
         </div>
       )}
 
-      {mode === "ai" ? (
+      {mode === "story" ? (
+        <StoryComposer ref={storyComposerRef} image={storyImage} onImageChange={setStoryImage} />
+      ) : mode === "ai" ? (
         <div className="composer-fields">
           <div className="composer-field">
             <label htmlFor="category">Category</label>

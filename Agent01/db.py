@@ -113,6 +113,7 @@ class Platform(str, enum.Enum):
     FACEBOOK = "facebook"
     INSTAGRAM = "instagram"
     THREADS = "threads"
+    CANVA = "canva"
 
 
 class MediaKind(str, enum.Enum):

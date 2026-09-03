@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { connectFinto, getAuthorizeUrl, getPendingPages, selectPage, disconnectPlatform } from "../api";
 
-const PLATFORM_LABELS = { linkedin: "LinkedIn", facebook: "Facebook", instagram: "Instagram", threads: "Threads" };
+const PLATFORM_LABELS = { linkedin: "LinkedIn", facebook: "Facebook", instagram: "Instagram", threads: "Threads", canva: "Canva" };
 
 // Real brand marks (simplified path data), each on its brand color.
 const PLATFORM_BRAND = {
@@ -24,6 +24,13 @@ const PLATFORM_BRAND = {
     bg: "#000000",
     viewBox: "0 0 24 24",
     path: "M12.186 24h-.007c-3.581-.024-6.334-1.205-8.184-3.509C2.35 18.44 1.5 15.586 1.472 12.01v-.017c.03-3.579.879-6.43 2.525-8.482C5.845 1.205 8.6.024 12.18 0h.014c2.746.02 5.043.725 6.826 2.098 1.677 1.29 2.858 3.13 3.509 5.467l-2.04.569c-1.104-3.96-3.898-5.984-8.304-6.015-2.91.022-5.11.936-6.54 2.717-1.34 1.673-2.03 4.08-2.058 7.16.028 3.079.718 5.486 2.058 7.159 1.43 1.783 3.63 2.698 6.54 2.717 2.623-.017 4.358-.645 5.8-2.098 1.638-1.65 1.606-3.671 1.086-4.923-.303-.732-.85-1.34-1.582-1.783-.187 1.335-.607 2.396-1.255 3.169-.87 1.038-2.107 1.605-3.687 1.629-1.201-.017-2.27-.336-3.007-.94-.868-.708-1.316-1.723-1.297-2.94.02-1.187.63-2.148 1.716-2.703.867-.443 2.006-.679 3.297-.679.71 0 1.464.043 2.232.128-.09-.55-.278-.99-.556-1.31-.377-.436-.947-.657-1.696-.66h-.009c-.632 0-1.505.174-2.06.994l-1.734-1.185c.72-1.077 1.923-1.671 3.393-1.671h.028c1.312.008 2.398.402 3.14 1.14.723.72 1.135 1.708 1.229 2.94.098.01.196.02.293.032 1.436.169 2.639.671 3.485 1.454 1.166 1.083 1.766 2.64 1.735 4.505-.036 2.148-.905 4.049-2.451 5.35C16.4 23.302 14.55 24 12.186 24z",
+  },
+  // No verbatim logo path here (unlike the others) - Canva's mark is more
+  // detailed and this is deliberately left as just their brand gradient
+  // rather than risk an inaccurate reproduction. PlatformBadge below
+  // renders fine with just a bg color and no path - a plain colored square.
+  canva: {
+    bg: "linear-gradient(135deg,#8B3DFF,#00C4CC)",
   },
 };
 
@@ -207,7 +214,7 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
-        {["linkedin", "facebook", "instagram", "threads"].map((platform) => {
+        {["linkedin", "facebook", "instagram", "threads", "canva"].map((platform) => {
           const connection = connections?.[platform];
           const connected = Boolean(connection);
           const profileName = connection?.profile_name;
