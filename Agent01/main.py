@@ -4034,6 +4034,12 @@ async def mark_all_notifications_read(
     return {"updated": len(items)}
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+    
+
 # ---------------------------------------------------------------------------
 # Threads webhooks - separate product from Instagram/Facebook in Meta's
 # dashboard (Threads has its own "Subscribe to this object" screen), so it
