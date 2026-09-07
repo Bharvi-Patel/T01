@@ -23,6 +23,10 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", "no-reply@starttrack.app")
+logger.warning(
+    "emailer config at import: SMTP_HOST=%r SMTP_USERNAME_set=%s SMTP_PASSWORD_set=%s SMTP_FROM_EMAIL=%r",
+    SMTP_HOST, bool(os.environ.get("SMTP_USERNAME")), bool(os.environ.get("SMTP_PASSWORD")), SMTP_FROM_EMAIL,
+)
 SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() != "false"
 # Without an explicit timeout, smtplib.SMTP() will hang indefinitely if the
 # host is unreachable (wrong hostname, blocked port, network issue) - and
