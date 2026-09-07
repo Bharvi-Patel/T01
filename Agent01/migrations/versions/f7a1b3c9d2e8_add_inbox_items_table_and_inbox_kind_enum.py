@@ -46,8 +46,9 @@ def upgrade() -> None:
 
     bind = op.get_bind()
 
-    inbox_kind_enum = postgresql.ENUM("COMMENT", "MESSAGE", name="inbox_kind_enum")
-    inbox_kind_enum.create(bind, checkfirst=True)
+    inbox_kind_enum_create = postgresql.ENUM("COMMENT", "MESSAGE", name="inbox_kind_enum")
+    inbox_kind_enum_create.create(bind, checkfirst=True)
+    inbox_kind_enum = postgresql.ENUM("COMMENT", "MESSAGE", name="inbox_kind_enum", create_type=False)
 
     platform_enum = postgresql.ENUM(name="platform_enum", create_type=False)
 
