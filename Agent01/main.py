@@ -172,9 +172,16 @@ CALENDARIFIC_COUNTRY = os.environ.get("CALENDARIFIC_COUNTRY", "IN")
 
 app = FastAPI(title="Content Agent API")
 
+_frontend_origins = [
+    origin.strip()
+    for origin in os.environ.get("FRONTEND_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=_frontend_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -228,6 +235,10 @@ async def require_auth(
 
     return session.user_id
 
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
 @app.post("/auth/{provider}/authorize-url")
@@ -4034,9 +4045,6 @@ async def mark_all_notifications_read(
     return {"updated": len(items)}
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
 
     
 
