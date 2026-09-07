@@ -17,7 +17,7 @@ mistake previously made (and fixed) on draft_status_enum - this revision
 originally repeated it with lowercase values before being corrected.
 
 Revision ID: e5f9a2c7b3d4
-Revises: c4d8f2a6e9b1
+Revises: f7a1b3c9d2e8
 Create Date: 2026-08-21 00:00:00.000000
 
 """
@@ -28,7 +28,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'e5f9a2c7b3d4'
-down_revision: Union[str, Sequence[str], None] = 'c4d8f2a6e9b1'
+down_revision: Union[str, Sequence[str], None] = 'f7a1b3c9d2e8'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
