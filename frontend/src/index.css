@@ -7,9 +7,8 @@
   --paper-raised: #FDFDF6;
   --primary: #082D34;
   --secondary: #2C5049;
-  --accent: #C96A3E;
-  --accent-ink: #082D34;
-  --border: #E3EFC9;
+  --accent: #5F4A88;
+  --accent-ink: #FDFDF6;
   --border-strong: #C9D9A0;
   --text-secondary: #3E5B57;
   --text-muted: #6F8A82;
@@ -36,8 +35,8 @@
   --paper-raised: #0E3841;
   --primary: #EDF3DC;
   --secondary: #6FA39A;
-  --accent: #D98257;
-  --accent-ink: #082D34;
+  --accent: #5F4A88;
+  --accent-ink: #EDF3DC;
   --border: #163C44;
   --border-strong: #24515A;
   --text-secondary: #8FA9A5;
@@ -56,7 +55,7 @@
   --paper-raised: #FDFDF6;
   --primary: #082D34;
   --secondary: #2C5049;
-  --accent: #C96A3E;
+  --accent: #5F4A88;
   --accent-ink: #FDFDF6;
   --border: #E3EFC9;
   --border-strong: #C9D9A0;
@@ -243,7 +242,7 @@ body::before {
   --paper-raised: #FDFDF6;
   --primary: #082D34;
   --secondary: #2C5049;
-  --accent: #C96A3E;
+  --accent: #5F4A88;
   --accent-ink: #FDFDF6;
   --border: #E3EFC9;
   --border-strong: #C9D9A0;
@@ -1475,7 +1474,7 @@ input[type="number"] { -moz-appearance: textfield; }
   border-color: #1F4750;
   color: #EDF3DC;
 }
-.landing-btn-ghost-dark:hover { border-color: #D98257; }
+.landing-btn-ghost-dark:hover { border-color: #5F4A88; }
 
 /* --- footer --- */
 .landing-footer {
