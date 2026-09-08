@@ -49,6 +49,18 @@ const EFFECT_OPTIONS = [
   { id: "shadow", label: "Pop shadow" },
 ];
 
+// Shared with flatten()'s canvas drawing below, so the live preview and the
+// exported JPEG always agree on how thick/offset/blurred each effect is.
+// Preview text is rendered at layer.fontSize*200 (the on-screen box width);
+// the export is rendered at layer.fontSize*OUT_W (1080) — using the same
+// fraction against each one's own font size keeps them visually identical
+// even though the raw pixel numbers differ.
+const OUTLINE_WIDTH_FRACTION = 0.06; // thinner than the original 0.09 — a
+// heavier stroke fills in the thin connecting strokes of script/cursive
+// fonts and turns the whole word into an illegible blob.
+const SHADOW_OFFSET_FRACTION = 0.06;
+const GLOW_BLUR_FRACTION = 0.5;
+
 // CSS approximation of each effect for the live preview. The canvas export
 // (see flatten()) implements the same five effects properly with stroke/
 // shadow/gradient drawing so the exported JPEG matches this, but a couple
@@ -56,12 +68,16 @@ const EFFECT_OPTIONS = [
 // that's universal in practice but not literally guaranteed by spec.
 function textEffectStyle(layer) {
   const effect = layer.effect || "none";
+  const previewFontPx = layer.fontSize * 200;
   if (effect === "outline") {
-    return { WebkitTextStroke: `${Math.max(1, layer.fontSize * 40)}px ${layer.effectColor || "#000000"}`, color: layer.color, textShadow: "none" };
+    const w = Math.max(0.5, previewFontPx * OUTLINE_WIDTH_FRACTION);
+    return { WebkitTextStroke: `${w}px ${layer.effectColor || "#000000"}`, color: layer.color, textShadow: "none" };
   }
   if (effect === "glow") {
     const c = layer.effectColor || layer.color;
-    return { color: layer.color, textShadow: `0 0 8px ${c}, 0 0 18px ${c}` };
+    const inner = previewFontPx * GLOW_BLUR_FRACTION * 0.4;
+    const outer = previewFontPx * GLOW_BLUR_FRACTION * 0.8;
+    return { color: layer.color, textShadow: `0 0 ${inner}px ${c}, 0 0 ${outer}px ${c}` };
   }
   if (effect === "gradient") {
     return {
@@ -70,7 +86,7 @@ function textEffectStyle(layer) {
     };
   }
   if (effect === "shadow") {
-    const off = Math.max(1, layer.fontSize * 30);
+    const off = Math.max(0.5, previewFontPx * SHADOW_OFFSET_FRACTION);
     return { color: layer.color, textShadow: `${off}px ${off}px 0 ${layer.effectColor || "#000000"}` };
   }
   return { color: layer.color, textShadow: "0 1px 4px rgba(0,0,0,0.5)" };
@@ -180,6 +196,11 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
   const [layers, setLayers] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [fontPickerOpen, setFontPickerOpen] = useState(false);
+  const [effectPickerOpen, setEffectPickerOpen] = useState(false);
+  // Which layer (if any) is currently being edited inline via double-click,
+  // instead of through the side panel's text field.
+  const [editingId, setEditingId] = useState(null);
+  const editRef = useRef(null);
 
   // Undo/redo history. Each entry is a full snapshot of `layers` taken
   // right BEFORE a change is applied, so undo restores it and pushes the
@@ -216,13 +237,17 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
     setFuture([]);
   }
 
+  // Undo/redo should only clear the selection when the selected layer no
+  // longer exists in the restored state (e.g. undoing the "add" that
+  // created it) — not on every undo, or the control panel below would
+  // vanish even when reverting something small like a color or font.
   function undo() {
     setPast((p) => {
       if (p.length === 0) return p;
       const prevState = p[p.length - 1];
       setFuture((f) => [layersRef.current, ...f]);
       setLayers(prevState);
-      setActiveId(null);
+      setActiveId((current) => (prevState.some((l) => l.id === current) ? current : null));
       return p.slice(0, -1);
     });
   }
@@ -233,7 +258,7 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
       const nextState = f[0];
       setPast((p) => [...p, layersRef.current]);
       setLayers(nextState);
-      setActiveId(null);
+      setActiveId((current) => (nextState.some((l) => l.id === current) ? current : null));
       return f.slice(1);
     });
   }
@@ -265,11 +290,13 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
           const fontPx = layer.fontSize * OUT_W;
           const fontOpt = fontOptionFor(layer.fontFamily);
           await ensureFontLoaded(fontOpt.css, fontPx);
-          const displayText = layer.uppercase ? (layer.text || "").toUpperCase() : (layer.text || "");
+          const displayText = layer.text || "";
+          const weight = (layer.bold ?? true) ? "700" : "400";
+          const style = layer.italic ? "italic" : "normal";
           ctx.save();
           ctx.translate(px, py);
           ctx.rotate(rad);
-          ctx.font = `700 ${fontPx}px ${fontOpt.css}`;
+          ctx.font = `${style} ${weight} ${fontPx}px ${fontOpt.css}`;
           ctx.textAlign = layer.align || "center";
           ctx.textBaseline = "middle";
 
@@ -291,19 +318,19 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
             ctx.lineJoin = "round";
             ctx.miterLimit = 2;
             ctx.strokeStyle = layer.effectColor || "#000000";
-            ctx.lineWidth = fontPx * 0.09;
+            ctx.lineWidth = fontPx * OUTLINE_WIDTH_FRACTION;
             ctx.strokeText(displayText, 0, 0);
             ctx.shadowColor = "transparent";
             ctx.fillStyle = layer.color;
             ctx.fillText(displayText, 0, 0);
           } else if (effect === "glow") {
             ctx.shadowColor = layer.effectColor || layer.color;
-            ctx.shadowBlur = fontPx * 0.6;
+            ctx.shadowBlur = fontPx * GLOW_BLUR_FRACTION;
             ctx.fillStyle = layer.color;
             ctx.fillText(displayText, 0, 0);
             ctx.fillText(displayText, 0, 0); // second pass — a single-pass canvas glow reads faint
           } else if (effect === "shadow") {
-            const offset = fontPx * 0.06;
+            const offset = fontPx * SHADOW_OFFSET_FRACTION;
             ctx.shadowColor = "transparent";
             ctx.fillStyle = layer.effectColor || "#000000";
             ctx.fillText(displayText, offset, offset);
@@ -367,7 +394,7 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
     const id = nextLayerId();
     setLayers((prev) => [
       ...prev,
-      { id, type: "text", text: "Tap to edit", x: 0.5, y: 0.5, rotation: 0, fontSize: 0.07, color: "#ffffff", fontFamily: "classic", align: "center", effect: "none", effectColor: "#000000", gradientTo: "#ffd700", uppercase: false },
+      { id, type: "text", text: "Tap to edit", x: 0.5, y: 0.5, rotation: 0, fontSize: 0.07, color: "#ffffff", fontFamily: "classic", align: "center", effect: "none", effectColor: "#000000", gradientTo: "#ffd700", bold: true, italic: false },
     ]);
     setActiveId(id);
   }
@@ -407,34 +434,40 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
     setActiveId(null);
   }
 
-  // Moves a layer one step toward the top (end) of the stacking order.
-  function bringForward(id) {
+  // Double-click on a text/mention layer switches it into inline editing —
+  // the same div is swapped for a contentEditable version (see rendering
+  // below) so what you type appears exactly where and how it will look.
+  function startEditing(id) {
     commitHistory();
-    setLayers((prev) => {
-      const i = prev.findIndex((l) => l.id === id);
-      if (i < 0 || i === prev.length - 1) return prev;
-      const next = [...prev];
-      [next[i], next[i + 1]] = [next[i + 1], next[i]];
-      return next;
-    });
+    setActiveId(id);
+    setEditingId(id);
   }
 
-  // Moves a layer one step toward the bottom (start) of the stacking order.
-  function sendBackward(id) {
-    commitHistory();
-    setLayers((prev) => {
-      const i = prev.findIndex((l) => l.id === id);
-      if (i <= 0) return prev;
-      const next = [...prev];
-      [next[i], next[i - 1]] = [next[i - 1], next[i]];
-      return next;
-    });
+  // Reads the final text out of the contentEditable DOM node (never held
+  // in React state while typing — see the effect below for why) and
+  // commits it to the layer once editing ends.
+  function finishEditing(layer, rawText) {
+    if (layer.type === "mention") {
+      updateLayer(layer.id, { username: rawText.replace(/^@+/, "").trim() });
+    } else {
+      updateLayer(layer.id, { text: rawText });
+    }
+    setEditingId(null);
   }
 
-  function resetRotation(id) {
-    commitHistory();
-    updateLayer(id, { rotation: 0 });
-  }
+  // Focuses the contentEditable node and selects all its text the moment
+  // editing starts, so typing immediately replaces the placeholder/old
+  // text rather than appending to it.
+  useEffect(() => {
+    if (!editingId || !editRef.current) return;
+    const el = editRef.current;
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }, [editingId]);
 
   function setFontFamily(id, fontFamily) {
     commitHistory();
@@ -539,7 +572,7 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
   useEffect(() => {
     function onKeyDown(e) {
       const tag = document.activeElement?.tagName;
-      const inField = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      const inField = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || document.activeElement?.isContentEditable;
       if (inField) return;
 
       if ((e.key === "Delete" || e.key === "Backspace") && activeId) {
@@ -561,9 +594,21 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
   }, [activeId]);
 
   const activeLayer = layers.find((l) => l.id === activeId);
-  const activeIndex = layers.findIndex((l) => l.id === activeId);
 
-  useEffect(() => { setFontPickerOpen(false); }, [activeId]);
+  useEffect(() => { setFontPickerOpen(false); setEffectPickerOpen(false); }, [activeId]);
+
+  // Eight resize handles (corners + edge midpoints) around the layer's own
+  // auto-sized box, plus one rotate handle above it. All eight resize dots
+  // drive the same distance-from-center scale math in onDrag — this is a
+  // uniform (aspect-preserving) resize from any handle, not independent
+  // width/height stretching, which would need each layer to carry an
+  // explicit box size rather than a single font-size/scale/width value.
+  const RESIZE_HANDLE_POS = [
+    { left: "0%", top: "0%" }, { left: "50%", top: "0%" }, { left: "100%", top: "0%" },
+    { left: "100%", top: "50%" },
+    { left: "100%", top: "100%" }, { left: "50%", top: "100%" }, { left: "0%", top: "100%" },
+    { left: "0%", top: "50%" },
+  ];
 
   function renderHandles(layer) {
     if (activeId !== layer.id) return null;
@@ -575,18 +620,21 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
           style={{
             position: "absolute", top: -26, left: "50%", transform: "translateX(-50%)",
             width: 14, height: 14, borderRadius: "50%", background: "var(--accent)",
-            border: "2px solid #fff", cursor: "grab", boxShadow: "0 1px 3px rgba(0,0,0,0.4)",
+            border: "2px solid #fff", cursor: "grab", boxShadow: "0 1px 3px rgba(0,0,0,0.4)", zIndex: 2,
           }}
         />
-        <div
-          onPointerDown={(e) => startResize(e, layer)}
-          title="Drag to resize"
-          style={{
-            position: "absolute", bottom: -10, right: -10,
-            width: 14, height: 14, borderRadius: "50%", background: "var(--accent)",
-            border: "2px solid #fff", cursor: "nwse-resize", boxShadow: "0 1px 3px rgba(0,0,0,0.4)",
-          }}
-        />
+        {RESIZE_HANDLE_POS.map((pos, i) => (
+          <div
+            key={i}
+            onPointerDown={(e) => startResize(e, layer)}
+            title="Drag to resize"
+            style={{
+              position: "absolute", left: pos.left, top: pos.top, transform: "translate(-50%, -50%)",
+              width: 10, height: 10, borderRadius: "50%", background: "#fff",
+              border: "2px solid var(--accent)", cursor: "nwse-resize", boxShadow: "0 1px 2px rgba(0,0,0,0.35)",
+            }}
+          />
+        ))}
       </>
     );
   }
@@ -646,32 +694,75 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
             }}
           >
             {layer.type === "text" && (
-              <div
-                onPointerDown={(e) => startMove(e, layer.id)}
-                style={{
-                  cursor: "grab", fontWeight: 700, fontSize: layer.fontSize * 200,
-                  fontFamily: fontOptionFor(layer.fontFamily).css,
-                  textAlign: layer.align || "center", padding: 4, whiteSpace: "nowrap",
-                  textTransform: layer.uppercase ? "uppercase" : "none",
-                  ...textEffectStyle(layer),
-                  outline: activeId === layer.id ? "1px dashed var(--accent)" : "none",
-                  maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis",
-                }}
-              >
-                {layer.text || "Tap to edit"}
-              </div>
+              editingId === layer.id ? (
+                <div
+                  ref={editRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onBlur={(e) => finishEditing(layer, e.currentTarget.textContent)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); e.currentTarget.blur(); }
+                  }}
+                  style={{
+                    fontWeight: (layer.bold ?? true) ? 700 : 400, fontStyle: layer.italic ? "italic" : "normal",
+                    fontSize: layer.fontSize * 200,
+                    fontFamily: fontOptionFor(layer.fontFamily).css,
+                    textAlign: layer.align || "center", padding: 4, whiteSpace: "nowrap",
+                    ...textEffectStyle(layer),
+                    outline: "2px solid var(--accent)", cursor: "text", minWidth: 20,
+                  }}
+                >
+                  {layer.text || ""}
+                </div>
+              ) : (
+                <div
+                  onPointerDown={(e) => startMove(e, layer.id)}
+                  onDoubleClick={(e) => { e.stopPropagation(); startEditing(layer.id); }}
+                  style={{
+                    cursor: "grab", fontWeight: (layer.bold ?? true) ? 700 : 400, fontStyle: layer.italic ? "italic" : "normal",
+                    fontSize: layer.fontSize * 200,
+                    fontFamily: fontOptionFor(layer.fontFamily).css,
+                    textAlign: layer.align || "center", padding: 4, whiteSpace: "nowrap",
+                    ...textEffectStyle(layer),
+                    outline: activeId === layer.id ? "1px solid var(--accent)" : "none",
+                    maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis",
+                  }}
+                >
+                  {layer.text || "Double-tap to edit"}
+                </div>
+              )
             )}
             {layer.type === "mention" && (
-              <div
-                onPointerDown={(e) => startMove(e, layer.id)}
-                style={{
-                  cursor: "grab", background: "rgba(0,0,0,0.55)", color: "#fff", borderRadius: 999,
-                  padding: "4px 10px", fontSize: 11 * (layer.scale || 1), fontWeight: 600, whiteSpace: "nowrap",
-                  outline: activeId === layer.id ? "1px dashed var(--accent)" : "none",
-                }}
-              >
-                @{layer.username || "username"}
-              </div>
+              editingId === layer.id ? (
+                <div
+                  ref={editRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onBlur={(e) => finishEditing(layer, e.currentTarget.textContent)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); e.currentTarget.blur(); }
+                  }}
+                  style={{
+                    background: "rgba(0,0,0,0.55)", color: "#fff", borderRadius: 999,
+                    padding: "4px 10px", fontSize: 11 * (layer.scale || 1), fontWeight: 600, whiteSpace: "nowrap",
+                    outline: "2px solid var(--accent)", cursor: "text", minWidth: 20,
+                  }}
+                >
+                  {`@${layer.username || ""}`}
+                </div>
+              ) : (
+                <div
+                  onPointerDown={(e) => startMove(e, layer.id)}
+                  onDoubleClick={(e) => { e.stopPropagation(); startEditing(layer.id); }}
+                  style={{
+                    cursor: "grab", background: "rgba(0,0,0,0.55)", color: "#fff", borderRadius: 999,
+                    padding: "4px 10px", fontSize: 11 * (layer.scale || 1), fontWeight: 600, whiteSpace: "nowrap",
+                    outline: activeId === layer.id ? "1px solid var(--accent)" : "none",
+                  }}
+                >
+                  @{layer.username || "username"}
+                </div>
+              )
             )}
             {layer.type === "image" && (
               <img
@@ -775,49 +866,105 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
                     {a === "left" ? "⟸" : a === "right" ? "⟹" : "⇔"}
                   </button>
                 ))}
-                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4, marginLeft: 8, whiteSpace: "nowrap" }}>
-                  <input
-                    type="checkbox"
-                    checked={!!activeLayer.uppercase}
-                    onChange={(e) => { commitHistory(); updateLayer(activeLayer.id, { uppercase: e.target.checked }); }}
-                  />
-                  CAPS
-                </label>
+                <button
+                  type="button"
+                  onClick={() => { commitHistory(); updateLayer(activeLayer.id, { bold: !(activeLayer.bold ?? true) }); }}
+                  aria-pressed={activeLayer.bold ?? true}
+                  title="Bold"
+                  style={{
+                    flex: 1, marginLeft: 8, fontWeight: 700,
+                    background: (activeLayer.bold ?? true) ? "var(--accent)" : undefined,
+                    color: (activeLayer.bold ?? true) ? "#fff" : undefined,
+                  }}
+                >
+                  B
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { commitHistory(); updateLayer(activeLayer.id, { italic: !activeLayer.italic }); }}
+                  aria-pressed={!!activeLayer.italic}
+                  title="Italic"
+                  style={{
+                    flex: 1, fontStyle: "italic",
+                    background: activeLayer.italic ? "var(--accent)" : undefined,
+                    color: activeLayer.italic ? "#fff" : undefined,
+                  }}
+                >
+                  I
+                </button>
               </div>
 
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
-                <label htmlFor="story-effect-select" style={{ fontSize: 11, color: "var(--text-muted)" }}>Effect</label>
-                <select
-                  id="story-effect-select"
-                  value={activeLayer.effect || "none"}
-                  onChange={(e) => { commitHistory(); updateLayer(activeLayer.id, { effect: e.target.value }); }}
-                >
-                  {EFFECT_OPTIONS.map((f) => (
-                    <option key={f.id} value={f.id}>{f.label}</option>
-                  ))}
-                </select>
+              <div>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>Effect</label>
+                <div style={{ position: "relative" }}>
+                  <button
+                    type="button"
+                    onClick={() => setEffectPickerOpen((o) => !o)}
+                    style={{ width: "100%", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 14 }}
+                  >
+                    <span>{(EFFECT_OPTIONS.find((f) => f.id === (activeLayer.effect || "none")) || EFFECT_OPTIONS[0]).label}</span>
+                    <span aria-hidden="true">{effectPickerOpen ? "▲" : "▼"}</span>
+                  </button>
+                  {effectPickerOpen && (
+                    <div
+                      style={{
+                        position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20, marginTop: 4,
+                        maxHeight: 220, overflowY: "auto", background: "var(--paper-raised)",
+                        border: "1px solid var(--border-strong)", borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+                      }}
+                    >
+                      {EFFECT_OPTIONS.map((f) => (
+                        <div
+                          key={f.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => {
+                            commitHistory();
+                            updateLayer(activeLayer.id, { effect: f.id });
+                            setEffectPickerOpen(false);
+                          }}
+                          style={{
+                            padding: "8px 12px", cursor: "pointer", fontSize: 14,
+                            background: (activeLayer.effect || "none") === f.id ? "var(--accent)" : "transparent",
+                            color: (activeLayer.effect || "none") === f.id ? "#fff" : "inherit",
+                          }}
+                        >
+                          {f.label}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
 
-                {(activeLayer.effect === "outline" || activeLayer.effect === "glow" || activeLayer.effect === "shadow") && (
+              {(activeLayer.effect === "outline" || activeLayer.effect === "glow" || activeLayer.effect === "shadow") && (
+                <div style={{ marginTop: 8 }}>
+                  <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
+                    {activeLayer.effect === "glow" ? "Glow color" : activeLayer.effect === "shadow" ? "Shadow color" : "Outline color"}
+                  </label>
                   <ColorSwatches
                     value={activeLayer.effectColor || "#000000"}
-                    title={activeLayer.effect === "glow" ? "Glow color" : activeLayer.effect === "shadow" ? "Shadow color" : "Outline color"}
                     commit={commitHistory}
                     update={(c) => updateLayer(activeLayer.id, { effectColor: c })}
                   />
-                )}
-                {activeLayer.effect === "gradient" && (
+                </div>
+              )}
+              {activeLayer.effect === "gradient" && (
+                <div style={{ marginTop: 8 }}>
+                  <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
+                    Gradient end color
+                  </label>
                   <ColorSwatches
                     value={activeLayer.gradientTo || "#ffd700"}
-                    title="Gradient second color"
                     commit={commitHistory}
                     update={(c) => updateLayer(activeLayer.id, { gradientTo: c })}
                   />
-                )}
-              </div>
+                </div>
+              )}
 
               <div style={{ marginTop: 8 }}>
                 <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
-                  Text color{activeLayer.effect === "gradient" ? " (gradient start)" : ""}
+                  {activeLayer.effect === "gradient" ? "Gradient start color" : "Text color"}
                 </label>
                 <ColorSwatches
                   value={activeLayer.color}
@@ -826,15 +973,6 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
                 />
               </div>
 
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
-                <label style={{ fontSize: 11, color: "var(--text-muted)" }}>Size</label>
-                <input
-                  type="range" min="0.03" max="0.14" step="0.005"
-                  value={activeLayer.fontSize}
-                  onFocus={commitHistory}
-                  onChange={(e) => updateLayer(activeLayer.id, { fontSize: Number(e.target.value) })}
-                />
-              </div>
             </>
           )}
 
@@ -857,24 +995,13 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
               Sticker — drag to move, use the handles to resize or rotate.
             </p>
           )}
-
-          <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
-            <button type="button" onClick={() => bringForward(activeLayer.id)} disabled={activeIndex === layers.length - 1}>
-              Bring forward
-            </button>
-            <button type="button" onClick={() => sendBackward(activeLayer.id)} disabled={activeIndex === 0}>
-              Send backward
-            </button>
-            <button type="button" onClick={() => resetRotation(activeLayer.id)}>Reset rotation</button>
-            <button type="button" onClick={() => removeLayer(activeLayer.id)} style={{ marginLeft: "auto" }}>Remove</button>
-          </div>
         </div>
       )}
 
       <p style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", margin: "6px 0 0" }}>
-        Drag a layer to move it, the top handle to rotate, the corner handle to resize.
-        Ctrl+Z to undo, Delete to remove the selected layer. Facebook Stories don&apos;t support
-        mentions — this tag only applies when posting to Instagram.
+        Drag a layer to move it, the ring of dots to resize, the top handle to rotate. Double-tap
+        text or a mention to edit it in place. Ctrl+Z to undo, Delete to remove the selected layer.
+        Facebook Stories don&apos;t support mentions — this tag only applies when posting to Instagram.
       </p>
     </div>
   );
