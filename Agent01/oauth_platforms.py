@@ -98,7 +98,7 @@ def facebook_authorize_url(state: str) -> str:
         "https://www.facebook.com/v21.0/dialog/oauth"
         f"?client_id={META_APP_ID}&redirect_uri={_redirect_uri('facebook')}&state={state}"
         "&scope=pages_manage_posts,pages_read_engagement,pages_show_list,business_management,"
-        "pages_messaging,pages_manage_metadata,read_insights,pages_manage_engagement"
+        "pages_messaging,pages_manage_metadata,pages_manage_engagement"
     )
 
 

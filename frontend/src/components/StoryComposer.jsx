@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
+import { getTrendingGifs, searchGifs } from "../api";
 
 // Standard Instagram/Facebook Story canvas size — the flatten() export
 // always renders at this resolution regardless of the on-screen preview
@@ -105,6 +106,17 @@ const PALETTE = [
   "#00c2ff", "#3b5bfe", "#a259ff", "#ff2d95", "#ffd700", "#c0c0c0",
 ];
 
+// Curated static sticker pack. Emoji glyphs rather than image assets on
+// purpose: they render crisply at any size with zero asset hosting/
+// licensing to manage, and both canvas fillText and every OS emoji font
+// draw them identically enough for preview/export parity. Grouped loosely
+// by theme so the picker grid doesn't feel like a random dump.
+const STICKER_PACK = [
+  "🔥", "✨", "💯", "🎉", "🎊", "❤️", "💕", "⭐", "🌟", "☀️",
+  "😂", "😍", "🥳", "😎", "🙌", "👏", "👍", "🤝", "💪", "🙏",
+  "📍", "📸", "🎵", "🎬", "🚀", "☕", "🍕", "🎂", "🏆", "💡",
+];
+
 // `commit` fires once per discrete pick (a swatch click, or the moment the
 // native picker opens) so each color change is one undo step — not one
 // per frame while dragging inside the browser's own color wheel.
@@ -150,6 +162,21 @@ function loadImageFromFile(file) {
   });
 }
 
+// Same as loadImageFromFile but for a remote URL (GIF stickers come from
+// Giphy's CDN, not a local File). crossOrigin is required for a cross-
+// origin image to be drawable into a canvas that's later read back via
+// toBlob/toDataURL — without it, flatten() would throw a tainted-canvas
+// SecurityError the first time a story with a GIF sticker is exported.
+function loadImageFromUrl(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
 // Confirms a font is actually loaded before canvas draws with it — canvas
 // silently falls back to a default font if you draw with one that hasn't
 // finished loading yet, with no error. Failures (offline, blocked
@@ -192,11 +219,31 @@ function roundRect(ctx, x, y, w, h, r) {
 //                  (object URL for on-screen display), width (0-1 fraction
 //                  of box width), aspect (naturalHeight/naturalWidth, kept
 //                  constant while resizing)
-const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }, ref) {
+// type: "sticker" adds: sourceKind ("static" | "gif"), width (0-1 fraction
+//                  of box width), aspect (kept constant while resizing).
+//                  sourceKind "static": emoji (glyph from STICKER_PACK) —
+//                  aspect is always 1 (square glyph box).
+//                  sourceKind "gif": previewUrl (picker thumbnail), gifUrl
+//                  (animated GIF, used for the live preview), mp4Url
+//                  (Giphy's pre-transcoded MP4 rendition — see flatten()'s
+//                  TODO for why this is captured but not exported as
+//                  motion yet), aspect from the GIF's natural dimensions.
+const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange, token }, ref) {
   const [layers, setLayers] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [fontPickerOpen, setFontPickerOpen] = useState(false);
   const [effectPickerOpen, setEffectPickerOpen] = useState(false);
+  // Sticker/GIF picker panel: which tab is showing, the GIF search box's
+  // current text, the last-fetched results for that text, and load/config
+  // state. GIF results start as the trending feed (fetched once when the
+  // panel first opens) so the tab never opens empty before the user types.
+  const [stickerPickerOpen, setStickerPickerOpen] = useState(false);
+  const [stickerTab, setStickerTab] = useState("stickers");
+  const [gifQuery, setGifQuery] = useState("");
+  const [gifResults, setGifResults] = useState([]);
+  const [gifLoading, setGifLoading] = useState(false);
+  const [gifConfigured, setGifConfigured] = useState(true);
+  const gifFetchSeq = useRef(0);
   // Which layer (if any) is currently being edited inline via double-click,
   // instead of through the side panel's text field.
   const [editingId, setEditingId] = useState(null);
@@ -215,7 +262,6 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
 
   const boxRef = useRef(null);
   const fileInputRef = useRef(null);
-  const stickerInputRef = useRef(null);
   const dragState = useRef(null); // { kind: "move"|"resize"|"rotate", id, ... }
 
   // Loads every preset's webfont once via a single combined stylesheet
@@ -373,6 +419,35 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
           ctx.rotate(rad);
           ctx.drawImage(stickerImg, -dw / 2, -dh / 2, dw, dh);
           ctx.restore();
+        } else if (layer.type === "sticker" && layer.sourceKind === "static") {
+          const size = layer.width * OUT_W;
+          ctx.save();
+          ctx.translate(px, py);
+          ctx.rotate(rad);
+          ctx.font = `${size}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(layer.emoji, 0, 0);
+          ctx.restore();
+        } else if (layer.type === "sticker" && layer.sourceKind === "gif") {
+          // TODO(video export): this draws only the GIF's first frame, so
+          // a Story with a GIF sticker currently exports as a JPEG with
+          // that sticker frozen — it does NOT yet animate in the posted
+          // Story, even though layer.mp4Url (Giphy's transcoded MP4) is
+          // already captured and ready to use. Making it actually animate
+          // needs flatten() to branch into a server-side render job
+          // (composite every other layer once, overlay the MP4 frame-by-
+          // frame via ffmpeg, encode to MP4) instead of this single-canvas
+          // path, plus a new publish flow on the backend for video Story
+          // media. That's a separate piece of work — see the next step.
+          const gifImg = await loadImageFromUrl(layer.gifUrl);
+          const dw = layer.width * OUT_W;
+          const dh = dw * layer.aspect;
+          ctx.save();
+          ctx.translate(px, py);
+          ctx.rotate(rad);
+          ctx.drawImage(gifImg, -dw / 2, -dh / 2, dw, dh);
+          ctx.restore();
         }
       }
 
@@ -407,21 +482,35 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
     setActiveId(id);
   }
 
-  // Adds an uploaded image as a sticker/prop layer. Reads its natural
-  // dimensions so resizing later preserves aspect ratio — this is the
-  // same slot a future curated prop library would populate, just with
-  // file always coming from the user's own upload for now.
-  async function addStickerFile(file) {
-    if (!file) return;
-    const img = await loadImageFromFile(file);
+  // Adds a curated emoji sticker. aspect is fixed at 1 (square) since a
+  // glyph's own box is square regardless of which character it is.
+  function addEmojiSticker(emoji) {
     commitHistory();
     const id = nextLayerId();
-    const aspect = img.naturalHeight / img.naturalWidth;
     setLayers((prev) => [
       ...prev,
-      { id, type: "image", file, previewUrl: img.src, x: 0.5, y: 0.5, rotation: 0, width: 0.3, aspect },
+      { id, type: "sticker", sourceKind: "static", emoji, x: 0.5, y: 0.5, rotation: 0, width: 0.18, aspect: 1 },
     ]);
     setActiveId(id);
+    setStickerPickerOpen(false);
+  }
+
+  // Adds a GIF sticker from a normalized Giphy result (see api.js's
+  // searchGifs/getTrendingGifs). aspect comes from the GIF's own natural
+  // dimensions so it doesn't look stretched at any width.
+  function addGifSticker(gif) {
+    commitHistory();
+    const id = nextLayerId();
+    const aspect = gif.width && gif.height ? gif.height / gif.width : 1;
+    setLayers((prev) => [
+      ...prev,
+      {
+        id, type: "sticker", sourceKind: "gif", gifUrl: gif.gifUrl, mp4Url: gif.mp4Url,
+        x: 0.5, y: 0.5, rotation: 0, width: 0.35, aspect,
+      },
+    ]);
+    setActiveId(id);
+    setStickerPickerOpen(false);
   }
 
   function updateLayer(id, patch) {
@@ -469,6 +558,46 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
     sel.addRange(range);
   }, [editingId]);
 
+  // Loads the trending feed once, the first time the GIF tab is opened
+  // with an empty search box — not on every open, so re-opening the panel
+  // doesn't refetch if the user already has trending results loaded.
+  useEffect(() => {
+    if (!stickerPickerOpen || stickerTab !== "gifs" || gifQuery.trim() || gifResults.length > 0) return;
+    let cancelled = false;
+    setGifLoading(true);
+    getTrendingGifs({ token })
+      .then((res) => {
+        if (cancelled) return;
+        setGifConfigured(res.configured);
+        setGifResults(res.results || []);
+      })
+      .catch(() => { if (!cancelled) setGifResults([]); })
+      .finally(() => { if (!cancelled) setGifLoading(false); });
+    return () => { cancelled = true; };
+  }, [stickerPickerOpen, stickerTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounced search: waits 400ms after the last keystroke before firing,
+  // and gifFetchSeq guards against an older, slower request overwriting a
+  // newer one's results if responses arrive out of order.
+  useEffect(() => {
+    if (!stickerPickerOpen || stickerTab !== "gifs") return;
+    const q = gifQuery.trim();
+    if (!q) return;
+    const seq = ++gifFetchSeq.current;
+    setGifLoading(true);
+    const timer = setTimeout(() => {
+      searchGifs({ token, query: q })
+        .then((res) => {
+          if (gifFetchSeq.current !== seq) return;
+          setGifConfigured(res.configured);
+          setGifResults(res.results || []);
+        })
+        .catch(() => { if (gifFetchSeq.current === seq) setGifResults([]); })
+        .finally(() => { if (gifFetchSeq.current === seq) setGifLoading(false); });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [gifQuery, stickerPickerOpen, stickerTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function setFontFamily(id, fontFamily) {
     commitHistory();
     updateLayer(id, { fontFamily });
@@ -505,7 +634,7 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
       } else if (layer.type === "mention") {
         const next = Math.min(3, Math.max(0.5, d.initialScale * ratio));
         updateLayer(d.id, { scale: next });
-      } else if (layer.type === "image") {
+      } else if (layer.type === "image" || layer.type === "sticker") {
         const next = Math.min(0.9, Math.max(0.05, d.initialWidth * ratio));
         updateLayer(d.id, { width: next });
       }
@@ -657,14 +786,6 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
           onChange={(e) => onImageChange(e.target.files?.[0] || null)}
           style={{ display: "none" }}
         />
-        <input
-          ref={stickerInputRef}
-          type="file"
-          accept="image/*"
-          onChange={(e) => { addStickerFile(e.target.files?.[0] || null); e.target.value = ""; }}
-          style={{ display: "none" }}
-        />
-
         {image ? (
           <img
             src={URL.createObjectURL(image)}
@@ -776,6 +897,32 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
                 }}
               />
             )}
+            {layer.type === "sticker" && layer.sourceKind === "static" && (
+              <div
+                onPointerDown={(e) => startMove(e, layer.id)}
+                style={{
+                  cursor: "grab", fontSize: layer.width * 200, lineHeight: 1, userSelect: "none",
+                  outline: activeId === layer.id ? "1px dashed var(--accent)" : "none",
+                }}
+              >
+                {layer.emoji}
+              </div>
+            )}
+            {layer.type === "sticker" && layer.sourceKind === "gif" && (
+              // Native <img> for an animated GIF autoplays in every browser
+              // with zero extra code — no <video> tag needed for preview,
+              // even though export uses the mp4Url (see flatten()).
+              <img
+                src={layer.gifUrl}
+                alt=""
+                onPointerDown={(e) => startMove(e, layer.id)}
+                draggable={false}
+                style={{
+                  cursor: "grab", width: layer.width * 200, height: layer.width * 200 * layer.aspect,
+                  display: "block", outline: activeId === layer.id ? "1px dashed var(--accent)" : "none",
+                }}
+              />
+            )}
             {renderHandles(layer)}
           </div>
         ))}
@@ -784,13 +931,100 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
       <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", margin: "10px 0" }}>
         <button type="button" onClick={addTextLayer}>+ Text</button>
         <button type="button" onClick={addMention} disabled={layers.some((l) => l.type === "mention")}>+ Mention</button>
-        <button type="button" onClick={() => stickerInputRef.current?.click()}>+ Sticker</button>
+        <button type="button" onClick={() => setStickerPickerOpen((o) => !o)}>+ Sticker/GIF</button>
         {image && (
           <button type="button" onClick={() => fileInputRef.current?.click()}>Change image</button>
         )}
         <button type="button" onClick={undo} disabled={past.length === 0} title="Ctrl+Z">↶ Undo</button>
         <button type="button" onClick={redo} disabled={future.length === 0} title="Ctrl+Shift+Z">↷ Redo</button>
       </div>
+
+      {stickerPickerOpen && (
+        <div className="composer-field" style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 10, marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+            {[{ id: "stickers", label: "Stickers" }, { id: "gifs", label: "GIFs" }].map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setStickerTab(t.id)}
+                aria-pressed={stickerTab === t.id}
+                style={{
+                  flex: 1, fontWeight: stickerTab === t.id ? 700 : 400,
+                  background: stickerTab === t.id ? "var(--accent)" : undefined,
+                  color: stickerTab === t.id ? "#fff" : undefined,
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {stickerTab === "stickers" && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 4 }}>
+              {STICKER_PACK.map((emoji, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => addEmojiSticker(emoji)}
+                  title="Add sticker"
+                  style={{ fontSize: 22, padding: 4, background: "transparent", border: "1px solid var(--border)", borderRadius: 6 }}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {stickerTab === "gifs" && (
+            <>
+              <input
+                type="text"
+                placeholder="Search GIFs…"
+                value={gifQuery}
+                onChange={(e) => setGifQuery(e.target.value)}
+                style={{ width: "100%", marginBottom: 8 }}
+              />
+              {!gifConfigured ? (
+                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
+                  GIF search isn't set up yet — add a Giphy API key on the backend to enable this tab.
+                </p>
+              ) : gifLoading ? (
+                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>Loading…</p>
+              ) : gifResults.length === 0 ? (
+                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
+                  {gifQuery.trim() ? "No GIFs found." : "No trending GIFs right now."}
+                </p>
+              ) : (
+                <div
+                  style={{
+                    display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6,
+                    maxHeight: 220, overflowY: "auto",
+                  }}
+                >
+                  {gifResults.map((gif) => (
+                    <button
+                      key={gif.id}
+                      type="button"
+                      onClick={() => addGifSticker(gif)}
+                      title={gif.title || "Add GIF"}
+                      style={{
+                        padding: 0, border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden",
+                        background: "transparent", aspectRatio: "1 / 1", display: "block",
+                      }}
+                    >
+                      <img
+                        src={gif.previewUrl}
+                        alt=""
+                        style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center", display: "block" }}
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {activeLayer && (
         <div className="composer-field" style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 10 }}>
@@ -993,6 +1227,14 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange }
           {activeLayer.type === "image" && (
             <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
               Sticker — drag to move, use the handles to resize or rotate.
+            </p>
+          )}
+
+          {activeLayer.type === "sticker" && (
+            <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+              {activeLayer.sourceKind === "gif" ? "GIF" : "Sticker"} — drag to move, use the handles to
+              resize or rotate.
+              {activeLayer.sourceKind === "gif" && " Note: the posted Story currently freezes this on its first frame — full motion export is still in progress."}
             </p>
           )}
         </div>

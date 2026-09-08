@@ -481,7 +481,7 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
       )}
 
       {mode === "story" ? (
-        <StoryComposer ref={storyComposerRef} image={storyImage} onImageChange={setStoryImage} />
+        <StoryComposer ref={storyComposerRef} image={storyImage} onImageChange={setStoryImage} token={token} />
       ) : mode === "ai" ? (
         <div className="composer-fields">
           <div className="composer-field">

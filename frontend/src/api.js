@@ -864,3 +864,26 @@ export async function decideApprovalRequest({ token, draftId, decision, feedback
   });
   return handle(res);
 }
+
+/*
+  Backs the Story composer's GIF tab. Both routes proxy Giphy server-side
+  (the API key never reaches the browser) and normalize each result to
+  { id, title, previewUrl, gifUrl, mp4Url, width, height }.
+  Expected backend response: { configured: bool, results: [...] } — when
+  configured is false, GIPHY_API_KEY isn't set on the backend and the tab
+  should show a "not set up" state instead of an empty-results state.
+*/
+export async function getTrendingGifs({ token, limit }) {
+  const url = new URL(`${API_BASE}/gifs/trending`);
+  if (limit) url.searchParams.set("limit", limit);
+  const res = await fetch(url, { headers: authHeaders(token) });
+  return handle(res);
+}
+
+export async function searchGifs({ token, query, limit }) {
+  const url = new URL(`${API_BASE}/gifs/search`);
+  url.searchParams.set("q", query);
+  if (limit) url.searchParams.set("limit", limit);
+  const res = await fetch(url, { headers: authHeaders(token) });
+  return handle(res);
+}

@@ -170,6 +170,13 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
 CALENDARIFIC_API_KEY = os.environ.get("CALENDARIFIC_API_KEY")
 CALENDARIFIC_COUNTRY = os.environ.get("CALENDARIFIC_COUNTRY", "IN")
 
+# Powers the Story composer's GIF sticker picker (Giphy). Kept server-side
+# so the key never reaches the browser bundle - the frontend calls our own
+# /gifs/* routes, which proxy to Giphy with the key attached here. Optional:
+# if unset, /gifs/* returns an empty result set with a "not configured" flag
+# rather than 500ing the picker.
+GIPHY_API_KEY = os.environ.get("GIPHY_API_KEY")
+
 app = FastAPI(title="Content Agent API")
 
 _frontend_origins = [
@@ -1645,6 +1652,67 @@ async def generate(req: GenerateRequest, db: AsyncSession = Depends(get_db), use
     )
 
     return {"draft_id": str(draft.id), "draft": draft.content}
+
+
+def _normalize_giphy_result(item: dict) -> dict:
+    """Giphy's raw payload nests dozens of rendition sizes we don't need.
+    Pull out just what the Story composer's sticker layer uses: a small
+    preview for the picker grid, the original GIF for the live canvas
+    preview, and the pre-transcoded MP4 rendition (Giphy transcodes every
+    upload server-side) so exporting an animated Story doesn't require us
+    to run our own GIF->MP4 conversion."""
+    images = item.get("images", {})
+    original = images.get("original", {})
+    preview = images.get("fixed_width_small", {}) or images.get("fixed_width", {})
+    mp4 = original.get("mp4") or images.get("original_mp4", {}).get("mp4")
+    return {
+        "id": item.get("id"),
+        "title": item.get("title", ""),
+        "previewUrl": preview.get("url"),
+        "gifUrl": original.get("url"),
+        "mp4Url": mp4,
+        "width": int(original.get("width") or 0) or None,
+        "height": int(original.get("height") or 0) or None,
+    }
+
+
+def _fetch_giphy_sync(endpoint: str, params: dict) -> list[dict]:
+    """Blocking Giphy call - run via run_in_threadpool. Returns [] on any
+    error (bad/missing key, rate limit, network) rather than raising, so a
+    flaky third-party API never breaks the rest of the Story composer."""
+    try:
+        resp = requests.get(
+            f"https://api.giphy.com/v1/gifs/{endpoint}",
+            params={**params, "api_key": GIPHY_API_KEY, "rating": "pg-13"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        return [_normalize_giphy_result(item) for item in resp.json().get("data", [])]
+    except Exception:
+        logging.getLogger("dashboard").warning("Giphy fetch failed for %s", endpoint, exc_info=True)
+        return []
+
+
+@app.get("/gifs/trending")
+async def gifs_trending(limit: int = 24, user_id: uuid.UUID = Depends(require_auth)):
+    """Default grid shown when the Story composer's GIF tab is opened,
+    before the user has typed a search query."""
+    if not GIPHY_API_KEY:
+        return {"configured": False, "results": []}
+    results = await run_in_threadpool(_fetch_giphy_sync, "trending", {"limit": limit})
+    return {"configured": True, "results": results}
+
+
+@app.get("/gifs/search")
+async def gifs_search(q: str, limit: int = 24, user_id: uuid.UUID = Depends(require_auth)):
+    """Backs the GIF tab's search box. Auth-gated like /dashboard/ideas so
+    an unauthenticated caller can't use this as a free Giphy proxy."""
+    if not GIPHY_API_KEY:
+        return {"configured": False, "results": []}
+    if not q.strip():
+        return {"configured": True, "results": []}
+    results = await run_in_threadpool(_fetch_giphy_sync, "search", {"q": q, "limit": limit})
+    return {"configured": True, "results": results}
 
 
 @app.post("/assist/hashtags")
