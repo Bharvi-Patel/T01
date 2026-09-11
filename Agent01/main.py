@@ -146,6 +146,7 @@ from notifications import (
     maybe_send_weekly_digests,
     notify_user,
 )
+from help_content import retrieve_help_context, sync_help_embeddings
 
 # Which credential fields must be Fernet-encrypted before hitting the DB,
 # per platform. Mirrors the plaintext/secret split used by the manual
@@ -243,6 +244,21 @@ async def require_auth(
         raise HTTPException(status_code=401, detail="Session expired, please log in again")
 
     return session.user_id
+
+
+async def require_admin(user_id: uuid.UUID = Depends(require_auth)) -> uuid.UUID:
+    """Site-wide admin gate - true today only for the single bootstrap
+    account (ADMIN_USER_ID, set on startup by _get_or_create_admin_user).
+    NOT the same thing as WorkspaceMember.role == ADMIN, which is a
+    per-workspace role any workspace owner already has; this is
+    platform-wide, for endpoints that need to see across every workspace
+    at once (site-wide stats, later: workspace/user listing). If this
+    ever needs to support more than one admin, this is the only place
+    that changes - everything depending on require_admin stays the same.
+    """
+    if user_id != ADMIN_USER_ID:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user_id
 
 
 @app.get("/health")
@@ -520,6 +536,12 @@ async def on_startup():
     await init_db()
     async with AsyncSessionLocal() as session:
         ADMIN_USER_ID = await _get_or_create_admin_user(session)
+        # Checkpoint 4: keep the help-center embeddings in pgvector current
+        # with frontend/src/data/helpContent.json. Diff-checked (see
+        # sync_help_embeddings), so a restart where nobody edited that file
+        # costs zero embedding calls - safe to run on every startup rather
+        # than needing a separate manual step someone has to remember to run.
+        await sync_help_embeddings(session)
     _scheduler_task = asyncio.create_task(_scheduler_loop())
 
 
@@ -746,6 +768,10 @@ def serialize_profile(user: User) -> dict:
         "timezone": user.timezone,
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "has_password": bool(user.password_hash),
+        # Drives whether the frontend shows the Admin nav item at all - see
+        # require_admin for the actual server-side gate this reflects
+        # (this field alone is not a security boundary, the endpoint check is).
+        "is_admin": user.id == ADMIN_USER_ID,
     }
 
 
@@ -1737,10 +1763,11 @@ CHAT_HISTORY_TURNS = 20  # messages (not conversation turns) fed back to the LLM
 
 @app.post("/chat")
 async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
-    """Checkpoint 2 of the floating help-assistant widget: persists every
-    turn to chat_messages and feeds the recent history back to Gemini so
-    follow-up questions have context. Still no product-specific grounding
-    yet (Checkpoints 4-5 add Qdrant + RAG)."""
+    """Checkpoint 5 of the floating help-assistant widget: same as
+    Checkpoint 2 (persist + recent history), now also embedding the
+    message and pulling the closest help-center articles out of pgvector
+    (Checkpoint 4's table) to ground the reply in actual product content,
+    instead of Gemini's general knowledge alone."""
     text = req.message.strip()
     if not text:
         raise HTTPException(status_code=400, detail="message must not be empty")
@@ -1758,7 +1785,8 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), user_id: uu
     db.add(ChatMessage(workspace_id=membership.workspace_id, user_id=user_id, role=ChatRole.USER, content=text))
     await db.commit()
 
-    reply = await run_in_threadpool(chat_reply, text, history)
+    context = await retrieve_help_context(db, text)
+    reply = await run_in_threadpool(chat_reply, text, history, context)
 
     db.add(ChatMessage(workspace_id=membership.workspace_id, user_id=user_id, role=ChatRole.ASSISTANT, content=reply))
     await db.commit()
@@ -2333,6 +2361,30 @@ async def analytics_summary(
         "current_followers": current_followers,
         "follower_growth": follower_growth,
     }
+
+
+@app.get("/admin/platform-stats")
+async def admin_platform_stats(
+    db: AsyncSession = Depends(get_db),
+    admin_id: uuid.UUID = Depends(require_admin),
+):
+    """Site-wide, all-time post totals for the /admin page - every
+    workspace, no date range, unlike /analytics/summary above which is
+    scoped to one workspace and a rolling window. Counts successful
+    publishes only, since a failed attempt isn't really a "post made".
+    Admin-gated (require_admin) since this aggregates across every
+    tenant on the platform, not just the caller's own workspace.
+    """
+    rows = (await db.execute(
+        select(PublishResult.platform, func.count(PublishResult.id))
+        .where(PublishResult.success.is_(True))
+        .group_by(PublishResult.platform)
+    )).all()
+
+    by_platform = {(p.value if hasattr(p, "value") else p): count for p, count in rows}
+    total = sum(by_platform.values())
+
+    return {"total": total, "by_platform": by_platform}
 
 
 @app.get("/drafts")

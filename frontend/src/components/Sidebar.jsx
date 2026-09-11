@@ -16,6 +16,12 @@ const NAV_ITEMS = [
   { key: "billing", label: "Billing", icon: "card" },
 ];
 
+// Site-wide admin page - appended only for the bootstrap admin account
+// (profile.is_admin, set from require_admin server-side). Kept separate
+// from NAV_ITEMS itself so it never renders for anyone else, rather than
+// being a normally-visible item some CSS/role check hides after the fact.
+const ADMIN_NAV_ITEM = { key: "admin", label: "Admin", icon: "shield" };
+
 const ICON_PATHS = {
   dashboard: "M3 11l9-8 9 8M5 10v10h14V10",
   inbox: "M3 8l9 6 9-6M5 6h14a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z",
@@ -25,6 +31,7 @@ const ICON_PATHS = {
   card: "M2 7a2 2 0 012-2h16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7zM2 10h20M6 15h4",
   users: "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75",
   calendar: "M8 2v4M16 2v4M3 9h18M4 5h16a1 1 0 011 1v13a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1z",
+  shield: "M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z",
   bell: "M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0",
   help: "M12 2a10 10 0 100 20 10 10 0 000-20zM9.5 9a2.5 2.5 0 015 0c0 1.5-2 2-2 3.5M12 17h.01",
   user: "M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z",
@@ -127,7 +134,7 @@ export default function Sidebar({
 
         {/* Nav */}
         <div className="sidebar-nav">
-          {NAV_ITEMS.map((item) => {
+          {(profile?.is_admin ? [...NAV_ITEMS, ADMIN_NAV_ITEM] : NAV_ITEMS).map((item) => {
             const active = activeStep === item.key;
             return (
               <button

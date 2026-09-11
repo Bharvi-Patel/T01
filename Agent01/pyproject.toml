@@ -16,6 +16,7 @@ dependencies = [
     "langchain-community>=0.4.2",
     "openai>=2.52.0",
     "openai-agents>=0.19.2",
+    "pgvector>=0.3.6",
     "passlib[bcrypt]>=1.7.4",
     "pillow>=12.3.0",
     "playwright>=1.62.0",

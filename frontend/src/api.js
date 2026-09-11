@@ -560,6 +560,13 @@ export async function refreshAnalytics({ token }) {
   return handle(res);
 }
 
+// Site-wide (every workspace, all-time) post totals for the /admin page.
+// 403s for anyone but the bootstrap admin account - see require_admin.
+export async function getAdminPlatformStats({ token }) {
+  const res = await fetch(`${API_BASE}/admin/platform-stats`, { headers: authHeaders(token) });
+  return handle(res);
+}
+
 /*
   Fetch a single draft by id (e.g. to resume review from the Drafts list).
   Expected backend response: { draft_id, draft: {...}, status }

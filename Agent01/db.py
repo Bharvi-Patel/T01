@@ -8,6 +8,7 @@ import bcrypt
 
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -19,6 +20,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text as sa_text,
     true as sa_true,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -779,12 +781,56 @@ class ChatMessage(Base):
     user: Mapped["User"] = relationship()
 
 
+# Dimensionality the help-content embeddings are stored at (Gemini's
+# embedding model supports Matryoshka truncation down to this size via the
+# `dimensions` param - see Agent01/help_content.py). Kept as a constant here
+# rather than inline in the Vector(...) column so the embedding call and the
+# column definition can't silently drift out of sync.
+HELP_EMBEDDING_DIM = 768
+
+
+class HelpArticleEmbedding(Base):
+    """Embedded help-center FAQ content (Checkpoint 4 of the assistant
+    widget). One row per article in frontend/src/data/helpContent.json -
+    the exact same file HelpCenter.jsx renders, so there's one copy of
+    this content, not two that can drift apart. See Agent01/help_content.py
+    for how the JSON is loaded, embedded, and kept in sync.
+
+    Synced (not just inserted) on every backend startup by
+    sync_help_embeddings(): `article_id` is a stable "{section_key}:{index}"
+    key, `content_hash` lets a startup skip re-embedding any article whose
+    question/answer text hasn't changed, and rows for articles removed from
+    the JSON are deleted rather than left orphaned.
+
+    Checkpoint 5 (RAG) queries this table with pgvector's `<=>` cosine-
+    distance operator to ground /chat's answers. No HNSW/IVFFlat index on
+    `embedding` yet - this corpus is ~30-50 rows, trivially fast to
+    brute-force scan, and skipping the index avoids its accuracy/recall
+    trade-offs while the corpus is this small.
+    """
+    __tablename__ = "help_article_embeddings"
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    article_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    section_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    section_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(HELP_EMBEDDING_DIM), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
 # Init helper (dev convenience - use Alembic migrations once schema stabilizes)
 
 async def init_db() -> None:
     """Create all tables if they don't exist yet. Fine for dev; swap for
     Alembic migrations before this touches a real production database."""
     async with engine.begin() as conn:
+        # Must run before create_all - the vector type HelpArticleEmbedding
+        # uses doesn't exist in Postgres until this extension is enabled, so
+        # create_all would fail on a database that's never seen it before.
+        await conn.execute(sa_text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
 
 

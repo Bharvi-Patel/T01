@@ -16,6 +16,7 @@ import PublishNav from "./components/PublishNav";
 import SidePanel from "./components/SidePanel";
 import Calendar from "./components/Calendar";
 import Analytics, { RANGE_OPTIONS } from "./components/Analytics";
+import Admin from "./components/Admin";
 import Inbox, { KIND_TABS } from "./components/Inbox";
 import Notifications from "./components/Notifications";
 import HelpCenter from "./components/HelpCenter";
@@ -643,6 +644,10 @@ export default function App() {
 
           {step === "analytics" && (
             <Analytics token={token} onAuthError={handleLogout} days={analyticsDays} onDaysChange={setAnalyticsDays} />
+          )}
+
+          {step === "admin" && (
+            <Admin token={token} onAuthError={handleLogout} />
           )}
 
           {step === "inbox" && (

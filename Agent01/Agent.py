@@ -90,14 +90,29 @@ CHAT_SYSTEM_PROMPT = (
 )
 
 
-def chat_reply(message: str, history: list[dict] | None = None) -> str:
-    """Checkpoint 2: same Gemini call as Checkpoint 1, now given the prior
-    turns of the conversation (persisted in Postgres by main.py) so
-    follow-up questions have context. `history` is a list of
-    {"role": "user"|"assistant", "content": str} dicts, oldest first,
-    NOT including the current `message`. Still no product-specific
-    grounding yet - that's Checkpoints 4-5 (Qdrant + RAG)."""
-    messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+def chat_reply(message: str, history: list[dict] | None = None, context: list[dict] | None = None) -> str:
+    """Checkpoint 5: same Gemini call as Checkpoint 2, now optionally
+    grounded in help-center articles help_content.retrieve_help_context()
+    found relevant to `message` (Checkpoint 4's pgvector embeddings).
+    `history` is prior conversation turns, same as Checkpoint 2. `context`
+    is [{"question": str, "answer": str, "distance": float}, ...], closest
+    first, or None/[] when retrieval found nothing close enough to be
+    worth grounding on - in that case this behaves exactly like Checkpoint
+    2's plain call.
+    """
+    system_content = CHAT_SYSTEM_PROMPT
+    if context:
+        context_block = "\n\n".join(f"- Q: {c['question']}\n  A: {c['answer']}" for c in context)
+        system_content += (
+            "\n\nRelevant help-center articles for this question:\n\n"
+            + context_block
+            + "\n\nUse these to ground your answer when they're relevant - answer naturally in your "
+            "own words, don't quote them verbatim and don't mention that you're referencing a help "
+            "article. If none of them actually cover what's being asked, fall back to your general "
+            "knowledge of the product, or say you're not sure, same as always."
+        )
+
+    messages = [{"role": "system", "content": system_content}]
     for turn in history or []:
         messages.append({"role": turn["role"], "content": turn["content"]})
     messages.append({"role": "user", "content": message})
