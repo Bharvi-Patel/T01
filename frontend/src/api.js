@@ -177,6 +177,35 @@ export async function suggestHashtags({ token, text, category }) {
 }
 
 /*
+  Checkpoint 2 of the floating help-assistant widget: send one message, get
+  one reply back. The backend now persists both sides and uses recent
+  history as context for the reply — this call itself is unchanged from
+  Checkpoint 1, only what happens behind it.
+  Expected backend response: { reply: "..." }
+ */
+export async function sendChatMessage({ token, message }) {
+  const res = await fetch(`${API_BASE}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ message }),
+  });
+  return handle(res);
+}
+
+/*
+  Checkpoint 2: load the user's past conversation with the help assistant,
+  oldest first, so the widget can restore it on open/reload instead of
+  always starting blank.
+  Expected backend response: { messages: [{ role: "user"|"assistant", content }, ...] }
+ */
+export async function getChatHistory({ token }) {
+  const res = await fetch(`${API_BASE}/chat/history`, {
+    headers: { ...authHeaders(token) },
+  });
+  return handle(res);
+}
+
+/*
   Create a draft from a post the user wrote themselves, instead of
   generating one with AI. `images` is an array of File objects, `video` is
   a single File or null/undefined. `platformBodies` is an optional

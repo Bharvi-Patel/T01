@@ -20,6 +20,7 @@ import Inbox, { KIND_TABS } from "./components/Inbox";
 import Notifications from "./components/Notifications";
 import HelpCenter from "./components/HelpCenter";
 import Members from "./components/Members";
+import ChatWidget from "./components/ChatWidget";
 import { MODE_TABS } from "./components/Form";
 import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, forgotPassword as apiForgotPassword, resetPassword as apiResetPassword, generateDraft, createManualDraft, reviewDraft, scheduleDraft, saveDraftAsDraft, getConnections, getDraft, getProfile, getWorkspace, getNotifications } from "./api";
 
@@ -668,6 +669,8 @@ export default function App() {
           )}
         </div>
       </div>
+
+      <ChatWidget token={token} onAuthError={handleLogout} />
     </div>
   );
 }

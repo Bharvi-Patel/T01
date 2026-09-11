@@ -42,6 +42,10 @@ const SECTIONS = [
         q: "Where do hashtag suggestions come from?",
         a: "T01 can suggest hashtags based on your draft's content when you're reviewing it — you can accept, edit, or ignore them.",
       },
+      {
+        q: "Can I post a Story instead of a regular post?",
+        a: "Yes — the composer has a 'Post a Story' mode alongside 'Generate with AI' and 'Write it myself', for content built specifically as a Story rather than a feed post.",
+      },
     ],
   },
   {
@@ -59,6 +63,14 @@ const SECTIONS = [
       {
         q: "What happens if a publish attempt fails?",
         a: "The draft is marked publish failed and you'll see which platform(s) rejected it and why on the Drafts list. You can fix the issue (e.g. reconnect the platform) and retry from there.",
+      },
+      {
+        q: "What are the tabs on the Publish page?",
+        a: "New Post, Drafts, Scheduled, Media, and Mobile Notifications (where you turn on push notifications for this device).",
+      },
+      {
+        q: "Is Billing available yet?",
+        a: "Not yet — the Billing section is still coming soon.",
       },
     ],
   },
@@ -143,6 +155,32 @@ const SECTIONS = [
       {
         q: "How do I change my password?",
         a: "From your account menu, choose the password change option and follow the prompts.",
+      },
+    ],
+  },
+  {
+    key: "workspaces",
+    title: "Workspaces & members",
+    articles: [
+      {
+        q: "What's the difference between Admin and Member?",
+        a: "Admin is the workspace creator (or whoever ownership is transferred to) and can't be demoted except by explicitly transferring ownership. Member is everyone else. There's no third role.",
+      },
+      {
+        q: "What can Members do vs Admins?",
+        a: "Each Member has a default access level — Full or Needs Approval — that applies to every connected platform, plus optional per-platform overrides if one platform should work differently from the rest for that person. Admins always have full access everywhere and set these levels from the Members page.",
+      },
+      {
+        q: "What happens to a Member's drafts if they're removed?",
+        a: "Removing a Member only revokes their login — their past drafts and publish history stay in the workspace, still attributed to their name.",
+      },
+      {
+        q: "What does 'Needs Approval' actually change?",
+        a: "A draft from a Needs Approval member gets parked as pending approval instead of going straight to scheduled — an Admin has to approve it first. If you tighten someone's access after a post is already scheduled, that post still goes out as scheduled; the stricter access only affects new posts going forward.",
+      },
+      {
+        q: "How do I switch or create a workspace?",
+        a: "Click the workspace name in the top bar to open the switcher — it lists your workspaces with a search box and has a 'Create a new workspace' button at the bottom.",
       },
     ],
   },

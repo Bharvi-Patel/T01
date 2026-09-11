@@ -81,6 +81,31 @@ def suggest_hashtags(text, category=None, max_tags=8):
     return unique[:max_tags]
 
 
+CHAT_SYSTEM_PROMPT = (
+    "You are the built-in help assistant for startTrack, a social media "
+    "content generation and publishing tool. You help users find their way "
+    "around the product and answer questions about how to use it. Keep "
+    "answers short and direct. If you don't know something about the "
+    "product, say so plainly instead of guessing."
+)
+
+
+def chat_reply(message: str, history: list[dict] | None = None) -> str:
+    """Checkpoint 2: same Gemini call as Checkpoint 1, now given the prior
+    turns of the conversation (persisted in Postgres by main.py) so
+    follow-up questions have context. `history` is a list of
+    {"role": "user"|"assistant", "content": str} dicts, oldest first,
+    NOT including the current `message`. Still no product-specific
+    grounding yet - that's Checkpoints 4-5 (Qdrant + RAG)."""
+    messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    for turn in history or []:
+        messages.append({"role": turn["role"], "content": turn["content"]})
+    messages.append({"role": "user", "content": message})
+
+    resp = gemini.chat.completions.create(model=MODEL, messages=messages)
+    return resp.choices[0].message.content or ""
+
+
 CATEGORY_MAP = {
     "Technology": 1, "Web Development": 2, "Artificial Intelligence": 3, "Gadgets": 4,
     "Business": 5, "Startups": 6, "Finance": 7,

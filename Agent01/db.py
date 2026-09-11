@@ -132,6 +132,11 @@ class AccessLevel(str, enum.Enum):
     NEEDS_APPROVAL = "needs_approval"
 
 
+class ChatRole(str, enum.Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
 class InboxKind(str, enum.Enum):
     COMMENT = "comment"
     MESSAGE = "message"
@@ -751,6 +756,27 @@ class CustomTodo(Base):
 
     workspace: Mapped["Workspace"] = relationship()
     user: Mapped["User"] = relationship(back_populates="custom_todos")
+
+
+class ChatMessage(Base):
+    """One turn in a user's conversation with the floating help-assistant
+    widget (Checkpoint 2). Unlike CustomTodo, this is scoped to BOTH
+    workspace_id and user_id and always queried by both - the assistant
+    conversation is personal to the person asking, not a shared
+    workspace list every member sees. role distinguishes the user's
+    message from the assistant's reply so history can be replayed to the
+    LLM in order on the next turn."""
+    __tablename__ = "chat_messages"
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    role: Mapped[ChatRole] = mapped_column(Enum(ChatRole, name="chat_role"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    workspace: Mapped["Workspace"] = relationship()
+    user: Mapped["User"] = relationship()
 
 
 # Init helper (dev convenience - use Alembic migrations once schema stabilizes)

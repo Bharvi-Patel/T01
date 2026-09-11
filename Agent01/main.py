@@ -102,12 +102,14 @@ def serialize_media_asset(asset: "MediaAsset") -> dict:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "Agent01"))
 
-from Agent import agent01, revise_draft, approve_and_publish, clean_json_string, VALID_CATEGORIES, upload_to_imgbb, IMGBB_API_KEY, suggest_hashtags
+from Agent import agent01, revise_draft, approve_and_publish, clean_json_string, VALID_CATEGORIES, upload_to_imgbb, IMGBB_API_KEY, suggest_hashtags, chat_reply
 
 from db import (
     AccessLevel,
     AsyncSessionLocal,
     AuthSession,
+    ChatMessage,
+    ChatRole,
     CustomIdea,
     CustomTodo,
     Draft,
@@ -601,6 +603,10 @@ class GenerateRequest(BaseModel):
 class HashtagSuggestRequest(BaseModel):
     text: str
     category: str | None = None
+
+
+class ChatRequest(BaseModel):
+    message: str
 
 
 class ConnectFintoRequest(BaseModel):
@@ -1724,6 +1730,54 @@ async def assist_hashtags(req: HashtagSuggestRequest, user_id: uuid.UUID = Depen
         raise HTTPException(status_code=400, detail="text must not be empty")
     hashtags = await run_in_threadpool(suggest_hashtags, req.text, req.category)
     return {"hashtags": hashtags}
+
+
+CHAT_HISTORY_TURNS = 20  # messages (not conversation turns) fed back to the LLM as context
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    """Checkpoint 2 of the floating help-assistant widget: persists every
+    turn to chat_messages and feeds the recent history back to Gemini so
+    follow-up questions have context. Still no product-specific grounding
+    yet (Checkpoints 4-5 add Qdrant + RAG)."""
+    text = req.message.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="message must not be empty")
+
+    membership = await get_or_create_membership(db, user_id)
+
+    prior = (await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.workspace_id == membership.workspace_id, ChatMessage.user_id == user_id)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(CHAT_HISTORY_TURNS)
+    )).scalars().all()
+    history = [{"role": m.role.value, "content": m.content} for m in reversed(prior)]
+
+    db.add(ChatMessage(workspace_id=membership.workspace_id, user_id=user_id, role=ChatRole.USER, content=text))
+    await db.commit()
+
+    reply = await run_in_threadpool(chat_reply, text, history)
+
+    db.add(ChatMessage(workspace_id=membership.workspace_id, user_id=user_id, role=ChatRole.ASSISTANT, content=reply))
+    await db.commit()
+
+    return {"reply": reply}
+
+
+@app.get("/chat/history")
+async def get_chat_history(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    """Backs the widget reopening/reloading with its prior conversation
+    still there, instead of starting blank every time (Checkpoint 1's
+    local-only message list didn't survive a refresh)."""
+    membership = await get_or_create_membership(db, user_id)
+    rows = (await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.workspace_id == membership.workspace_id, ChatMessage.user_id == user_id)
+        .order_by(ChatMessage.created_at)
+    )).scalars().all()
+    return {"messages": [{"role": m.role.value, "content": m.content} for m in rows]}
 
 
 @app.post("/drafts/manual")
