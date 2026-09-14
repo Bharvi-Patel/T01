@@ -407,6 +407,22 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
                       {selected.senderName}
                     </span>
                   </div>
+                  {connections?.[selected.platform]?.profile_name && (
+                    <div
+                      title="This conversation is on this connected account"
+                      style={{
+                        display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
+                        fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap",
+                        background: "var(--paper-raised)", border: "0.5px solid var(--border-strong)",
+                        borderRadius: 6, padding: "4px 8px",
+                      }}
+                    >
+                      <PlatformLogo platform={PLATFORMS.find((p) => p.key === selected.platform)} size={12} />
+                      <span>
+                        Connected account: <strong style={{ color: "var(--ink)", fontWeight: 600 }}>{connections[selected.platform].profile_name}</strong>
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ flex: 1, overflowY: "auto", padding: isCommentThread ? "18px 16px" : "18px 16px", display: "flex", flexDirection: "column", gap: isCommentThread ? 18 : 4, minHeight: 0 }}>
@@ -494,6 +510,14 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
 
                 {selected.canReply ? (
                   <div style={{ padding: "12px 16px", borderTop: "0.5px solid var(--border)", flexShrink: 0 }}>
+                    {connections?.[selected.platform]?.profile_name && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, fontSize: 11.5, color: "var(--text-muted)" }}>
+                        <PlatformLogo platform={PLATFORMS.find((p) => p.key === selected.platform)} size={11} />
+                        <span>
+                          Sending as <strong style={{ color: "var(--ink)" }}>{connections[selected.platform].profile_name}</strong>
+                        </span>
+                      </div>
+                    )}
                     {isCommentThread && replyTarget && (
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8, fontSize: 11.5, color: "var(--text-muted)" }}>
                         <span>Replying to <strong style={{ color: "var(--ink)" }}>{replyTarget.sender_name || "Unknown"}</strong></span>

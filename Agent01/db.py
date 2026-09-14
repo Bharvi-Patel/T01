@@ -603,7 +603,16 @@ class InboxItem(Base):
     kind: Mapped[InboxKind] = mapped_column(Enum(InboxKind, name="inbox_kind_enum"), nullable=False)
     # Meta's id for this comment/message - the uniqueness guard above
     # relies on this to make webhook redelivery a no-op instead of a dupe.
-    external_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    # Text, not String(128): Instagram's real message ids (the "mid" on a
+    # DM webhook event) are long opaque base64-ish tokens that comfortably
+    # exceed 128 chars - Facebook Messenger's mids and every synthetic id
+    # used in test_webhook_delivery.py are short, which is why this never
+    # surfaced until real Instagram DMs started arriving and every single
+    # one failed insertion with "value too long for type character
+    # varying(128)". Text has no length cap in Postgres and indexes the
+    # same way varchar does, so this fully forecloses the same class of
+    # failure for any future oversized id from either platform.
+    external_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     thread_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     sender_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sender_external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)

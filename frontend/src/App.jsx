@@ -643,7 +643,7 @@ export default function App() {
           )}
 
           {step === "analytics" && (
-            <Analytics token={token} onAuthError={handleLogout} days={analyticsDays} onDaysChange={setAnalyticsDays} />
+            <Analytics token={token} connections={connections} onAuthError={handleLogout} days={analyticsDays} onDaysChange={setAnalyticsDays} />
           )}
 
           {step === "admin" && (

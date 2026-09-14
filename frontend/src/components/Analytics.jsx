@@ -173,7 +173,7 @@ function PlatformReliabilityRow({ platformKey, entries }) {
 // FollowerSnapshot rows. Only shows a trend once there are 2+ snapshots
 // (i.e. Refresh has been run on at least two different days) — a single
 // point can't show direction.
-function FollowerCard({ platformKey, count, series }) {
+function FollowerCard({ platformKey, count, series, accountName }) {
   const p = platformByKey(platformKey);
   const [selected, setSelected] = useState(null); // date of the clicked bar, or null
   const first = series?.[0]?.count;
@@ -188,10 +188,15 @@ function FollowerCard({ platformKey, count, series }) {
         borderRadius: 8, padding: "14px 16px", flex: "1 1 180px", minWidth: 160,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", marginBottom: 2 }}>
         {p ? <PlatformLogo platform={p} size={12} /> : null}
         {p?.label || platformKey} followers
       </div>
+      {accountName && (
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink)", marginBottom: 8 }}>
+          {accountName}
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
         <span style={{ fontFamily: "var(--font-display)", fontSize: 26, color: "var(--ink)" }}>{count.toLocaleString()}</span>
         {delta != null && (
@@ -525,7 +530,7 @@ function EngagementByCategorySection({ categories }) {
   );
 }
 
-export default function Analytics({ token, onAuthError, days: daysProp, onDaysChange }) {
+export default function Analytics({ token, onAuthError, days: daysProp, onDaysChange, connections }) {
   const [daysState, setDaysState] = useState(30);
   const days = daysProp ?? daysState;
   const setDays = onDaysChange ?? setDaysState;
@@ -593,7 +598,13 @@ export default function Analytics({ token, onAuthError, days: daysProp, onDaysCh
       {followerEntries.length > 0 && (
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
           {followerEntries.map(([key, count]) => (
-            <FollowerCard key={key} platformKey={key} count={count} series={(data.follower_growth || {})[key]} />
+            <FollowerCard
+              key={key}
+              platformKey={key}
+              count={count}
+              series={(data.follower_growth || {})[key]}
+              accountName={connections?.[key]?.profile_name}
+            />
           ))}
         </div>
       )}
@@ -626,10 +637,13 @@ export default function Analytics({ token, onAuthError, days: daysProp, onDaysCh
           )}
           {platformEntries.map(([key, v]) => {
             const p = platformByKey(key);
+            const accountName = connections?.[key]?.profile_name;
             return (
               <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 {p ? <PlatformLogo platform={p} size={14} /> : null}
-                <span style={{ fontSize: 12.5, color: "var(--ink)", width: 70, flexShrink: 0 }}>{p?.label || key}</span>
+                <span style={{ fontSize: 12.5, color: "var(--ink)", width: 110, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {p?.label || key}{accountName ? ` · ${accountName}` : ""}
+                </span>
                 <div style={{ flex: 1, height: 6, borderRadius: 3, background: "var(--border)", overflow: "hidden" }}>
                   <div
                     style={{

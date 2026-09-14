@@ -360,8 +360,8 @@ export default function ChatWidget({ token, onAuthError }) {
         onClick={() => setOpen((o) => !o)}
         aria-label={open ? "Close help assistant" : "Open help assistant"}
         style={{
-          width: 48,
-          height: 48,
+          width: 56,
+          height: 56,
           borderRadius: "50%",
           border: "1px solid var(--border-strong)",
           background: "var(--primary)",
@@ -374,7 +374,16 @@ export default function ChatWidget({ token, onAuthError }) {
           justifyContent: "center",
         }}
       >
-        {open ? "×" : "?"}
+        {open ? (
+          "×"
+        ) : (
+          <svg style={{ width: 34, height: 34, flexShrink: 0 }} viewBox="0 0 24 24">
+            <path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2z" />
+            <circle cx="8.5" cy="11" r="1.3" fill="var(--primary)" />
+            <circle cx="12" cy="11" r="1.3" fill="var(--primary)" />
+            <circle cx="15.5" cy="11" r="1.3" fill="var(--primary)" />
+          </svg>
+        )}
       </button>
     </div>
   );
