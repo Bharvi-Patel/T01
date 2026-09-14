@@ -669,9 +669,10 @@ export async function markInboxItemRead({ token, itemId }) {
 }
 
 /*
-  Send a DM reply through the connected Page/Instagram account. Only valid
-  for kind: "message" items - the backend rejects comments/mentions since
-  those need a different (unbuilt) Graph API surface. Expected response:
+  Send a reply through the connected account - works for DMs, story
+  replies (Send API), Threads comments, and Facebook/Instagram comments
+  (each platform's own comment-reply edge). Only "mention" items are
+  rejected, since Meta has no reply endpoint for those. Expected response:
   { id, platform, kind, thread_id, sender_name, body, is_read, is_outbound, created_at }
  */
 export async function replyToInboxItem({ token, itemId, text }) {
@@ -679,6 +680,22 @@ export async function replyToInboxItem({ token, itemId, text }) {
     method: "POST",
     headers: { ...authHeaders(token), "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
+  });
+  return handle(res);
+}
+
+/*
+  Repost a story mention's media to the connected Instagram account's own
+  Story - only valid for a "mention" item that has story_media_url set
+  (i.e. a genuine story_mention, not a caption/comment mention). Adds a
+  burned-in "Mentioned by @x" caption for images; video reposts carry no
+  caption (see caption_applied in the response). Expected response:
+  { success: true, post_id, caption_applied }
+ */
+export async function repostStoryMention({ token, itemId }) {
+  const res = await fetch(`${API_BASE}/inbox/${itemId}/repost-to-story`, {
+    method: "POST",
+    headers: authHeaders(token),
   });
   return handle(res);
 }

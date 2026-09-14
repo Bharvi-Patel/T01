@@ -148,7 +148,7 @@ export default function HelpCenter({ onOpenChat }) {
             Chat with us
           </button>
           <a
-            href="mailto:"
+            href="mailto:bharvipatel2029@gmail.com"
             style={{
               display: "flex", alignItems: "center", gap: 7, textDecoration: "none",
               border: "1px solid var(--border-strong)", background: "var(--paper)", color: "var(--ink)",

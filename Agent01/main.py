@@ -102,7 +102,7 @@ def serialize_media_asset(asset: "MediaAsset") -> dict:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "Agent01"))
 
-from Agent import agent01, revise_draft, approve_and_publish, clean_json_string, VALID_CATEGORIES, upload_to_imgbb, IMGBB_API_KEY, suggest_hashtags, chat_reply, generate_conversation_title
+from Agent import agent01, revise_draft, approve_and_publish, clean_json_string, VALID_CATEGORIES, upload_to_imgbb, IMGBB_API_KEY, suggest_hashtags, chat_reply, generate_conversation_title, prepare_story_repost_image, publish_instagram_story
 
 from db import (
     AccessLevel,
@@ -696,7 +696,7 @@ def _parse_draft(content: str) -> dict:
     except (json.JSONDecodeError, TypeError) as e:
         raise HTTPException(
             status_code=502,
-            detail=f"startTrack did not return valid draft JSON: {e}. Raw content was: {content!r}",
+            detail=f"Agent did not return valid draft JSON: {e}. Raw content was: {content!r}",
         )
 
 
@@ -3702,6 +3702,21 @@ async def _connection_for_page(db: AsyncSession, platform: Platform, page_id: st
     return result.scalar_one_or_none()
 
 
+def _story_mention_media_url(raw_payload: dict | None) -> str | None:
+    """Pulls a story_mention's CDN url out of its raw_payload, if present.
+    Only genuine story_mention-attachment items (someone tagged this
+    account in their own story, via the "messaging" webhook) have this
+    shape - caption/comment mentions (the "mentions" changes-field, also
+    recorded as MENTION) have an entirely different raw_payload with no
+    "message"/"attachments" at all, so this naturally returns None for
+    those rather than needing a separate discriminator column."""
+    attachments = ((raw_payload or {}).get("message") or {}).get("attachments") or []
+    story_mention = next((a for a in attachments if a.get("type") == "story_mention"), None)
+    if story_mention is None:
+        return None
+    return (story_mention.get("payload") or {}).get("url")
+
+
 def _fetch_mention_context(page_access_token: str, ig_page_id: str, value: dict) -> dict:
     """Runs in a threadpool (blocking `requests` call) - mentions webhooks
     only give us a media_id (caption mention) or comment_id+media_id
@@ -3979,23 +3994,41 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
             if sender_id and page_access_token:
                 sender_name = await run_in_threadpool(_fetch_sender_name, page_access_token, sender_id, platform)
 
-            # Story mentions arrive as a messaging event with a
-            # story_mention-typed attachment rather than as a "changes"
-            # field - Meta delivers "someone tagged you in their story" the
-            # same way it delivers a DM, just with this attachment shape
-            # instead of message text. Recorded as its own kind, not a
-            # message, since there's no conversation to reply into the way
-            # a real DM has.
+            # Two distinct Instagram story events arrive through this same
+            # "messaging" webhook, and it's easy to conflate them:
+            #   - story_mention attachment: someone tagged this account in
+            #     THEIR OWN story. Recorded as MENTION, same as an
+            #     @-mention in a comment/caption - there's nothing to
+            #     reply into on Meta's side either way.
+            #   - message.reply_to.story: someone replied to THIS
+            #     account's own story. This is a real conversational
+            #     message (repliable via the same Send API as any DM) that
+            #     merely happens to reference a story - recorded as
+            #     STORY_REPLY so the Inbox can filter/label it, but not
+            #     otherwise treated differently from a MESSAGE below.
             attachments = message.get("attachments", [])
             story_mention = next((a for a in attachments if a.get("type") == "story_mention"), None)
             if story_mention is not None:
                 await _upsert_inbox_item(
-                    db, workspace_id=workspace_id, platform=platform, kind=InboxKind.STORY_REPLY,
-                    external_id=str(message.get("mid") or f"story-{sender_id}-{messaging_event.get('timestamp')}"),
+                    db, workspace_id=workspace_id, platform=platform, kind=InboxKind.MENTION,
+                    external_id=str(message.get("mid") or f"story-mention-{sender_id}-{messaging_event.get('timestamp')}"),
                     thread_id=str(sender_id or ""),
                     sender_name=sender_name,
                     sender_external_id=sender_id,
                     body="Mentioned you in their story",
+                    raw_payload=messaging_event,
+                )
+                continue
+
+            story_reply = message.get("reply_to", {}).get("story")
+            if story_reply is not None:
+                await _upsert_inbox_item(
+                    db, workspace_id=workspace_id, platform=platform, kind=InboxKind.STORY_REPLY,
+                    external_id=str(message.get("mid") or f"story-reply-{sender_id}-{messaging_event.get('timestamp')}"),
+                    thread_id=str(sender_id or ""),
+                    sender_name=sender_name,
+                    sender_external_id=sender_id,
+                    body=message.get("text") or "Replied to your story",
                     raw_payload=messaging_event,
                 )
                 continue
@@ -4041,6 +4074,12 @@ async def list_inbox(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = De
                 "is_read": item.is_read,
                 "is_outbound": item.is_outbound,
                 "created_at": item.created_at.isoformat(),
+                # Only present for a genuine story_mention item (someone
+                # tagged this account in their own story) - lets the
+                # frontend show a "Repost to my story" button only where
+                # there's actually repostable media, not on every MENTION
+                # (caption/comment mentions have no attached media at all).
+                "story_media_url": _story_mention_media_url(item.raw_payload),
             }
             for item in items
         ]
@@ -4063,6 +4102,78 @@ async def mark_inbox_item_read(
     item.is_read = True
     await db.commit()
     return {"id": str(item.id), "is_read": True}
+
+
+@app.post("/inbox/{item_id}/repost-to-story")
+async def repost_story_mention(
+    item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """Reposts a story_mention's media to the connected Instagram account's
+    own Story - the closest available equivalent to the native app's "Add
+    to your story" action, since the Content Publishing API has no way to
+    reproduce that action's actual attribution sticker (see
+    publish_instagram_story's docstring). Manual/per-item by design: this
+    republishes another user's original content, so it's a deliberate
+    click, never automatic.
+
+    Images get a burned-in "Mentioned by @sender" caption composited in
+    memory (prepare_story_repost_image) before upload, since Stories have
+    no caption parameter at all. Videos are reposted via their CDN url
+    directly, with no equivalent overlay - burning text into video needs a
+    render step this endpoint doesn't do, so video reposts carry no
+    attribution text; the response flags this via caption_applied so the
+    frontend can tell the user.
+    """
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(
+        select(InboxItem).where(
+            InboxItem.id == item_id,
+            InboxItem.workspace_id == membership.workspace_id,
+            InboxItem.deleted_at.is_(None),
+        )
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Inbox item not found")
+    if item.platform != Platform.INSTAGRAM or item.kind != InboxKind.MENTION:
+        raise HTTPException(status_code=400, detail="Only an Instagram story mention can be reposted to your story")
+
+    media_url = _story_mention_media_url(item.raw_payload)
+    if not media_url:
+        raise HTTPException(status_code=400, detail="No story media found on this mention to repost")
+
+    conn_result = await db.execute(
+        select(PlatformConnection.credentials).where(
+            PlatformConnection.workspace_id == membership.workspace_id,
+            PlatformConnection.platform == Platform.INSTAGRAM,
+        )
+    )
+    row = conn_result.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Instagram isn't connected")
+    creds = dict(row[0] or {})
+    page_access_token = decrypt_secret(creds["page_access_token"])
+    ig_page_id = creds["ig_page_id"]
+
+    attribution = f"Mentioned by @{item.sender_name}" if item.sender_name else "Mentioned you in their story"
+
+    caption_applied = True
+    prepared_bytes = await run_in_threadpool(prepare_story_repost_image, media_url, attribution)
+    if prepared_bytes is not None:
+        hosted_url = await run_in_threadpool(upload_to_imgbb, prepared_bytes, IMGBB_API_KEY)
+        result = await run_in_threadpool(publish_instagram_story, page_access_token, ig_page_id, hosted_url, None)
+    else:
+        # Not openable as an image by PIL - treat as video and repost the
+        # original CDN url as-is, with no burned-in attribution.
+        caption_applied = False
+        result = await run_in_threadpool(publish_instagram_story, page_access_token, ig_page_id, None, media_url)
+
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=f"Meta rejected the repost: {result.get('error')}")
+
+    return {"success": True, "post_id": result.get("post_id"), "caption_applied": caption_applied}
 
 
 class InboxReplyRequest(BaseModel):
@@ -4091,6 +4202,9 @@ async def reply_to_inbox_item(
         own comment-reply edge (facebook_reply_to_comment /
         instagram_reply_to_comment) - a public reply nested under the
         original comment, distinct from both of the above.
+    STORY_REPLY-kind items are real conversational messages (someone
+    replying to this account's own story) and are sent the same way as a
+    MESSAGE, via the same sender_external_id/Send API path below.
     MENTION-kind items on Facebook/Instagram have no reply endpoint at all
     on Meta's side and stay unsupported here."""
     text = body.text.strip()
@@ -4111,7 +4225,8 @@ async def reply_to_inbox_item(
 
     is_threads_reply = item.platform == Platform.THREADS and item.kind in (InboxKind.COMMENT, InboxKind.MENTION)
     is_meta_comment_reply = item.platform in (Platform.FACEBOOK, Platform.INSTAGRAM) and item.kind == InboxKind.COMMENT
-    if item.kind != InboxKind.MESSAGE and not is_threads_reply and not is_meta_comment_reply:
+    is_replyable_message = item.kind in (InboxKind.MESSAGE, InboxKind.STORY_REPLY)
+    if not is_replyable_message and not is_threads_reply and not is_meta_comment_reply:
         raise HTTPException(status_code=400, detail="This item can't be replied to here")
 
     conn_result = await db.execute(

@@ -142,13 +142,16 @@ class ChatRole(str, enum.Enum):
 class InboxKind(str, enum.Enum):
     COMMENT = "comment"
     MESSAGE = "message"
-    # Split out from COMMENT: someone @-mentioned the account in a comment
-    # or caption (Instagram "mentions" webhook field), rather than commenting
-    # on the account's own post.
+    # Split out from COMMENT: someone @-mentioned the account in a comment,
+    # caption, or their own story (Instagram "mentions" webhook field, or a
+    # story_mention-typed messaging attachment - see meta_webhook_receive),
+    # rather than commenting on / replying to the account's own content.
     MENTION = "mention"
-    # Split out from COMMENT: someone tagged the account in their story.
-    # Arrives via the "messaging" webhook (a story_mention attachment) even
-    # though it's not a DM - see meta_webhook_receive.
+    # A reply to one of THIS account's own stories - arrives as a normal
+    # messaging event with a message.reply_to.story object, not an
+    # attachment. Distinct from a story_mention (see MENTION above): a
+    # mention is someone tagging you in their story, a reply is someone
+    # responding to your story - see meta_webhook_receive.
     STORY_REPLY = "story_reply"
 
 

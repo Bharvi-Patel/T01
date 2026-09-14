@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { getInbox, markInboxItemRead, replyToInboxItem } from "../api";
+import { getInbox, markInboxItemRead, replyToInboxItem, repostStoryMention } from "../api";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
 // LinkedIn has no comment/message API access (see engineering notes) so it
@@ -144,6 +144,17 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
   // Root comment id -> whether its replies are expanded, Instagram-style
   // ("View replies (n)" / "Hide replies"). Collapsed by default.
   const [expandedReplies, setExpandedReplies] = useState({});
+  // Per-item repost state, keyed by item id: "sending" | "done" | error
+  // string. Kept separate from the DM-reply state above since a repost is
+  // a one-off action on a single mention, not part of the reply thread.
+  const [repostState, setRepostState] = useState({});
+
+  function handleRepost(itemId) {
+    setRepostState((prev) => ({ ...prev, [itemId]: "sending" }));
+    repostStoryMention({ token, itemId })
+      .then(() => setRepostState((prev) => ({ ...prev, [itemId]: "done" })))
+      .catch((e) => setRepostState((prev) => ({ ...prev, [itemId]: e.message || "Repost failed" })));
+  }
 
   // showSpinner is false for background polls so the list doesn't flash a
   // full loading state every 15s - only the very first load (and token
@@ -502,6 +513,28 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
                               {item.body || <em>No text content</em>}
                             </div>
                           </div>
+                          {item.kind === "mention" && item.story_media_url && (
+                            <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 8 }}>
+                              {repostState[item.id] === "done" ? (
+                                <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>Reposted to your story</span>
+                              ) : (
+                                <button
+                                  onClick={() => handleRepost(item.id)}
+                                  disabled={repostState[item.id] === "sending"}
+                                  style={{
+                                    fontSize: 12, padding: "5px 10px", borderRadius: 6,
+                                    border: "0.5px solid var(--border-strong)", background: "var(--paper-raised)",
+                                    color: "var(--ink)", cursor: repostState[item.id] === "sending" ? "default" : "pointer",
+                                  }}
+                                >
+                                  {repostState[item.id] === "sending" ? "Reposting..." : "Repost to my story"}
+                                </button>
+                              )}
+                              {repostState[item.id] && repostState[item.id] !== "sending" && repostState[item.id] !== "done" && (
+                                <span style={{ fontSize: 12, color: "var(--danger, #c0392b)", marginLeft: 8 }}>{repostState[item.id]}</span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })

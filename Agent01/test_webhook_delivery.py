@@ -44,11 +44,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--platform", choices=["instagram", "facebook"], default="instagram")
 parser.add_argument(
     "--event",
-    choices=["message", "comment"],
+    choices=["message", "comment", "story_mention", "story_reply"],
     default="message",
     help="'message' (default) simulates an inbound DM via entry[].messaging[]. "
          "'comment' simulates a Page/media comment via entry[].changes[] - "
-         "field='feed' for facebook, field='comments' for instagram.",
+         "field='feed' for facebook, field='comments' for instagram. "
+         "'story_mention' simulates being tagged in someone else's story "
+         "(recorded as a MENTION). 'story_reply' simulates someone replying "
+         "to this account's own story (recorded as STORY_REPLY, and is "
+         "repliable the same way a DM is).",
 )
 parser.add_argument(
     "--callback-url",
@@ -154,6 +158,69 @@ def _build_comment_payload(object_type: str, platform: Platform, page_id: str) -
     }
 
 
+def _build_story_mention_payload(object_type: str, page_id: str) -> dict:
+    """Matches the story_mention-typed attachment meta_webhook_receive
+    checks for - someone tagged this account in THEIR OWN story. Recorded
+    as a MENTION, not a reply, since there's nothing to reply into here."""
+    mid = f"test_mid_{int(time.time() * 1000)}"
+    return {
+        "object": object_type,
+        "entry": [
+            {
+                "id": page_id,
+                "time": 0,
+                "messaging": [
+                    {
+                        "sender": {"id": "TEST_SENDER_123"},
+                        "recipient": {"id": page_id},
+                        "timestamp": 0,
+                        "message": {
+                            "mid": mid,
+                            "attachments": [
+                                {"type": "story_mention", "payload": {"url": "https://example.com/test-story.jpg"}}
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _build_story_reply_payload(object_type: str, page_id: str) -> dict:
+    """Matches the message.reply_to.story shape meta_webhook_receive checks
+    for - someone replying to THIS account's own story. Recorded as
+    STORY_REPLY, and is repliable the same way a DM is (same
+    sender_external_id/Send API path)."""
+    mid = f"test_mid_{int(time.time() * 1000)}"
+    return {
+        "object": object_type,
+        "entry": [
+            {
+                "id": page_id,
+                "time": 0,
+                "messaging": [
+                    {
+                        "sender": {"id": "TEST_SENDER_123"},
+                        "recipient": {"id": page_id},
+                        "timestamp": 0,
+                        "message": {
+                            "mid": mid,
+                            "text": "This is a test story reply sent by test_webhook_delivery.py",
+                            "reply_to": {
+                                "story": {
+                                    "id": "test_story_id_123",
+                                    "url": "https://example.com/test-story.jpg",
+                                }
+                            },
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+
 def _sign(raw_body: bytes) -> str:
     """Same algorithm as _verify_meta_signature() in main.py - HMAC-SHA256
     over the raw request body, using the app secret."""
@@ -184,6 +251,10 @@ async def main():
 
     if args.event == "comment":
         payload = _build_comment_payload(object_type, platform, page_id)
+    elif args.event == "story_mention":
+        payload = _build_story_mention_payload(object_type, page_id)
+    elif args.event == "story_reply":
+        payload = _build_story_reply_payload(object_type, page_id)
     else:
         payload = _build_message_payload(object_type, page_id)
     raw_body = json.dumps(payload).encode()

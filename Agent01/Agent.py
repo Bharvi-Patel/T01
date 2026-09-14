@@ -475,6 +475,102 @@ def validate_and_prepare_instagram_image(image_url):
         return None
 
 
+def prepare_story_repost_image(image_url: str, attribution_text: str) -> bytes | None:
+    """Downloads a story-mention's image and burns an attribution caption
+    into the bottom of it. Unlike a feed post, Instagram's Stories publish
+    endpoint (media_type=STORIES) has no caption parameter at all - the
+    native "Add to your story" attribution sticker is a client-app-only
+    interaction, not something the Content Publishing API can reproduce -
+    so a real caption has to be drawn into the pixels ourselves before
+    upload. The original bytes are only ever held in memory for this one
+    request, never written to disk/DB, in line with Meta's story-mention
+    guidance not to cache the media.
+
+    Returns None only if the image can't be fetched/opened at all - same
+    contract as validate_and_prepare_instagram_image above.
+    """
+    from PIL import ImageDraw, ImageFont
+
+    try:
+        resp = requests.get(image_url, timeout=10)
+        resp.raise_for_status()
+        img = Image.open(BytesIO(resp.content)).convert("RGB")
+        w, h = img.size
+
+        bar_height = max(60, int(h * 0.08))
+        overlay = Image.new("RGBA", (w, bar_height), (0, 0, 0, 160))
+        img.paste(Image.alpha_composite(
+            Image.new("RGBA", (w, bar_height), (0, 0, 0, 0)), overlay
+        ).convert("RGB"), (0, h - bar_height))
+
+        draw = ImageDraw.Draw(img)
+        font_size = max(18, int(bar_height * 0.4))
+        try:
+            font = ImageFont.truetype("DejaVuSans-Bold.ttf", font_size)
+        except Exception:
+            font = ImageFont.load_default()
+        text_bbox = draw.textbbox((0, 0), attribution_text, font=font)
+        text_w = text_bbox[2] - text_bbox[0]
+        draw.text(
+            ((w - text_w) / 2, h - bar_height + (bar_height - font_size) / 2),
+            attribution_text, fill=(255, 255, 255), font=font,
+        )
+
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        return buf.getvalue()
+    except Exception:
+        return None
+
+
+def publish_instagram_story(page_access_token: str, ig_user_id: str, image_url: str | None = None, video_url: str | None = None) -> dict:
+    """Publishes a single image/video to the connected Instagram account's
+    own Story via the Content Publishing API's media_type=STORIES path -
+    same two-step container/publish flow as a feed post (see
+    publish_instagram above), just with that one extra parameter. Video
+    containers process async server-side same as Reels, so this polls
+    before publishing; image containers publish immediately.
+
+    Used for reposting a story mention: `image_url` should already point
+    at the attribution-captioned JPEG from prepare_story_repost_image (for
+    images) or the mention's own CDN url passed straight through as
+    `video_url` (for videos, where no in-video caption is applied - see
+    the /inbox/{item_id}/repost-to-story endpoint in main.py).
+    """
+    try:
+        if video_url:
+            container_resp = requests.post(
+                f"https://graph.facebook.com/v21.0/{ig_user_id}/media",
+                data={"media_type": "STORIES", "video_url": video_url, "access_token": page_access_token},
+                timeout=30,
+            )
+            _raise_with_api_detail(container_resp)
+            creation_id = container_resp.json()["id"]
+            wait_for_media_container(
+                f"https://graph.facebook.com/v21.0/{creation_id}", page_access_token, field="status_code",
+            )
+        elif image_url:
+            container_resp = requests.post(
+                f"https://graph.facebook.com/v21.0/{ig_user_id}/media",
+                data={"media_type": "STORIES", "image_url": image_url, "access_token": page_access_token},
+                timeout=15,
+            )
+            _raise_with_api_detail(container_resp)
+            creation_id = container_resp.json()["id"]
+        else:
+            return {"success": False, "error": "Story repost requires an image or video."}
+
+        publish_resp = requests.post(
+            f"https://graph.facebook.com/v21.0/{ig_user_id}/media_publish",
+            data={"creation_id": creation_id, "access_token": page_access_token},
+            timeout=15,
+        )
+        _raise_with_api_detail(publish_resp)
+        return {"success": True, "post_id": publish_resp.json().get("id")}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def download_video_bytes(url: str) -> bytes:
     """Download a video's raw bytes, unmodified. Unlike download_image()
     there's no re-encode step - LinkedIn is the only adapter that needs the
