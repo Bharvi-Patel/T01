@@ -177,29 +177,54 @@ export async function suggestHashtags({ token, text, category }) {
 }
 
 /*
-  Checkpoint 2 of the floating help-assistant widget: send one message, get
-  one reply back. The backend now persists both sides and uses recent
-  history as context for the reply — this call itself is unchanged from
-  Checkpoint 1, only what happens behind it.
-  Expected backend response: { reply: "..." }
+  Send one message into a specific conversation, get one reply back. The
+  backend persists both sides, uses recent history + retrieved help
+  articles as context, and (on a conversation's first exchange) generates
+  its title.
+  Expected backend response: { reply: "...", title: "..."|null }
  */
-export async function sendChatMessage({ token, message }) {
+export async function sendChatMessage({ token, conversationId, message }) {
   const res = await fetch(`${API_BASE}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ conversation_id: conversationId, message }),
   });
   return handle(res);
 }
 
 /*
-  Checkpoint 2: load the user's past conversation with the help assistant,
-  oldest first, so the widget can restore it on open/reload instead of
-  always starting blank.
+  Start a new, empty, untitled conversation - the widget's "New
+  conversation" button. Its title gets filled in by the first sendChatMessage
+  into it.
+  Expected backend response: { conversation_id: "...", title: null }
+ */
+export async function createChatConversation({ token }) {
+  const res = await fetch(`${API_BASE}/chat/conversations`, {
+    method: "POST",
+    headers: { ...authHeaders(token) },
+  });
+  return handle(res);
+}
+
+/*
+  List the user's past conversations, most-recently-active first - backs
+  the widget's conversation list view (like Claude's chat sidebar).
+  Expected backend response: { conversations: [{ conversation_id, title, updated_at }, ...] }
+ */
+export async function getChatConversations({ token }) {
+  const res = await fetch(`${API_BASE}/chat/conversations`, {
+    headers: { ...authHeaders(token) },
+  });
+  return handle(res);
+}
+
+/*
+  Load one conversation's messages, oldest first - backs opening a
+  conversation from the list.
   Expected backend response: { messages: [{ role: "user"|"assistant", content }, ...] }
  */
-export async function getChatHistory({ token }) {
-  const res = await fetch(`${API_BASE}/chat/history`, {
+export async function getChatConversationMessages({ token, conversationId }) {
+  const res = await fetch(`${API_BASE}/chat/conversations/${conversationId}/messages`, {
     headers: { ...authHeaders(token) },
   });
   return handle(res);

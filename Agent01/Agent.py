@@ -121,6 +121,31 @@ def chat_reply(message: str, history: list[dict] | None = None, context: list[di
     return resp.choices[0].message.content or ""
 
 
+CONVERSATION_TITLE_PROMPT = (
+    "Summarize the following user message into a short chat conversation "
+    "title, the way Claude or ChatGPT names a new chat. 3-6 words, no "
+    "punctuation at the end, no quotes around it, plain text only. "
+    "Respond with ONLY the title, nothing else.\n\nMessage:\n"
+)
+
+
+def generate_conversation_title(first_message: str) -> str:
+    """Called once per conversation, right after its first exchange (see
+    main.py's /chat), to name it from just the user's opening message -
+    same idea as Claude's own chat list, cheaper than chat_reply since
+    there's no history/context to feed in and the output is a few words.
+    Falls back to a plain truncation if Gemini returns nothing usable, so
+    a conversation is never left titled by an empty string."""
+    resp = gemini.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": CONVERSATION_TITLE_PROMPT + first_message}],
+    )
+    title = (resp.choices[0].message.content or "").strip().strip('"').strip()
+    if not title:
+        title = first_message.strip()[:50]
+    return title[:255]
+
+
 CATEGORY_MAP = {
     "Technology": 1, "Web Development": 2, "Artificial Intelligence": 3, "Gadgets": 4,
     "Business": 5, "Startups": 6, "Finance": 7,

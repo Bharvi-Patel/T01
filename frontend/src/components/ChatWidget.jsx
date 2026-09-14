@@ -1,43 +1,60 @@
 import { useState, useRef, useEffect } from "react";
-import { sendChatMessage, getChatHistory } from "../api";
+import {
+  sendChatMessage,
+  createChatConversation,
+  getChatConversations,
+  getChatConversationMessages,
+} from "../api";
 
 /*
-  Checkpoint 2 of the help-assistant chatbot: a floating bubble, present on
-  every page, that opens into a chat panel. Conversation history is now
-  persisted server-side (see api.js) - opening the widget loads whatever
-  was said before instead of always starting blank. The assistant still
-  has no grounding in startTrack's actual UI yet (Checkpoints 4-5, Qdrant
-  + RAG).
+  The help-assistant widget: a floating bubble, present on every page, that
+  opens into either a conversation LIST (like Claude's own chat list - past
+  threads, named from their first message, most-recent first, plus a "New
+  conversation" button) or a single conversation THREAD. Conversation
+  history and titles are persisted server-side (see api.js) - reopening the
+  widget or picking an old conversation restores it instead of starting
+  blank.
 */
 export default function ChatWidget({ token, onAuthError }) {
   const [open, setOpen] = useState(false);
+  const [view, setView] = useState("list"); // "list" | "thread"
+  const [conversations, setConversations] = useState([]);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
+  const [activeConversationId, setActiveConversationId] = useState(null);
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]); // { role: "user" | "assistant" | "error", text }
   const [loading, setLoading] = useState(false);
-  const [historyLoaded, setHistoryLoaded] = useState(false);
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
 
   useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
+    if (open && view === "thread") inputRef.current?.focus();
+  }, [open, view]);
 
-  useEffect(() => {
-    if (!open || historyLoaded) return;
-    setHistoryLoaded(true); // mark eagerly so a fast double-open can't double-fetch
-    getChatHistory({ token })
-      .then((res) => {
-        const loaded = (res.messages || []).map((m) => ({ role: m.role, text: m.content }));
-        setMessages(loaded);
-      })
+  function handleAuthError(err) {
+    if (err?.status === 401) {
+      onAuthError?.();
+      return true;
+    }
+    return false;
+  }
+
+  function loadConversations() {
+    setConversationsLoading(true);
+    getChatConversations({ token })
+      .then((res) => setConversations(res.conversations || []))
       .catch((err) => {
-        if (err?.status === 401) {
-          onAuthError?.();
-        }
-        // Otherwise fail quietly — widget just opens empty, same as before
-        // history existed; the person can still chat.
-      });
-  }, [open, historyLoaded, token, onAuthError]);
+        if (!handleAuthError(err)) setConversations([]);
+      })
+      .finally(() => setConversationsLoading(false));
+  }
+
+  // Refetch the list every time it's shown, not just on first widget open -
+  // a conversation may have just gotten its title, or a new one may have
+  // been created, since the last time the list was visible.
+  useEffect(() => {
+    if (open && view === "list") loadConversations();
+  }, [open, view]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -45,23 +62,62 @@ export default function ChatWidget({ token, onAuthError }) {
     }
   }, [messages, loading]);
 
+  function openConversation(conversationId) {
+    setActiveConversationId(conversationId);
+    setMessages([]);
+    setView("thread");
+    getChatConversationMessages({ token, conversationId })
+      .then((res) => {
+        const loaded = (res.messages || []).map((m) => ({ role: m.role, text: m.content }));
+        setMessages(loaded);
+      })
+      .catch((err) => {
+        handleAuthError(err);
+        // Otherwise fail quietly - thread just opens empty, same as before
+        // history existed; the person can still chat.
+      });
+  }
+
+  async function startNewConversation() {
+    try {
+      const res = await createChatConversation({ token });
+      setActiveConversationId(res.conversation_id);
+      setMessages([]);
+      setView("thread");
+    } catch (err) {
+      handleAuthError(err);
+    }
+  }
+
+  function backToList() {
+    setView("list");
+    setActiveConversationId(null);
+  }
+
   async function handleSend(e) {
     e.preventDefault();
     const text = message.trim();
-    if (!text || loading) return;
+    if (!text || loading || !activeConversationId) return;
 
     setMessages((prev) => [...prev, { role: "user", text }]);
     setMessage("");
     setLoading(true);
 
     try {
-      const res = await sendChatMessage({ token, message: text });
+      const res = await sendChatMessage({ token, conversationId: activeConversationId, message: text });
       setMessages((prev) => [...prev, { role: "assistant", text: res.reply }]);
-    } catch (err) {
-      if (err?.status === 401) {
-        onAuthError?.();
-        return;
+      if (res.title) {
+        // Keep the list in sync locally so it doesn't show "Untitled" if the
+        // person backs out right after their first message, before the
+        // list view re-fetches on its own.
+        setConversations((prev) =>
+          prev.some((c) => c.conversation_id === activeConversationId)
+            ? prev.map((c) => (c.conversation_id === activeConversationId ? { ...c, title: res.title } : c))
+            : [{ conversation_id: activeConversationId, title: res.title, updated_at: new Date().toISOString() }, ...prev]
+        );
       }
+    } catch (err) {
+      if (handleAuthError(err)) return;
       setMessages((prev) => [...prev, { role: "error", text: "Couldn't reach the assistant. Try again." }]);
     } finally {
       setLoading(false);
@@ -91,17 +147,42 @@ export default function ChatWidget({ token, onAuthError }) {
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
+              gap: 8,
             }}
           >
-            <span
-              style={{
-                fontFamily: "var(--font-display)",
-                fontSize: 15,
-                color: "var(--ink)",
-              }}
-            >
-              Ask startTrack
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+              {view === "thread" && (
+                <button
+                  onClick={backToList}
+                  aria-label="Back to conversations"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "var(--text-secondary)",
+                    cursor: "pointer",
+                    fontSize: 16,
+                    lineHeight: 1,
+                    padding: 4,
+                  }}
+                >
+                  ‹
+                </button>
+              )}
+              <span
+                style={{
+                  fontFamily: "var(--font-display)",
+                  fontSize: 15,
+                  color: "var(--ink)",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {view === "list"
+                  ? "Ask startTrack"
+                  : conversations.find((c) => c.conversation_id === activeConversationId)?.title || "New conversation"}
+              </span>
+            </div>
             <button
               onClick={() => setOpen(false)}
               aria-label="Close chat"
@@ -113,107 +194,165 @@ export default function ChatWidget({ token, onAuthError }) {
                 fontSize: 16,
                 lineHeight: 1,
                 padding: 4,
+                flexShrink: 0,
               }}
             >
               ×
             </button>
           </div>
 
-          <div
-            ref={scrollRef}
-            style={{
-              padding: 14,
-              minHeight: 160,
-              maxHeight: 320,
-              overflowY: "auto",
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
-            }}
-          >
-            {messages.length === 0 && !loading && (
-              <p style={{ color: "var(--text-muted)", fontSize: 13, margin: 0 }}>
-                Ask where to find something or how a feature works.
-              </p>
-            )}
+          {view === "list" ? (
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              <div style={{ padding: 10, borderBottom: "1px solid var(--border)" }}>
+                <button
+                  onClick={startNewConversation}
+                  style={{
+                    width: "100%",
+                    border: "none",
+                    background: "var(--primary)",
+                    color: "var(--paper)",
+                    borderRadius: "var(--radius)",
+                    padding: "8px 12px",
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                >
+                  + New conversation
+                </button>
+              </div>
 
-            {messages.map((m, i) => (
+              <div style={{ maxHeight: 320, overflowY: "auto" }}>
+                {conversationsLoading && (
+                  <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "14px" }}>Loading…</p>
+                )}
+
+                {!conversationsLoading && conversations.length === 0 && (
+                  <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "14px" }}>
+                    No conversations yet. Start one to ask where to find something or how a feature works.
+                  </p>
+                )}
+
+                {conversations.map((c) => (
+                  <button
+                    key={c.conversation_id}
+                    onClick={() => openConversation(c.conversation_id)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      background: "none",
+                      border: "none",
+                      borderBottom: "1px solid var(--border)",
+                      padding: "10px 14px",
+                      cursor: "pointer",
+                      color: "var(--ink)",
+                      fontSize: 13,
+                    }}
+                  >
+                    {c.title || "Untitled conversation"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
               <div
-                key={i}
+                ref={scrollRef}
                 style={{
-                  alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-                  maxWidth: "85%",
-                  background:
-                    m.role === "user"
-                      ? "var(--primary)"
-                      : m.role === "error"
-                      ? "var(--danger-bg)"
-                      : "var(--paper)",
-                  color:
-                    m.role === "user"
-                      ? "var(--paper)"
-                      : m.role === "error"
-                      ? "var(--danger)"
-                      : "var(--ink)",
-                  border: m.role === "assistant" ? "1px solid var(--border)" : "none",
-                  borderRadius: "var(--radius)",
-                  padding: "7px 10px",
-                  fontSize: 13,
-                  whiteSpace: "pre-wrap",
-                  lineHeight: 1.4,
+                  padding: 14,
+                  minHeight: 160,
+                  maxHeight: 320,
+                  overflowY: "auto",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
                 }}
               >
-                {m.text}
-              </div>
-            ))}
+                {messages.length === 0 && !loading && (
+                  <p style={{ color: "var(--text-muted)", fontSize: 13, margin: 0 }}>
+                    Ask where to find something or how a feature works.
+                  </p>
+                )}
 
-            {loading && (
-              <div
-                style={{
-                  alignSelf: "flex-start",
-                  color: "var(--text-secondary)",
-                  fontSize: 13,
-                  fontStyle: "italic",
-                }}
-              >
-                Thinking…
-              </div>
-            )}
-          </div>
+                {messages.map((m, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                      maxWidth: "85%",
+                      background:
+                        m.role === "user"
+                          ? "var(--primary)"
+                          : m.role === "error"
+                          ? "var(--danger-bg)"
+                          : "var(--paper)",
+                      color:
+                        m.role === "user"
+                          ? "var(--paper)"
+                          : m.role === "error"
+                          ? "var(--danger)"
+                          : "var(--ink)",
+                      border: m.role === "assistant" ? "1px solid var(--border)" : "none",
+                      borderRadius: "var(--radius)",
+                      padding: "7px 10px",
+                      fontSize: 13,
+                      whiteSpace: "pre-wrap",
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {m.text}
+                  </div>
+                ))}
 
-          <form onSubmit={handleSend} style={{ display: "flex", borderTop: "1px solid var(--border)" }}>
-            <input
-              ref={inputRef}
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder="Type a question…"
-              style={{
-                flex: 1,
-                border: "none",
-                padding: "10px 12px",
-                fontSize: 13,
-                fontFamily: "var(--font-sans)",
-                background: "transparent",
-                color: "var(--ink)",
-                outline: "none",
-              }}
-            />
-            <button
-              type="submit"
-              disabled={loading || !message.trim()}
-              style={{
-                border: "none",
-                background: "var(--primary)",
-                color: "var(--paper)",
-                padding: "0 16px",
-                fontSize: 13,
-                cursor: loading || !message.trim() ? "default" : "pointer",
-                opacity: loading || !message.trim() ? 0.6 : 1,
-              }}
-            >
-              Send
-            </button>
-          </form>
+                {loading && (
+                  <div
+                    style={{
+                      alignSelf: "flex-start",
+                      color: "var(--text-secondary)",
+                      fontSize: 13,
+                      fontStyle: "italic",
+                    }}
+                  >
+                    Thinking…
+                  </div>
+                )}
+              </div>
+
+              <form onSubmit={handleSend} style={{ display: "flex", borderTop: "1px solid var(--border)" }}>
+                <input
+                  ref={inputRef}
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  placeholder="Type a question…"
+                  style={{
+                    flex: 1,
+                    border: "none",
+                    padding: "10px 12px",
+                    fontSize: 13,
+                    fontFamily: "var(--font-sans)",
+                    background: "transparent",
+                    color: "var(--ink)",
+                    outline: "none",
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={loading || !message.trim()}
+                  style={{
+                    border: "none",
+                    background: "var(--primary)",
+                    color: "var(--paper)",
+                    padding: "0 16px",
+                    fontSize: 13,
+                    cursor: loading || !message.trim() ? "default" : "pointer",
+                    opacity: loading || !message.trim() ? 0.6 : 1,
+                  }}
+                >
+                  Send
+                </button>
+              </form>
+            </>
+          )}
         </div>
       )}
 

@@ -102,12 +102,13 @@ def serialize_media_asset(asset: "MediaAsset") -> dict:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "Agent01"))
 
-from Agent import agent01, revise_draft, approve_and_publish, clean_json_string, VALID_CATEGORIES, upload_to_imgbb, IMGBB_API_KEY, suggest_hashtags, chat_reply
+from Agent import agent01, revise_draft, approve_and_publish, clean_json_string, VALID_CATEGORIES, upload_to_imgbb, IMGBB_API_KEY, suggest_hashtags, chat_reply, generate_conversation_title
 
 from db import (
     AccessLevel,
     AsyncSessionLocal,
     AuthSession,
+    ChatConversation,
     ChatMessage,
     ChatRole,
     CustomIdea,
@@ -629,6 +630,7 @@ class HashtagSuggestRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    conversation_id: uuid.UUID
 
 
 class ConnectFintoRequest(BaseModel):
@@ -1761,51 +1763,110 @@ async def assist_hashtags(req: HashtagSuggestRequest, user_id: uuid.UUID = Depen
 CHAT_HISTORY_TURNS = 20  # messages (not conversation turns) fed back to the LLM as context
 
 
+async def _get_owned_conversation(db: AsyncSession, conversation_id: uuid.UUID, workspace_id: uuid.UUID, user_id: uuid.UUID) -> ChatConversation:
+    """Shared ownership check for every /chat/conversations/{id}... route -
+    a conversation is personal, so this 404s (not 403) on someone else's
+    conversation_id the same way get_draft does, rather than confirming it
+    exists for someone who shouldn't see it."""
+    result = await db.execute(
+        select(ChatConversation).where(
+            ChatConversation.id == conversation_id,
+            ChatConversation.workspace_id == workspace_id,
+            ChatConversation.user_id == user_id,
+        )
+    )
+    conversation = result.scalar_one_or_none()
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Unknown conversation_id")
+    return conversation
+
+
+@app.post("/chat/conversations")
+async def create_conversation(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    """Starts a new, empty, untitled thread - the widget's "New
+    conversation" button. Title is filled in by POST /chat once this
+    conversation's first exchange has happened."""
+    membership = await get_or_create_membership(db, user_id)
+    conversation = ChatConversation(workspace_id=membership.workspace_id, user_id=user_id, title=None)
+    db.add(conversation)
+    await db.commit()
+    await db.refresh(conversation)
+    return {"conversation_id": str(conversation.id), "title": conversation.title}
+
+
+@app.get("/chat/conversations")
+async def list_conversations(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    """Backs the widget's conversation list view (like Claude's chat
+    sidebar) - most-recently-active first."""
+    membership = await get_or_create_membership(db, user_id)
+    rows = (await db.execute(
+        select(ChatConversation)
+        .where(ChatConversation.workspace_id == membership.workspace_id, ChatConversation.user_id == user_id)
+        .order_by(ChatConversation.updated_at.desc())
+    )).scalars().all()
+    return {
+        "conversations": [
+            {"conversation_id": str(c.id), "title": c.title, "updated_at": c.updated_at.isoformat()}
+            for c in rows
+        ]
+    }
+
+
+@app.get("/chat/conversations/{conversation_id}/messages")
+async def get_conversation_messages(conversation_id: uuid.UUID, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
+    """Backs opening a conversation from the list - replaces the old flat
+    GET /chat/history now that a user can have more than one thread."""
+    membership = await get_or_create_membership(db, user_id)
+    await _get_owned_conversation(db, conversation_id, membership.workspace_id, user_id)
+    rows = (await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.conversation_id == conversation_id)
+        .order_by(ChatMessage.created_at)
+    )).scalars().all()
+    return {"messages": [{"role": m.role.value, "content": m.content} for m in rows]}
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
-    """Checkpoint 5 of the floating help-assistant widget: same as
-    Checkpoint 2 (persist + recent history), now also embedding the
-    message and pulling the closest help-center articles out of pgvector
-    (Checkpoint 4's table) to ground the reply in actual product content,
-    instead of Gemini's general knowledge alone."""
+    """Checkpoint 5 of the floating help-assistant widget, now scoped to a
+    single conversation_id instead of the user's one implicit thread:
+    persist + recent history, embed the message and pull the closest
+    help-center articles out of pgvector (Checkpoint 4's table) to ground
+    the reply in actual product content, instead of Gemini's general
+    knowledge alone. Also names the conversation off its first exchange,
+    the same way Claude names a new chat."""
     text = req.message.strip()
     if not text:
         raise HTTPException(status_code=400, detail="message must not be empty")
 
     membership = await get_or_create_membership(db, user_id)
+    conversation = await _get_owned_conversation(db, req.conversation_id, membership.workspace_id, user_id)
+    is_first_message = conversation.title is None
 
     prior = (await db.execute(
         select(ChatMessage)
-        .where(ChatMessage.workspace_id == membership.workspace_id, ChatMessage.user_id == user_id)
+        .where(ChatMessage.conversation_id == conversation.id)
         .order_by(ChatMessage.created_at.desc())
         .limit(CHAT_HISTORY_TURNS)
     )).scalars().all()
     history = [{"role": m.role.value, "content": m.content} for m in reversed(prior)]
 
-    db.add(ChatMessage(workspace_id=membership.workspace_id, user_id=user_id, role=ChatRole.USER, content=text))
+    db.add(ChatMessage(conversation_id=conversation.id, workspace_id=membership.workspace_id, user_id=user_id, role=ChatRole.USER, content=text))
     await db.commit()
 
     context = await retrieve_help_context(db, text)
     reply = await run_in_threadpool(chat_reply, text, history, context)
 
-    db.add(ChatMessage(workspace_id=membership.workspace_id, user_id=user_id, role=ChatRole.ASSISTANT, content=reply))
+    db.add(ChatMessage(conversation_id=conversation.id, workspace_id=membership.workspace_id, user_id=user_id, role=ChatRole.ASSISTANT, content=reply))
+
+    # Bump updated_at explicitly - onupdate only fires on an actual UPDATE
+    # to this row, and adding child ChatMessage rows above doesn't touch it.
+    conversation.updated_at = datetime.now(timezone.utc)
+    if is_first_message:
+        conversation.title = await run_in_threadpool(generate_conversation_title, text)
     await db.commit()
 
-    return {"reply": reply}
-
-
-@app.get("/chat/history")
-async def get_chat_history(db: AsyncSession = Depends(get_db), user_id: uuid.UUID = Depends(require_auth)):
-    """Backs the widget reopening/reloading with its prior conversation
-    still there, instead of starting blank every time (Checkpoint 1's
-    local-only message list didn't survive a refresh)."""
-    membership = await get_or_create_membership(db, user_id)
-    rows = (await db.execute(
-        select(ChatMessage)
-        .where(ChatMessage.workspace_id == membership.workspace_id, ChatMessage.user_id == user_id)
-        .order_by(ChatMessage.created_at)
-    )).scalars().all()
-    return {"messages": [{"role": m.role.value, "content": m.content} for m in rows]}
+    return {"reply": reply, "title": conversation.title}
 
 
 @app.post("/drafts/manual")

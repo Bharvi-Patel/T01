@@ -760,23 +760,57 @@ class CustomTodo(Base):
     user: Mapped["User"] = relationship(back_populates="custom_todos")
 
 
+class ChatConversation(Base):
+    """One thread in the floating help-assistant widget. Introduced when the
+    widget moved from a single endless per-user thread to multiple named
+    conversations (like Claude's own chat list) - see ChatMessage below,
+    which now hangs off a conversation instead of being looked up directly
+    by workspace_id/user_id.
+
+    title starts NULL (a brand-new conversation has no messages yet to
+    title from) and is filled in by main.py's /chat handler the first time
+    a conversation gets a reply, via a short separate Gemini call over just
+    that first user message - see Agent.py's generate_conversation_title.
+    updated_at is bumped on every new message so the conversation list can
+    be ordered most-recently-active-first, the same way Claude's sidebar
+    works.
+    """
+    __tablename__ = "chat_conversations"
+
+    id: Mapped[uuid.UUID] = _uuid_col()
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    workspace: Mapped["Workspace"] = relationship()
+    user: Mapped["User"] = relationship()
+    messages: Mapped[list["ChatMessage"]] = relationship(back_populates="conversation", order_by="ChatMessage.created_at")
+
+
 class ChatMessage(Base):
-    """One turn in a user's conversation with the floating help-assistant
-    widget (Checkpoint 2). Unlike CustomTodo, this is scoped to BOTH
-    workspace_id and user_id and always queried by both - the assistant
-    conversation is personal to the person asking, not a shared
-    workspace list every member sees. role distinguishes the user's
+    """One turn within a ChatConversation. Unlike CustomTodo, conversations
+    (and therefore their messages) are personal to the person asking, not a
+    shared workspace list every member sees. role distinguishes the user's
     message from the assistant's reply so history can be replayed to the
-    LLM in order on the next turn."""
+    LLM in order on the next turn.
+
+    workspace_id/user_id are kept here too (denormalized off the parent
+    conversation) rather than dropped - every other query pattern in this
+    codebase scopes by both, and it avoids a join for the common case of
+    "does this message belong to this user" checks."""
     __tablename__ = "chat_messages"
 
     id: Mapped[uuid.UUID] = _uuid_col()
+    conversation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chat_conversations.id", ondelete="CASCADE"))
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     role: Mapped[ChatRole] = mapped_column(Enum(ChatRole, name="chat_role"), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    conversation: Mapped["ChatConversation"] = relationship(back_populates="messages")
     workspace: Mapped["Workspace"] = relationship()
     user: Mapped["User"] = relationship()
 
