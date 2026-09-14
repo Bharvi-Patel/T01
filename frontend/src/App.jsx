@@ -48,6 +48,7 @@ export default function App() {
   const [connections, setConnections] = useState({}); // { linkedin: { profile_name, profile_picture_url }, ... } — key present means connected
   const [profile, setProfile] = useState(null); // { username, email, avatar_url, timezone, ... } — the logged-in user's own account, from GET /me
   const [unreadNotifications, setUnreadNotifications] = useState(0); // badge count for the sidebar bell
+  const [chatOpenSignal, setChatOpenSignal] = useState(0); // bumped to tell ChatWidget to open (e.g. from HelpCenter's "Chat with us")
   // Workspaces are never auto-generated server-side - a brand new account
   // has none until they go through CreateWorkspacePrompt. null = haven't
   // checked yet (don't flash the prompt while this is still loading).
@@ -654,7 +655,7 @@ export default function App() {
             <Inbox token={token} connections={connections} onAuthError={handleLogout} kindFilter={inboxKindFilter} onKindFilterChange={setInboxKindFilter} />
           )}
 
-          {step === "help" && <HelpCenter />}
+          {step === "help" && <HelpCenter onOpenChat={() => setChatOpenSignal((n) => n + 1)} />}
 
           {step === "members" && (
             <Members token={token} onAuthError={handleLogout} profile={profile} />
@@ -675,7 +676,7 @@ export default function App() {
         </div>
       </div>
 
-      <ChatWidget token={token} onAuthError={handleLogout} />
+      <ChatWidget token={token} onAuthError={handleLogout} openSignal={chatOpenSignal} />
     </div>
   );
 }

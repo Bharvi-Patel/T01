@@ -189,7 +189,7 @@ function DraftDetailPanel({ draft, onClose, onReschedule, onUnschedule, onOpen, 
           {draft.title || draft.subtopic}
         </p>
         <p style={{ fontSize: 12, color: "#5C7A78", margin: "0 0 16px", textTransform: "capitalize" }}>
-          {draft.category} · {external ? "Posted outside T01" : published ? "Published" : "Scheduled"}
+          {draft.category} · {external ? "Posted outside startTrack" : published ? "Published" : "Scheduled"}
         </p>
 
         {published ? (
@@ -391,7 +391,7 @@ export default function Calendar({ token, connections, onOpenDraft, onAuthError 
           .then((res) => (res.posts || []).map((p) => externalPostToDraft(accountFilter, p)))
           .catch((e) => {
             setHistoryNotice(
-              e.message || `Couldn't load ${accountFilter}'s post history from the platform directly — showing only what T01 knows about.`
+              e.message || `Couldn't load ${accountFilter}'s post history from the platform directly — showing only what startTrack knows about.`
             );
             return [];
           });

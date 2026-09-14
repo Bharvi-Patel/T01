@@ -209,7 +209,7 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
           Social accounts
         </h1>
         <p style={{ margin: 0, fontSize: 14, color: "var(--text-secondary)" }}>
-          Manage which platforms Agent01 can publish to on your behalf.
+          Manage which platforms startTrack can publish to on your behalf.
         </p>
       </div>
 

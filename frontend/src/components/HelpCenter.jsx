@@ -69,7 +69,7 @@ function SectionBlock({ section, openKey, onToggle }) {
   );
 }
 
-export default function HelpCenter() {
+export default function HelpCenter({ onOpenChat }) {
   const [query, setQuery] = useState("");
   const [openKey, setOpenKey] = useState(null);
 
@@ -90,7 +90,7 @@ export default function HelpCenter() {
         Help center
       </p>
       <p style={{ fontSize: 13.5, color: "var(--text-secondary)", margin: "0 0 20px" }}>
-        Answers to common questions about using T01.
+        Answers to common questions about using startTrack.
       </p>
 
       <input
@@ -110,6 +110,60 @@ export default function HelpCenter() {
       {filteredSections.map((section) => (
         <SectionBlock key={section.key} section={section} openKey={openKey} onToggle={setOpenKey} />
       ))}
+
+      <div
+        style={{
+          marginTop: 8,
+          padding: "20px 18px",
+          background: "var(--paper-raised)",
+          border: "0.5px solid var(--border-strong)",
+          borderRadius: 8,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <p style={{ fontFamily: "var(--font-display)", fontSize: 15, fontWeight: 700, color: "var(--ink)", margin: "0 0 4px" }}>
+            Couldn't find your answer?
+          </p>
+          <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0 }}>
+            Chat with us or send us an email.
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
+          <button
+            onClick={onOpenChat}
+            style={{
+              display: "flex", alignItems: "center", gap: 7,
+              border: "1px solid var(--border-strong)", background: "var(--primary)", color: "var(--paper)",
+              borderRadius: "var(--radius)", padding: "9px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer",
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2z" />
+            </svg>
+            Chat with us
+          </button>
+          <a
+            href="mailto:"
+            style={{
+              display: "flex", alignItems: "center", gap: 7, textDecoration: "none",
+              border: "1px solid var(--border-strong)", background: "var(--paper)", color: "var(--ink)",
+              borderRadius: "var(--radius)", padding: "9px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer",
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 4h16v16H4z" opacity="0" />
+              <path d="M22 6l-10 7L2 6" />
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+            </svg>
+            Send us an email
+          </a>
+        </div>
+      </div>
     </div>
   );
 }

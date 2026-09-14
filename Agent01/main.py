@@ -696,7 +696,7 @@ def _parse_draft(content: str) -> dict:
     except (json.JSONDecodeError, TypeError) as e:
         raise HTTPException(
             status_code=502,
-            detail=f"Agent did not return valid draft JSON: {e}. Raw content was: {content!r}",
+            detail=f"startTrack did not return valid draft JSON: {e}. Raw content was: {content!r}",
         )
 
 

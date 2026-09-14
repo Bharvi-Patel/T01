@@ -15,7 +15,7 @@ import {
   widget or picking an old conversation restores it instead of starting
   blank.
 */
-export default function ChatWidget({ token, onAuthError }) {
+export default function ChatWidget({ token, onAuthError, openSignal }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState("list"); // "list" | "thread"
   const [conversations, setConversations] = useState([]);
@@ -30,6 +30,17 @@ export default function ChatWidget({ token, onAuthError }) {
   useEffect(() => {
     if (open && view === "thread") inputRef.current?.focus();
   }, [open, view]);
+
+  // openSignal is a counter bumped by a parent (e.g. HelpCenter's "Chat with
+  // us" button) to request the widget open from outside. Skip the initial
+  // mount value so the widget doesn't pop open on page load.
+  const openSignalRef = useRef(openSignal);
+  useEffect(() => {
+    if (openSignal !== undefined && openSignal !== openSignalRef.current) {
+      openSignalRef.current = openSignal;
+      setOpen(true);
+    }
+  }, [openSignal]);
 
   function handleAuthError(err) {
     if (err?.status === 401) {

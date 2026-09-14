@@ -1,4 +1,4 @@
-const DEFAULT_NOTIFICATION_TITLE = "T01";
+const DEFAULT_NOTIFICATION_TITLE = "startTrack";
 
 self.addEventListener("install", () => {
   // Activate the new worker immediately so a user can enable notifications
