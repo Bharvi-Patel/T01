@@ -197,6 +197,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def _log_every_request(request, call_next):
+    print(f"[raw_request] {request.method} {request.url.path}", file=sys.stderr)
+    return await call_next(request)
+    
+
 # Served at /media-files rather than /media - the latter is the media
 # library's API namespace (POST/GET/DELETE /media...) below. Starlette
 # matches routes in registration order and a Mount claims its whole prefix,

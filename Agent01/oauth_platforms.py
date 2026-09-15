@@ -423,7 +423,7 @@ def instagram_credentials_from_page(page: dict) -> dict:
     # still on an older token, the auto-retry in _subscribe_page_to_webhooks
     # trims it and salvages "mention"/"messages" rather than failing the
     # whole call.
-    _subscribe_page_to_webhooks(page["id"], page["access_token"], "comments,mention,messages")
+    _subscribe_page_to_webhooks(page["id"], page["access_token"], "feed,mention,messages")
 
     return {
         "page_access_token": page["access_token"],

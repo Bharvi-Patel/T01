@@ -116,7 +116,7 @@ async def main():
                 # connect - "comments" was excluded historically because
                 # instagram_manage_comments wasn't granted on the token yet;
                 # it's back now that it is (see the matching comment there).
-                fields = "comments,mention,messages"
+                fields = "feed,mention,messages"
 
             if not page_id or not page_access_token:
                 print(f"Skipping connection {conn.id} ({conn.platform.value}) - missing page_id/page_access_token in credentials")
