@@ -965,3 +965,26 @@ export async function searchGifs({ token, query, limit }) {
   const res = await fetch(url, { headers: authHeaders(token) });
   return handle(res);
 }
+
+/*
+  Bakes the flattened Story image + a picked (optionally trimmed) audio
+  clip into an MP4 on the backend (ffmpeg), since Instagram's Stories
+  publish endpoint has no audio parameter of its own — music can only
+  reach a posted Story by being embedded in an actual video file first.
+  `image` and `audio` are Files/Blobs. `startSeconds`/`clipSeconds` trim
+  the audio (e.g. a 3-minute song down to a 15s clip starting at 1:00)
+  instead of using the whole track. Expected backend response: { video_url }.
+*/
+export async function renderStoryVideo({ token, image, audio, startSeconds = 0, clipSeconds = 15 }) {
+  const form = new FormData();
+  form.append("image", image, "story.jpg");
+  form.append("audio", audio, audio.name || "audio.mp3");
+  form.append("start_seconds", String(startSeconds));
+  form.append("clip_seconds", String(clipSeconds));
+  const res = await fetch(`${API_BASE}/story/render-video`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: form,
+  });
+  return handle(res);
+}

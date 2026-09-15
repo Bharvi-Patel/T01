@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
-import { getTrendingGifs, searchGifs } from "../api";
+import { getTrendingGifs, searchGifs, renderStoryVideo } from "../api";
 
 // Standard Instagram/Facebook Story canvas size — the flatten() export
 // always renders at this resolution regardless of the on-screen preview
@@ -8,6 +8,14 @@ import { getTrendingGifs, searchGifs } from "../api";
 const OUT_W = 1080;
 const OUT_H = 1920;
 const MAX_HISTORY = 50;
+
+// mm:ss display for the music trim sliders (e.g. 75 -> "1:15").
+function formatClock(totalSeconds) {
+  const s = Math.max(0, Math.round(totalSeconds));
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}:${String(rem).padStart(2, "0")}`;
+}
 
 // Curated font presets rather than free-text font entry: a canvas export
 // can only reliably draw a font that's actually finished loading, so we
@@ -262,6 +270,12 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange, 
 
   const boxRef = useRef(null);
   const fileInputRef = useRef(null);
+  const photoInputRef = useRef(null);
+  const musicInputRef = useRef(null);
+  const [audioFile, setAudioFile] = useState(null);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [audioStart, setAudioStart] = useState(0);
+  const [audioClipLength, setAudioClipLength] = useState(15);
   const dragState = useRef(null); // { kind: "move"|"resize"|"rotate", id, ... }
 
   // Loads every preset's webfont once via a single combined stylesheet
@@ -462,7 +476,30 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange, 
       if (!mention?.username?.trim()) return [];
       return [{ username: mention.username.trim(), x: Number(mention.x.toFixed(3)), y: Number(mention.y.toFixed(3)) }];
     },
-  }), [image, layers]);
+    getAudioFile() {
+      return audioFile;
+    },
+    // One-stop export for the submit flow: flattens the canvas as usual,
+    // and — if a track was picked with "+ Music" — bakes it into an MP4
+    // server-side (see renderStoryVideo in api.js / render_story_video in
+    // Agent.py) instead of returning a plain image. This detour exists
+    // because Instagram's Stories publish endpoint has no audio parameter
+    // of its own; the only way to get music into a posted Story is to
+    // embed it in an actual video file first. Returns { kind: "image",
+    // file } normally, or { kind: "video", file } when audio is attached.
+    async exportForPublish() {
+      const image = await this.flatten();
+      if (!image) return null;
+      if (!audioFile) return { kind: "image", file: image };
+      const { video_url } = await renderStoryVideo({
+        token, image, audio: audioFile,
+        startSeconds: audioStart, clipSeconds: audioClipLength,
+      });
+      const videoResp = await fetch(video_url);
+      const videoBlob = await videoResp.blob();
+      return { kind: "video", file: new File([videoBlob], "story.mp4", { type: "video/mp4" }) };
+    },
+  }), [image, layers, audioFile, audioStart, audioClipLength, token]);
 
   function addTextLayer() {
     commitHistory();
@@ -511,6 +548,58 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange, 
     ]);
     setActiveId(id);
     setStickerPickerOpen(false);
+  }
+
+  // Adds a user-uploaded photo as a movable/resizable/rotatable prop layer
+  // — distinct from the single required background `image`. Natural aspect
+  // ratio is read from the file itself (same trick as addGifSticker), so a
+  // portrait or landscape photo never looks stretched at any width. Each
+  // call is its own history step, so adding several photos in one picker
+  // selection can still be undone one at a time.
+  async function addImageLayer(file) {
+    const img = await loadImageFromFile(file);
+    commitHistory();
+    const id = nextLayerId();
+    setLayers((prev) => [
+      ...prev,
+      { id, type: "image", file, previewUrl: img.src, x: 0.5, y: 0.5, rotation: 0, width: 0.4, aspect: img.height / img.width },
+    ]);
+    setActiveId(id);
+  }
+
+  // Multi-select photo picker support: adds every chosen file as its own
+  // layer, staggering x/y slightly so a batch of photos doesn't land in one
+  // exact stack the user then has to pull apart by hand.
+  async function addImageLayers(fileList) {
+    const files = Array.from(fileList || []);
+    for (let i = 0; i < files.length; i++) {
+      await addImageLayer(files[i]);
+      const offset = (i % 5) * 0.06 - 0.12;
+      setLayers((prev) => {
+        const last = prev[prev.length - 1];
+        if (!last) return prev;
+        return prev.map((l) => (l.id === last.id ? { ...l, x: 0.5 + offset, y: 0.5 + offset } : l));
+      });
+    }
+  }
+
+  // Reads the picked audio file's duration via a throwaway <audio> element
+  // (no upload needed just to know how long it is), then defaults the trim
+  // window to the first 15s of the track — or the whole thing if it's
+  // shorter than that.
+  function handleAudioSelected(file) {
+    setAudioFile(file);
+    setAudioStart(0);
+    setAudioDuration(0);
+    const probe = new Audio();
+    probe.preload = "metadata";
+    probe.onloadedmetadata = () => {
+      const dur = probe.duration || 0;
+      setAudioDuration(dur);
+      setAudioClipLength(Math.min(15, dur || 15));
+      URL.revokeObjectURL(probe.src);
+    };
+    probe.src = URL.createObjectURL(file);
   }
 
   function updateLayer(id, patch) {
@@ -786,6 +875,21 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange, 
           onChange={(e) => onImageChange(e.target.files?.[0] || null)}
           style={{ display: "none" }}
         />
+        <input
+          ref={photoInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={(e) => { addImageLayers(e.target.files); e.target.value = ""; }}
+          style={{ display: "none" }}
+        />
+        <input
+          ref={musicInputRef}
+          type="file"
+          accept="audio/*"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleAudioSelected(f); e.target.value = ""; }}
+          style={{ display: "none" }}
+        />
         {image ? (
           <img
             src={URL.createObjectURL(image)}
@@ -932,6 +1036,55 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange, 
         <button type="button" onClick={addTextLayer}>+ Text</button>
         <button type="button" onClick={addMention} disabled={layers.some((l) => l.type === "mention")}>+ Mention</button>
         <button type="button" onClick={() => setStickerPickerOpen((o) => !o)}>+ Sticker/GIF</button>
+        <button type="button" onClick={() => photoInputRef.current?.click()}>+ Photo</button>
+        <button type="button" onClick={() => musicInputRef.current?.click()}>
+          {audioFile ? "🎵 Change music" : "+ Music"}
+        </button>
+        {audioFile && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12.5, color: "var(--text-muted)" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {audioFile.name.length > 22 ? `${audioFile.name.slice(0, 19)}…` : audioFile.name}
+              <button
+                type="button"
+                onClick={() => { setAudioFile(null); setAudioDuration(0); setAudioStart(0); setAudioClipLength(15); }}
+                title="Remove music"
+                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: 14, lineHeight: 1, padding: 0 }}
+              >
+                ×
+              </button>
+            </span>
+            {audioDuration > 1 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  Start {formatClock(audioStart)}
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, Math.floor(audioDuration - 1))}
+                    step={0.5}
+                    value={audioStart}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setAudioStart(v);
+                      setAudioClipLength((len) => Math.min(len, Math.max(1, audioDuration - v)));
+                    }}
+                  />
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  Length {Math.round(audioClipLength)}s
+                  <input
+                    type="range"
+                    min={1}
+                    max={Math.max(1, Math.min(60, Math.floor(audioDuration - audioStart)))}
+                    step={1}
+                    value={audioClipLength}
+                    onChange={(e) => setAudioClipLength(Number(e.target.value))}
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+        )}
         {image && (
           <button type="button" onClick={() => fileInputRef.current?.click()}>Change image</button>
         )}

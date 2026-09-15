@@ -102,7 +102,7 @@ def serialize_media_asset(asset: "MediaAsset") -> dict:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "Agent01"))
 
-from Agent import agent01, revise_draft, approve_and_publish, clean_json_string, VALID_CATEGORIES, upload_to_imgbb, IMGBB_API_KEY, suggest_hashtags, chat_reply, generate_conversation_title, prepare_story_repost_image, publish_instagram_story
+from Agent import agent01, revise_draft, approve_and_publish, clean_json_string, VALID_CATEGORIES, upload_to_imgbb, IMGBB_API_KEY, suggest_hashtags, chat_reply, generate_conversation_title, prepare_story_repost_image, publish_instagram_story, render_story_video
 
 from db import (
     AccessLevel,
@@ -2010,6 +2010,53 @@ async def upload_media(
     await db.commit()
     await db.refresh(asset)
     return serialize_media_asset(asset)
+
+
+STORY_AUDIO_MAX_BYTES = 20 * 1024 * 1024  # 20 MB - a Story's audio track only needs to be a short clip
+
+
+@app.post("/story/render-video")
+async def render_story_video_endpoint(
+    image: UploadFile = File(...),
+    audio: UploadFile = File(...),
+    start_seconds: float = Form(default=0.0),
+    clip_seconds: float = Form(default=15.0),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """Bakes a flattened Story image + a (optionally trimmed) slice of a
+    picked audio clip into an MP4, so it can be published as an Instagram
+    Story through publish_instagram_story's video_url path — see
+    render_story_video's docstring (in Agent.py) for why this detour is
+    necessary: Stories have no audio parameter of their own to attach a
+    track to directly. start_seconds/clip_seconds let the frontend send
+    just a slice of a longer track (e.g. 15 seconds out of a 3-minute
+    song) rather than always rendering the whole thing.
+
+    Returns a hosted URL the same way manual-draft video does, saved under
+    this user's own media directory. Not added to the media library (no
+    MediaAsset row) since this is a one-off render for a single Story post,
+    not a reusable asset someone would browse later.
+    """
+    image_bytes = await image.read()
+    audio_bytes = await audio.read()
+    if not image_bytes or not audio_bytes:
+        raise HTTPException(status_code=400, detail="Both image and audio are required")
+    if len(audio_bytes) > STORY_AUDIO_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="Audio file exceeds 20MB limit")
+
+    image_ext = Path(image.filename or "").suffix or ".jpg"
+    audio_ext = Path(audio.filename or "").suffix or ".mp3"
+
+    try:
+        video_bytes = await run_in_threadpool(
+            render_story_video, image_bytes, audio_bytes, image_ext, audio_ext, start_seconds, clip_seconds,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=422, detail=f"Couldn't render video: {e}")
+
+    stored_name = f"{uuid.uuid4()}.mp4"
+    (user_media_dir(user_id) / stored_name).write_bytes(video_bytes)
+    return {"video_url": f"{BACKEND_BASE_URL}/media-files/{user_id}/{stored_name}"}
 
 
 class MediaTextRequest(BaseModel):

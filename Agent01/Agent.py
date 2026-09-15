@@ -3,6 +3,8 @@ import re
 import json
 import time
 import uuid
+import subprocess
+import tempfile
 import requests
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -521,6 +523,70 @@ def prepare_story_repost_image(image_url: str, attribution_text: str) -> bytes |
         return buf.getvalue()
     except Exception:
         return None
+
+
+MAX_STORY_VIDEO_SECONDS = 60  # hard cap so one long audio file can't produce a runaway render
+
+
+def render_story_video(
+    image_bytes: bytes,
+    audio_bytes: bytes,
+    image_ext: str = ".jpg",
+    audio_ext: str = ".mp3",
+    start_seconds: float = 0,
+    clip_seconds: float = 15,
+) -> bytes:
+    """Composites a flattened Story image with a (optionally trimmed) slice
+    of a user-picked audio clip into an MP4. This exists because Instagram's
+    Stories publish endpoint (media_type=STORIES, see publish_instagram_story
+    below) only ever forwards an image_url or a video_url - there is no
+    audio/music parameter for Stories at all, unlike Reels' newer
+    audio_configuration field. So the only way to get music into a posted
+    Story through the API is to bake the audio into an actual video file
+    before upload; this is that step.
+
+    start_seconds/clip_seconds pick which slice of the audio to use (e.g. a
+    3-minute song trimmed down to the 15 seconds starting at 1:00), rather
+    than always using the whole track from the beginning - applied via
+    ffmpeg's -ss/-t on the audio input itself, so decoding starts right at
+    that slice instead of the whole file. clip_seconds is clamped to
+    MAX_STORY_VIDEO_SECONDS so one long request can't produce a runaway
+    render; the still frame is looped for exactly that trimmed length via
+    -shortest. Output is encoded H.264/AAC at the standard 1080x1920 Story
+    canvas - scale+crop is applied defensively so this still produces a
+    valid Story video even if the source image isn't already exactly that
+    size.
+
+    Raises RuntimeError (with ffmpeg's own stderr tail) on failure, so
+    callers can surface something more useful than "it broke".
+    """
+    start_seconds = max(0.0, start_seconds)
+    clip_seconds = min(max(1.0, clip_seconds), MAX_STORY_VIDEO_SECONDS)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        image_path = tmp_path / f"in{image_ext}"
+        audio_path = tmp_path / f"in{audio_ext}"
+        out_path = tmp_path / "out.mp4"
+        image_path.write_bytes(image_bytes)
+        audio_path.write_bytes(audio_bytes)
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-loop", "1", "-i", str(image_path),
+            "-ss", str(start_seconds), "-t", str(clip_seconds), "-i", str(audio_path),
+            "-c:v", "libx264", "-tune", "stillimage",
+            "-c:a", "aac", "-b:a", "192k",
+            "-pix_fmt", "yuv420p",
+            "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+            "-shortest",
+            "-movflags", "+faststart",
+            str(out_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0 or not out_path.exists():
+            raise RuntimeError(f"ffmpeg failed to render story video: {result.stderr[-2000:]}")
+        return out_path.read_bytes()
 
 
 def publish_instagram_story(page_access_token: str, ig_user_id: str, image_url: str | None = None, video_url: str | None = None) -> dict:

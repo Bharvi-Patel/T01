@@ -420,13 +420,18 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
       if (!storyImage) return;
       clearComposerAutosave();
       setHasRestoredDraft(false);
-      // Flatten happens here, right before submit, rather than live on every
-      // drag - canvas.toBlob is cheap enough per-call but no need to redo it
-      // on each pointermove.
-      const flattenedImage = await storyComposerRef.current?.flatten();
+      // Flatten (and, if music was picked, server-side video render) happens
+      // here, right before submit, rather than live on every drag/pick -
+      // it's cheap enough per-call but no need to redo it constantly.
+      const exported = await storyComposerRef.current?.exportForPublish();
       const userTags = storyComposerRef.current?.getUserTags() || [];
-      if (!flattenedImage) return;
-      onSubmit({ mode: "story", image: flattenedImage, userTags });
+      if (!exported) return;
+      onSubmit({
+        mode: "story",
+        image: exported.kind === "image" ? exported.file : undefined,
+        video: exported.kind === "video" ? exported.file : undefined,
+        userTags,
+      });
     } else {
       const trimmedBody = body.trim();
       if (!trimmedBody) return;
