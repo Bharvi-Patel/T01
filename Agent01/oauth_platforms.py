@@ -415,13 +415,15 @@ def instagram_credentials_from_page(page: dict) -> dict:
     # accepted field names don't always match the names Meta uses in the
     # actual delivered webhook payload - "mention" (singular) is what this
     # call accepts to enable it, even though the event itself later
-    # arrives tagged field="mentions" (see meta_webhook_receive). "comments"
-    # isn't in this account's currently-permitted set at all yet (Meta
-    # rejects it outright), so it's left out here for now - the
-    # auto-retry in _subscribe_page_to_webhooks will still salvage
-    # "mention"/"messages" even if this list is ever widened again and one
-    # entry turns out to be invalid for a given account.
-    _subscribe_page_to_webhooks(page["id"], page["access_token"], "mention,messages")
+    # arrives tagged field="mentions" (see meta_webhook_receive).
+    # "comments" was left out historically because instagram_manage_comments
+    # wasn't yet granted on the token, so Meta rejected it outright - now
+    # that the token carries that scope (see instagram_reply_to_comment),
+    # it's back in the list. If it's ever rejected again for any workspace
+    # still on an older token, the auto-retry in _subscribe_page_to_webhooks
+    # trims it and salvages "mention"/"messages" rather than failing the
+    # whole call.
+    _subscribe_page_to_webhooks(page["id"], page["access_token"], "comments,mention,messages")
 
     return {
         "page_access_token": page["access_token"],

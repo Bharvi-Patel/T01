@@ -92,10 +92,10 @@ async def main():
 
             if conn.platform == Platform.FACEBOOK:
                 page_id = creds.get("page_id")
-                # "mention" is deliberately singular here to match what this
-                # account's permission set actually allows - see the matching
-                # comment in oauth_platforms.py's instagram_credentials_from_page.
-                fields = "feed,messages"
+                # Matches the field list oauth_platforms.py's
+                # facebook_credentials_from_page actually requests on
+                # connect - see the matching comment there.
+                fields = "feed,mention,messages"
             else:
                 page_id = creds.get("fb_page_id")
                 if not page_id:
@@ -111,11 +111,12 @@ async def main():
                     conn.credentials = creds
                     dirty = True
                     print(f"  recovered fb_page_id={page_id} for connection {conn.id}")
-                # Matches the field list oauth_platforms.py actually requests
-                # on connect - "comments" isn't in this account's currently-
-                # permitted set (Meta rejects it outright), so it's left out
-                # here too rather than relying on the auto-retry to trim it.
-                fields = "mention,messages"
+                # Matches the field list oauth_platforms.py's
+                # instagram_credentials_from_page actually requests on
+                # connect - "comments" was excluded historically because
+                # instagram_manage_comments wasn't granted on the token yet;
+                # it's back now that it is (see the matching comment there).
+                fields = "comments,mention,messages"
 
             if not page_id or not page_access_token:
                 print(f"Skipping connection {conn.id} ({conn.platform.value}) - missing page_id/page_access_token in credentials")
