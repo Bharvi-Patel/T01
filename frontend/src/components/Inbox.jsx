@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getInbox, markInboxItemRead, replyToInboxItem, repostStoryMention } from "../api";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
@@ -148,6 +148,37 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
   // string. Kept separate from the DM-reply state above since a repost is
   // a one-off action on a single mention, not part of the reply thread.
   const [repostState, setRepostState] = useState({});
+
+  // Draggable divider between the conversation list and the thread panel.
+  // Width lives in state (not a CSS var) so the list column re-renders
+  // immediately as the user drags; min/max just keep either side from
+  // collapsing to nothing or swallowing the whole panel.
+  const [listWidth, setListWidth] = useState(300);
+  const [resizing, setResizing] = useState(false);
+  const containerRef = useRef(null);
+
+  const handleResizeStart = useCallback((e) => {
+    e.preventDefault();
+    setResizing(true);
+  }, []);
+
+  useEffect(() => {
+    if (!resizing) return;
+    function handleMouseMove(e) {
+      const containerLeft = containerRef.current?.getBoundingClientRect().left ?? 0;
+      const next = e.clientX - containerLeft;
+      setListWidth(Math.min(520, Math.max(220, next)));
+    }
+    function handleMouseUp() {
+      setResizing(false);
+    }
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [resizing]);
 
   function handleRepost(itemId) {
     setRepostState((prev) => ({ ...prev, [itemId]: "sending" }));
@@ -326,13 +357,16 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
         </div>
       ) : (
         <div
+          ref={containerRef}
           style={{
             display: "flex", height: 760, border: "0.5px solid var(--border-strong)",
             borderRadius: 12, overflow: "hidden", background: "var(--paper-raised)",
+            cursor: resizing ? "col-resize" : "default",
+            userSelect: resizing ? "none" : "auto",
           }}
         >
           {/* Left: conversation list */}
-          <div style={{ width: 300, flexShrink: 0, borderRight: "0.5px solid var(--border)", display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div style={{ width: listWidth, flexShrink: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderBottom: "0.5px solid var(--border)", flexShrink: 0 }}>
             <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--ink)" }}>
                 {KIND_TABS.find((t) => t.key === kindFilter)?.label ?? "All"}
@@ -403,6 +437,18 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
             </div>
           </div>
 
+          {/* Draggable divider — drag to resize the list vs. thread panel */}
+          <div
+            onMouseDown={handleResizeStart}
+            style={{
+              width: 5, flexShrink: 0, cursor: "col-resize",
+              background: resizing ? "var(--accent)" : "var(--border)",
+              position: "relative",
+            }}
+          >
+            <div style={{ position: "absolute", inset: "0 -3px", cursor: "col-resize" }} />
+          </div>
+
           {/* Right: selected conversation thread */}
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
             {!selected ? (
@@ -429,9 +475,7 @@ export default function Inbox({ token, connections, onAuthError, kindFilter: kin
                       }}
                     >
                       <PlatformLogo platform={PLATFORMS.find((p) => p.key === selected.platform)} size={12} />
-                      <span>
-                        Connected account: <strong style={{ color: "var(--ink)", fontWeight: 600 }}>{connections[selected.platform].profile_name}</strong>
-                      </span>
+                      <strong style={{ color: "var(--ink)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{connections[selected.platform].profile_name}</strong>
                     </div>
                   )}
                 </div>
