@@ -3737,12 +3737,20 @@ def _verify_meta_signature(raw_body: bytes, signature_header: str | None) -> boo
 
 
 async def _workspace_id_for_page(db: AsyncSession, platform: Platform, page_id: str) -> uuid.UUID | None:
+    """The same Page can be connected under more than one workspace (e.g.
+    reconnected/tested from a second workspace without disconnecting the
+    first), so this can legitimately match multiple rows. Prefer the most
+    recently updated connection rather than erroring - webhooks need a
+    single best-guess destination, not a hard failure."""
     field = "ig_page_id" if platform == Platform.INSTAGRAM else "page_id"
     result = await db.execute(
-        select(PlatformConnection.workspace_id).where(
+        select(PlatformConnection.workspace_id)
+        .where(
             PlatformConnection.platform == platform,
             PlatformConnection.credentials[field].as_string() == page_id,
         )
+        .order_by(PlatformConnection.updated_at.desc())
+        .limit(1)
     )
     return result.scalar_one_or_none()
 
@@ -3753,10 +3761,13 @@ async def _connection_for_page(db: AsyncSession, platform: Platform, page_id: st
     webhook payload itself doesn't include the mentioning user's identity."""
     field = "ig_page_id" if platform == Platform.INSTAGRAM else "page_id"
     result = await db.execute(
-        select(PlatformConnection).where(
+        select(PlatformConnection)
+        .where(
             PlatformConnection.platform == platform,
             PlatformConnection.credentials[field].as_string() == page_id,
         )
+        .order_by(PlatformConnection.updated_at.desc())
+        .limit(1)
     )
     return result.scalar_one_or_none()
 
@@ -4029,7 +4040,11 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
             else:
                 print(f"[webhooks/meta] unhandled changes field={field!r} - ignoring", file=sys.stderr)
 
-        for messaging_event in entry.get("messaging", []):
+        messaging_events = entry.get("messaging", [])
+        if not messaging_events and not entry.get("changes"):
+            print(f"[webhooks/meta] entry has neither 'changes' nor 'messaging' - unrecognized "
+                  f"shape, nothing to process: {json.dumps(entry)[:500]}", file=sys.stderr)
+        for messaging_event in messaging_events:
             platform = Platform.INSTAGRAM if payload.get("object") == "instagram" else Platform.FACEBOOK
             connection = await _connection_for_page(db, platform, page_id)
             if connection is None:
@@ -4042,6 +4057,9 @@ async def meta_webhook_receive(request: _Request, db: AsyncSession = Depends(get
                 page_access_token = decrypt_secret(page_access_token)
             message = messaging_event.get("message", {})
             if message.get("is_echo"):
+                print(f"[webhooks/meta] skipped messaging event - is_echo=True (Meta mirroring "
+                      f"back an outgoing message from the connected account's own side, not a "
+                      f"real inbound message from another user)", file=sys.stderr)
                 continue  # our own outgoing message, echoed back - not an inbound item
 
             sender_id = (messaging_event.get("sender") or {}).get("id")
