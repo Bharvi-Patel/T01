@@ -11,6 +11,8 @@ import Sidebar from "./components/Sidebar";
 import TopBar from "./components/TopBar";
 import Dashboard from "./components/Dashboard";
 import Settings from "./components/settings";
+import IntegrationsSettings from "./components/IntegrationsSettings";
+import IntegrationDetails from "./components/IntegrationDetails";
 import Publish from "./components/Publish";
 import PublishNav from "./components/PublishNav";
 import SidePanel from "./components/SidePanel";
@@ -71,6 +73,7 @@ export default function App() {
   const [connectStatus, setConnectStatus] = useState(null); // { type: "success"|"error", platform }
   const [draftId, setDraftId] = useState(null);
   const [draft, setDraft] = useState(null);
+  const [integrationDetailsPlatform, setIntegrationDetailsPlatform] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -433,6 +436,11 @@ export default function App() {
     }
   }
 
+  function handleOpenIntegrationDetails(platformKey) {
+    setIntegrationDetailsPlatform(platformKey);
+    setStep("integration-details");
+  }
+
   function handleRestart() {
     setStep("generate");
     setDraftId(null);
@@ -581,11 +589,12 @@ export default function App() {
           </button>
         )}
 
-        <div className={`page-container${step === "publish" || step === "dashboard" ? " is-wide" : step === "calendar" || step === "settings" || step === "inbox" ? " is-wider-calendar" : ""}`}>
+        <div className={`page-container${step === "publish" || step === "dashboard" ? " is-wide" : step === "calendar" || step === "settings" || step === "inbox" || step === "integrations" || step === "integration-details" ? " is-wider-calendar" : ""}`}>
           {step === "dashboard" && (
             <Dashboard
               token={token}
               profile={profile}
+              connections={connections}
               onNewPost={handleRestart}
               onNavigate={(key) => { setPublishTab("new"); setStep(key); }}
               onOpenDraft={handleOpenDraft}
@@ -632,6 +641,23 @@ export default function App() {
               onDone={() => { setPagePicker(null); setStep("generate"); }}
               onPagePickerDone={() => { setPagePicker(null); refreshConnections(); }}
               onConnectionsChanged={refreshConnections}
+            />
+          )}
+
+          {step === "integrations" && (
+            <IntegrationsSettings
+              connections={connections}
+              onNavigate={(key) => { setPublishTab("new"); setStep(key); }}
+              onOpenDetails={handleOpenIntegrationDetails}
+            />
+          )}
+
+          {step === "integration-details" && (
+            <IntegrationDetails
+              platformKey={integrationDetailsPlatform}
+              connections={connections}
+              onBack={() => setStep("integrations")}
+              onNavigate={(key) => { setPublishTab("new"); setStep(key); }}
             />
           )}
 

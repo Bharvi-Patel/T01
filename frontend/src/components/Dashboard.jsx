@@ -1,7 +1,8 @@
 // Dashboard.jsx — replaces the old "Welcome back / + New" placeholder with
 // four real sections: Ideas (festival/observance suggestions pulled from a
-// calendar API), To Do (static prompt cards), Integrations (static grid,
-// coming soon), and Your Recent Posts (real published-draft data).
+// calendar API), To Do (static prompt cards), Integrations Settings (real
+// per-platform connection status from the `connections` prop, with a gear
+// that opens Settings), and Your Recent Posts (real published-draft data).
 import { useEffect, useState } from "react";
 import { getDashboardIdeas, getDrafts, createDashboardIdea, addIdeaMedia, deleteDashboardIdea, getDashboardTodos, createDashboardTodo, updateDashboardTodo, deleteDashboardTodo } from "../api";
 import { PLATFORMS, PlatformLogo } from "./platforms";
@@ -532,35 +533,71 @@ function ToDoSection({ token, onNavigate }) {
   );
 }
 
-// The app's real integrations are the platforms it can actually publish to
-// (see platforms.jsx) — those get their real logo and no tag. Twitter/X
-// isn't wired up yet, so it's the one "Soon" entry, with a plain monogram
-// since there's no brand SVG for it in this codebase.
-function IntegrationsSection() {
+// Feather-style gear icon, matching Sidebar.jsx's Icon component's stroke
+// convention - drawn locally here since Sidebar's ICON_PATHS is a
+// single-<path> component and a gear needs a circle + path together (same
+// reason Sidebar.jsx keeps SunIcon/MoonIcon as their own components rather
+// than trying to fit them into ICON_PATHS).
+function GearIcon({ size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+    </svg>
+  );
+}
+
+// Real connection status per platform (from the same `connections` map
+// Settings/Analytics/Inbox already use), not a static "coming soon" grid -
+// each row's gear opens Settings, where the actual connect/disconnect and
+// Page-metadata controls live, rather than duplicating that UI here.
+function IntegrationsSection({ connections, onNavigate }) {
   return (
     <div style={{ marginBottom: 28 }}>
-      <p style={sectionTitle}>Integrations</p>
+      <p style={sectionTitle}>Integrations Settings</p>
       <div style={{ ...card }}>
         <p style={{ fontSize: 12.5, color: "var(--text-secondary)", margin: "0 0 14px 0" }}>
           Unify your workflow by connecting your tech stack.
         </p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {PLATFORMS.map((p) => (
-            <div
-              key={p.key}
-              style={{
-                display: "flex", alignItems: "center", gap: 8, border: "0.5px solid var(--border)",
-                borderRadius: 6, padding: "6px 10px", fontSize: 12.5, color: "var(--ink)",
-              }}
-            >
-              <PlatformLogo platform={p} size={15} />
-              {p.label}
-            </div>
-          ))}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {PLATFORMS.map((p) => {
+            const connection = connections?.[p.key];
+            const connected = Boolean(connection);
+            return (
+              <div
+                key={p.key}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                  border: "0.5px solid var(--border)", borderRadius: 6, padding: "8px 10px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                  <PlatformLogo platform={p} size={15} />
+                  <span style={{ fontSize: 12.5, color: "var(--ink)", flexShrink: 0 }}>{p.label}</span>
+                  <span style={{ fontSize: 11.5, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {connected ? (connection.profile_name || "Connected") : "Not connected"}
+                  </span>
+                </div>
+                <button
+                  onClick={() => onNavigate?.("settings")}
+                  title={`${p.label} settings`}
+                  aria-label={`${p.label} settings`}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    width: 26, height: 26, borderRadius: 6, flexShrink: 0,
+                    border: "0.5px solid var(--border)", background: "transparent",
+                    color: "var(--text-secondary)", cursor: "pointer",
+                  }}
+                >
+                  <GearIcon size={14} />
+                </button>
+              </div>
+            );
+          })}
           <div
             style={{
               display: "flex", alignItems: "center", gap: 8, border: "0.5px solid var(--border)",
-              borderRadius: 6, padding: "6px 10px", fontSize: 12.5, color: "var(--text-secondary)",
+              borderRadius: 6, padding: "8px 10px", fontSize: 12.5, color: "var(--text-secondary)",
             }}
           >
             <span style={{
@@ -660,7 +697,7 @@ function RecentPostsSection({ token, onOpenDraft, onAuthError }) {
   );
 }
 
-export default function Dashboard({ token, profile, onNewPost, onNavigate, onOpenDraft, onAuthError }) {
+export default function Dashboard({ token, profile, connections, onNewPost, onNavigate, onOpenDraft, onAuthError }) {
   const greeting = useGreeting();
   return (
     <div style={{ padding: "2rem 0" }}>
@@ -669,7 +706,7 @@ export default function Dashboard({ token, profile, onNewPost, onNavigate, onOpe
       </p>
       <IdeasSection token={token} />
       <ToDoSection token={token} onNavigate={onNavigate} />
-      <IntegrationsSection />
+      <IntegrationsSection connections={connections} onNavigate={onNavigate} />
       <RecentPostsSection token={token} onOpenDraft={onOpenDraft} onAuthError={onAuthError} />
     </div>
   );

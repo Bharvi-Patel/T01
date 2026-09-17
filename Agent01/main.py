@@ -3105,6 +3105,11 @@ async def list_connections(db: AsyncSession = Depends(get_db), user_id: uuid.UUI
         platform.value: {
             "profile_name": (credentials or {}).get("profile_name"),
             "profile_picture_url": (credentials or {}).get("profile_picture_url"),
+            # Only Facebook connections carry these (see
+            # facebook_credentials_from_page) - None for every other
+            # platform, same pattern as profile_name above.
+            "category": (credentials or {}).get("category"),
+            "category_list": (credentials or {}).get("category_list"),
         }
         for platform, credentials in result.all()
     }

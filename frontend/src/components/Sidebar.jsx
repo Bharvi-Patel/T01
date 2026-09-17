@@ -237,10 +237,10 @@ export default function Sidebar({
                 </button>
                 <button
                   className="sidebar-account-menu-item"
-                  onClick={() => { onNavigate("settings"); setAccountOpen(false); }}
+                  onClick={() => { onNavigate("integrations"); setAccountOpen(false); }}
                 >
                   <Icon name="link" size={15} />
-                  Integrations
+                  Integrations Settings
                 </button>
                 <div className="sidebar-account-menu-item sidebar-account-menu-appearance">
                   <span>Appearance</span>

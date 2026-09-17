@@ -116,14 +116,14 @@ def _meta_exchange_long_lived(short_token: str) -> str:
 def list_pages(long_lived_user_token: str) -> list[dict]:
     resp = requests.get(
         "https://graph.facebook.com/v21.0/me/accounts",
-        params={"access_token": long_lived_user_token},
+        params={"fields": "id,name,access_token,category,category_list", "access_token": long_lived_user_token},
         timeout=15,
     )
     resp.raise_for_status()
     pages = resp.json().get("data", [])
     if not pages:
         raise ValueError("No Facebook Pages found - a Page is required to publish.")
-    return pages  # each: {"id", "name", "access_token", ...}
+    return pages  # each: {"id", "name", "access_token", "category", "category_list", ...}
 
 
 def facebook_exchange(code: str) -> str:
@@ -391,6 +391,11 @@ def facebook_credentials_from_page(page: dict) -> dict:
         "page_id": page["id"],
         "profile_name": page.get("name"),
         "profile_picture_url": _facebook_page_picture_url(page["id"], page["access_token"]),
+        # Real Page metadata (pages_manage_metadata) - a human-readable
+        # category ("Business Service") plus the more specific tags Meta
+        # assigns under category_list, e.g. [{"id": "...", "name": "Media/News Company"}].
+        "category": page.get("category"),
+        "category_list": [c.get("name") for c in page.get("category_list", []) if c.get("name")],
     }
 
 
