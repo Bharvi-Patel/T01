@@ -214,7 +214,8 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
-        {["linkedin", "facebook", "instagram", "threads", "canva"].map((platform) => {
+        {["linkedin", "facebook", "instagram", "threads",// "canva"// 
+        ].map((platform) => {
           const connection = connections?.[platform];
           const connected = Boolean(connection);
           const profileName = connection?.profile_name;
