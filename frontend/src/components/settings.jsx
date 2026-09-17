@@ -237,17 +237,17 @@ export default function Settings({ token, connections = {}, connectStatus, onDis
                       {PLATFORM_LABELS[platform] || platform}
                     </p>
                     {connected ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 5 }}>
                         {profilePictureUrl ? (
                           <img
                             src={profilePictureUrl}
                             alt=""
-                            style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover", display: "block", flexShrink: 0 }}
+                            style={{ width: 22, height: 22, borderRadius: "50%", objectFit: "cover", display: "block", flexShrink: 0, border: "0.5px solid var(--border-strong)" }}
                           />
                         ) : (
-                          <span style={{ width: 16, height: 16, borderRadius: "50%", background: "var(--border)", flexShrink: 0 }} />
+                          <span style={{ width: 22, height: 22, borderRadius: "50%", background: "var(--border)", flexShrink: 0 }} />
                         )}
-                        <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+                        <p style={{ margin: 0, fontSize: 13, fontWeight: 500, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {profileName || "Account connected"}
                         </p>
                       </div>

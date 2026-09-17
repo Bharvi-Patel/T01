@@ -814,7 +814,7 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
 
       {!showGenerating && (
         <button type="submit" className="composer-submit" disabled={loading}>
-          {mode === "ai" ? "Generate draft" : loading ? "Creating draft…" : "Create draft"}
+          {mode === "ai" ? "Generate" : loading ? "Creating draft…" : "Create draft"}
         </button>
       )}
     </form>
