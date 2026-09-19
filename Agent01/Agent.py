@@ -672,8 +672,57 @@ def wait_for_media_container(status_url, access_token, field="status_code", max_
     raise RuntimeError("Timed out waiting for video to finish processing")
 
 
+def _create_meta_media_container(url, data, timeout=15, retries=2, delay_seconds=3):
+    """POST to create a Meta/Threads media container, retrying if Meta's own
+    crawler fails to fetch the media (error_subcode 2207052, "The media
+    could not be fetched from this uri"). This is sometimes a transient
+    CDN-propagation gap right after an image lands on imgbb (Meta's crawler
+    hits it before it's globally live), and separately imgbb has started
+    getting outright flagged/rejected by Meta on some requests - a short
+    retry can't fix that second case, but it's a cheap first line of
+    defense before assuming the URL itself is bad. See upload_to_imgbb's
+    docstring for the known imgbb-reliability caveat.
+    """
+    last_resp = None
+    for attempt in range(retries + 1):
+        resp = requests.post(url, data=data, timeout=timeout)
+        if resp.ok:
+            return resp
+        try:
+            subcode = resp.json().get("error", {}).get("error_subcode")
+        except ValueError:
+            subcode = None
+        last_resp = resp
+        if subcode == 2207052 and attempt < retries:
+            time.sleep(delay_seconds)
+            continue
+        break
+    _raise_with_api_detail(last_resp)
+    return last_resp
+
+
 def upload_to_imgbb(image_bytes, api_key):
-    """Temporarily host an image on imgbb, returns a public URL Instagram can fetch."""
+    """Temporarily host an image on imgbb, returns a public URL Instagram/Threads can fetch.
+
+    Known caveat (confirmed independently, not just a one-off): Meta has been
+    increasingly flagging and rejecting certain imgbb-hosted URLs outright
+    when its own crawler tries to fetch them for a media container - this
+    surfaces as OAuthException code 9004 / error_subcode 2207052, "The media
+    could not be fetched from this uri", even though the URL is publicly
+    reachable and correct. _create_meta_media_container() retries once or
+    twice for exactly this error, which recovers it when it's a transient
+    CDN-propagation gap - but if it keeps failing on a fresh, valid URL, the
+    real fix is moving off imgbb to a host Meta's crawler treats as
+    reliable (S3/Cloudflare R2, Cloudinary, etc.), not more retries.
+    """
+    if not api_key:
+        raise RuntimeError(
+            "IMGBB_API_KEY is not set (or empty) in this process's environment - "
+            "imgbb silently drops the 'key' form field in that case and rejects the "
+            "upload with a bare 400. Check your .env, and remember uvicorn --reload "
+            "does not re-read .env on file-save reloads - a full process restart is "
+            "needed after adding/changing it."
+        )
     resp = requests.post(
         "https://api.imgbb.com/1/upload",
         data={
@@ -682,7 +731,12 @@ def upload_to_imgbb(image_bytes, api_key):
         },
         timeout=15,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        try:
+            detail = resp.json().get("error", {}).get("message", resp.text)
+        except Exception:
+            detail = resp.text
+        raise RuntimeError(f"imgbb upload failed ({resp.status_code}): {detail}")
     return resp.json()["data"]["url"]
 
 
@@ -1138,12 +1192,10 @@ def publish_instagram(payload, page_access_token, ig_user_id, image=None, video=
 
         hosted_url = upload_to_imgbb(prepared_bytes, IMGBB_API_KEY)
 
-        container_resp = requests.post(
+        container_resp = _create_meta_media_container(
             f"https://graph.facebook.com/v21.0/{ig_user_id}/media",
             data={"image_url": hosted_url, "caption": caption, "access_token": page_access_token},
-            timeout=15,
         )
-        _raise_with_api_detail(container_resp)
         creation_id = container_resp.json()["id"]
 
         publish_resp = requests.post(
@@ -1179,16 +1231,14 @@ def publish_instagram_carousel(payload, page_access_token, ig_user_id, carousel_
                 continue  # skip images that can't be processed
             hosted_url = upload_to_imgbb(prepared_bytes, IMGBB_API_KEY)
 
-            resp = requests.post(
+            resp = _create_meta_media_container(
                 f"https://graph.facebook.com/v21.0/{ig_user_id}/media",
                 data={
                     "image_url": hosted_url,
                     "is_carousel_item": "true",
                     "access_token": page_access_token,
                 },
-                timeout=15,
             )
-            _raise_with_api_detail(resp)
             item_ids.append(resp.json()["id"])
 
         if len(item_ids) < 2:
@@ -1290,12 +1340,10 @@ def publish_threads(payload, access_token, threads_user_id, image=None, video=No
                 "access_token": access_token,
             }
 
-        container_resp = requests.post(
+        container_resp = _create_meta_media_container(
             f"https://graph.threads.net/v1.0/{threads_user_id}/threads",
             data=container_data,
-            timeout=15,
         )
-        _raise_with_api_detail(container_resp)
         creation_id = container_resp.json()["id"]
 
         publish_resp = requests.post(
@@ -1335,7 +1383,7 @@ def publish_threads_carousel(payload, access_token, threads_user_id, carousel_im
                 continue
             hosted_url = upload_to_imgbb(prepared_bytes, IMGBB_API_KEY)
 
-            resp = requests.post(
+            resp = _create_meta_media_container(
                 f"https://graph.threads.net/v1.0/{threads_user_id}/threads",
                 data={
                     "media_type": "IMAGE",
@@ -1343,9 +1391,7 @@ def publish_threads_carousel(payload, access_token, threads_user_id, carousel_im
                     "is_carousel_item": "true",
                     "access_token": access_token,
                 },
-                timeout=15,
             )
-            _raise_with_api_detail(resp)
             item_ids.append(resp.json()["id"])
 
         if len(item_ids) < 2:
