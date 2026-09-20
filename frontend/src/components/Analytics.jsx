@@ -242,7 +242,7 @@ function FollowerCard({ platformKey, count, series, accountName }) {
           })}
         </div>
       ) : (
-        <p style={{ fontSize: 11, color: "var(--text-muted)", margin: 0 }}>Refresh again on a later day to see growth.</p>
+        <p style={{ fontSize: 11, color: "var(--text-muted)", margin: 0 }}>Follower trend will appear here as more history comes in.</p>
       )}
     </div>
   );
@@ -489,7 +489,7 @@ function EngagementByWeekdaySection({ weekday }) {
           })}
         </div>
       ) : (
-        <p style={{ fontSize: 12.5, color: "var(--text-muted)" }}>No engagement data yet — hit Refresh to pull likes/comments.</p>
+        <p style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Engagement by weekday will show up here once your posts start getting likes and comments.</p>
       )}
     </div>
   );
@@ -505,7 +505,7 @@ function EngagementByCategorySection({ categories }) {
     >
       <div style={{ fontSize: 13, color: "var(--ink)", fontWeight: 500, marginBottom: 12 }}>Engagement by category</div>
       {(!categories || categories.length === 0) && (
-        <p style={{ fontSize: 12.5, color: "var(--text-muted)" }}>No engagement data yet — hit Refresh to pull likes/comments.</p>
+        <p style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Engagement by category will show up here once your posts start getting likes and comments.</p>
       )}
       {(categories || []).map((c) => {
         const max = Math.max(1, ...categories.map((x) => x.avg_engagement));

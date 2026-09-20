@@ -437,11 +437,20 @@ def download_image(url: str, max_dimension: int = 1920, max_bytes: int = 3_000_0
     return buf.getvalue()  # fall back to the smallest size tried
 
 
-def validate_and_prepare_instagram_image(image_url):
+def validate_and_prepare_instagram_image(image_url, max_dimension=1440, max_bytes=1_500_000):
     """
     Downloads an image, crops it to Instagram's accepted aspect ratio range
     (0.8 to 1.91) if needed, and returns clean JPEG bytes. Returns None only
     if the image can't be fetched/opened at all.
+
+    Also caps the longest side at max_dimension and steps down JPEG quality
+    until the result is under max_bytes (same pattern as download_image) -
+    this used to be uncapped, which could hand imgbb a multi-MB re-host of a
+    large stock photo. imgbb's free tier can then be slow enough serving
+    that back out that Meta's own crawler times out fetching it for the
+    media container (error_subcode 2207003, "It takes too long to download
+    the media") - a smaller, consistently-sized file is the actual fix for
+    that, not just retrying the same oversized file again.
     """
     try:
         headers = {
@@ -469,9 +478,15 @@ def validate_and_prepare_instagram_image(image_url):
             left = (w - new_w) // 2
             img = img.crop((left, 0, left + new_w, h))
 
+        img.thumbnail((max_dimension, max_dimension))
+
         buf = BytesIO()
-        img.save(buf, format="JPEG", quality=90)
-        return buf.getvalue()
+        for quality in (90, 82, 72, 60):
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+            if buf.tell() <= max_bytes:
+                return buf.getvalue()
+        return buf.getvalue()  # fall back to the smallest size tried
 
     except Exception:
         return None
@@ -673,16 +688,23 @@ def wait_for_media_container(status_url, access_token, field="status_code", max_
 
 
 def _create_meta_media_container(url, data, timeout=15, retries=2, delay_seconds=3):
-    """POST to create a Meta/Threads media container, retrying if Meta's own
-    crawler fails to fetch the media (error_subcode 2207052, "The media
-    could not be fetched from this uri"). This is sometimes a transient
-    CDN-propagation gap right after an image lands on imgbb (Meta's crawler
-    hits it before it's globally live), and separately imgbb has started
-    getting outright flagged/rejected by Meta on some requests - a short
-    retry can't fix that second case, but it's a cheap first line of
-    defense before assuming the URL itself is bad. See upload_to_imgbb's
-    docstring for the known imgbb-reliability caveat.
+    """POST to create a Meta/Threads media container, retrying on two known
+    transient-ish failures:
+    - error_subcode 2207052, "The media could not be fetched from this uri" -
+      sometimes a CDN-propagation gap right after an image lands on imgbb
+      (Meta's crawler hits it before it's globally live), and separately
+      imgbb has started getting outright flagged/rejected by Meta on some
+      requests - a retry can't fix that second case, but it's a cheap first
+      line of defense before assuming the URL itself is bad.
+    - error_subcode 2207003, "It takes too long to download the media" -
+      Meta's own docs just say "try again" for this one. Also worth pairing
+      with keeping the uploaded image itself small (see
+      validate_and_prepare_instagram_image's max_dimension/max_bytes cap) -
+      a retry doesn't help if the file is just genuinely too large/slow to
+      serve from imgbb's free tier every time.
+    See upload_to_imgbb's docstring for the known imgbb-reliability caveat.
     """
+    RETRYABLE_SUBCODES = {2207052, 2207003}
     last_resp = None
     for attempt in range(retries + 1):
         resp = requests.post(url, data=data, timeout=timeout)
@@ -693,7 +715,7 @@ def _create_meta_media_container(url, data, timeout=15, retries=2, delay_seconds
         except ValueError:
             subcode = None
         last_resp = resp
-        if subcode == 2207052 and attempt < retries:
+        if subcode in RETRYABLE_SUBCODES and attempt < retries:
             time.sleep(delay_seconds)
             continue
         break

@@ -23,11 +23,13 @@ still needs a real reply demo. This script closes that gap correctly:
 One honest caveat worth knowing before you film: because this uses your
 own Page's access token, Meta attributes the seeded comment's authorship
 to your Page/app itself, not an independent commenter - visibly labelled
-as "Test Commenter (seeded for screencast)" in the inbox so it's not
-confused with a real customer. The object is genuine and the reply call
-is genuine; only the "who left this comment" story is staged. That's
-worth a one-line mention in your submission notes, same as the shot
-list's own suggested disclosure for the comment permissions.
+as "Test Account" in the inbox so it's not confused with a real customer,
+without spelling out "seeded for screencast" on screen (that detail
+belongs in your submission notes, not the video itself). The object is
+genuine and the reply call is genuine; only the "who left this comment"
+story is staged. That's worth a one-line mention in your submission
+notes, same as the shot list's own suggested disclosure for the comment
+permissions.
 
 Run from Agent01/:
     python seed_real_comment.py --platform facebook
@@ -54,7 +56,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--text",
-    default="This is a seeded test comment for an App Review screencast.",
+    default="This is a test comment used to demo the reply feature.",
     help="Comment body. Keep it obviously a test comment, not something "
          "that reads as a real user message.",
 )
@@ -120,7 +122,7 @@ async def main():
             kind=InboxKind.COMMENT,
             external_id=comment_id,
             thread_id=object_id,
-            sender_name="Test Commenter (seeded for screencast)",
+            sender_name="Test Account",
             sender_external_id=None,
             body=args.text,
             raw_payload={"seeded_by": "seed_real_comment.py", "post_id": object_id},
