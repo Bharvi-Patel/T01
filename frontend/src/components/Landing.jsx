@@ -2,9 +2,6 @@
 import { useState, useRef, useEffect } from "react";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
-// A simple, custom geometric mark (an ascending line to a point) instead of
-// a Unicode glyph — used everywhere the brand appears: nav, footer, and
-// (via the matching favicon in index.html) the browser tab.
 function LogoMark({ size = 16 }) {
   return (
     <svg
@@ -39,13 +36,7 @@ const STEPS = [
   },
 ];
 
-// Placeholder for the real screen recording of each step, until it's ready
-// to drop in. To swap step N's placeholder for the real clip, replace its
-// <div className="landing-screen landing-screen--video">...</div> with:
-//   <video className="landing-screen landing-screen--video" controls poster="/demo-<step>-poster.jpg">
-//     <source src="/demo-<step>.mp4" type="video/mp4" />
-//   </video>
-// e.g. /demo-generate.mp4, /demo-review.mp4, /demo-publish.mp4 in /public.
+// Replace each placeholder with a real recording when it is ready.
 function StepVideoPlaceholder({ label }) {
   return (
     <div className="landing-screen landing-screen--video" aria-hidden="true">
@@ -55,9 +46,6 @@ function StepVideoPlaceholder({ label }) {
   );
 }
 
-// Fades a section up into place the first time it scrolls into view. Kept
-// for the hero only now — most of the page renders in place with no
-// scroll-triggered motion, so nothing delays access to the content.
 function Reveal({ as: Tag = "div", className = "", children, ...rest }) {
   const ref = useRef(null);
   const [visible, setVisible] = useState(false);
@@ -121,7 +109,6 @@ function LandingNav({ onGetStarted }) {
         <div className="landing-nav-links">
           <button className="landing-nav-link" onClick={() => scrollTo("hero")}>Product</button>
           <button className="landing-nav-link" onClick={() => scrollTo("workflow")}>Workflow</button>
-          <span className="landing-nav-link landing-nav-link--soon">Pricing</span>
           <button className="landing-nav-link" onClick={() => scrollTo("platforms")}>Platforms</button>
         </div>
 
@@ -138,7 +125,6 @@ function LandingNav({ onGetStarted }) {
             <div className="landing-nav-mobile-menu">
               <button className="landing-nav-link" onClick={() => scrollTo("hero")}>Product</button>
               <button className="landing-nav-link" onClick={() => scrollTo("workflow")}>Workflow</button>
-              <span className="landing-nav-link landing-nav-link--soon">Pricing</span>
               <button className="landing-nav-link" onClick={() => scrollTo("platforms")}>Platforms</button>
               <button className="text-link" onClick={onGetStarted}>Log in</button>
               <button className="primary" onClick={onGetStarted}>Create workspace</button>
@@ -150,42 +136,83 @@ function LandingNav({ onGetStarted }) {
   );
 }
 
+function HeroWorkflowPreview() {
+  return (
+    <div className="landing-hero-preview" aria-label="The startTrack approval workflow">
+      <div className="landing-preview-topline">
+        <span>THE WORKFLOW</span>
+        <span>01 — 04</span>
+      </div>
+      <div className="landing-preview-title">A post with a second pair of eyes.</div>
+      <div className="landing-preview-list">
+        <div className="landing-preview-row">
+          <span className="landing-preview-index">01</span>
+          <span>Research &amp; draft</span>
+          <span className="landing-preview-state">ready</span>
+        </div>
+        <div className="landing-preview-row landing-preview-row--active">
+          <span className="landing-preview-index">02</span>
+          <span>Team review</span>
+          <span className="landing-preview-state">waiting</span>
+        </div>
+        <div className="landing-preview-row">
+          <span className="landing-preview-index">03</span>
+          <span>Approval</span>
+          <span className="landing-preview-state">manual</span>
+        </div>
+        <div className="landing-preview-row">
+          <span className="landing-preview-index">04</span>
+          <span>Publish to accounts</span>
+          <span className="landing-preview-state">next</span>
+        </div>
+      </div>
+      <div className="landing-preview-note">
+        <span className="landing-preview-note-mark">↳</span>
+        Nothing leaves Review without a person saying yes.
+      </div>
+    </div>
+  );
+}
+
 export default function Landing({ onGetStarted }) {
   return (
     <div className="landing-page">
       <LandingNav onGetStarted={onGetStarted} />
 
-      {/* HERO */}
       <section id="hero" className="landing-section landing-hero">
-        <Reveal>
+        <Reveal className="landing-hero-copy">
+          <p className="landing-kicker">Social publishing, with a human in the loop.</p>
           <h1 className="landing-headline">
-            Draft it once. <span className="landing-underline">Review</span> it once.<br />
+            Draft it once.<br />
+            <span className="landing-underline">Review</span> it once.<br />
             Publish everywhere.
           </h1>
           <p className="landing-subtext">
-            Give your social team one place to draft, review, and approve posts
-            across LinkedIn, Facebook, Instagram, and Threads — before any of it
-            goes out.
+            Give your team one place to draft, review, and approve posts across
+            LinkedIn, Facebook, Instagram, and Threads — before any of it goes out.
           </p>
           <div className="landing-hero-ctas">
             <button className="primary" onClick={onGetStarted}>Create your first workspace</button>
-            <button onClick={() => document.getElementById("workflow")?.scrollIntoView({ behavior: "smooth" })}>
-              See the workflow
+            <button className="landing-text-button" onClick={() => document.getElementById("workflow")?.scrollIntoView({ behavior: "smooth" })}>
+              See the workflow <span aria-hidden="true">↘</span>
             </button>
           </div>
+          <p className="landing-hero-proof">Draft <span>→</span> Review <span>→</span> Approve <span>→</span> Publish</p>
+        </Reveal>
+        <Reveal className="landing-hero-art" aria-hidden="true">
+          <HeroWorkflowPreview />
         </Reveal>
       </section>
 
-      {/* WORKFLOW — real workflow example, not three generic feature cards.
-          Each step below has a video placeholder — see StepVideoPlaceholder
-          above for how to swap in the real recordings. */}
-      <section id="workflow" className="landing-section">
-        <h2 className="landing-h2">A post, from idea to approval</h2>
-        <p className="landing-subtext">
-          Give it a topic and it researches, drafts, and sources images. Write it
-          yourself if you'd rather. Either way, someone on your team reviews it
-          before it reaches an audience.
-        </p>
+      <section id="workflow" className="landing-section landing-workflow-section">
+        <div className="landing-section-intro">
+          <p className="landing-kicker">From idea to approval</p>
+          <h2 className="landing-h2">The useful part is the handoff.</h2>
+          <p className="landing-subtext">
+            startTrack does the first draft quickly. Your team supplies the judgment
+            before it reaches an audience.
+          </p>
+        </div>
 
         <div className="landing-workflow">
           {STEPS.map((step) => (
@@ -199,22 +226,23 @@ export default function Landing({ onGetStarted }) {
         </div>
       </section>
 
-      {/* APPROVAL PRINCIPLE — what "review" actually means, mechanically */}
-      <section className="landing-section landing-quote-section">
-        <p className="landing-quote">
-          A draft doesn't leave Review until someone taps Approve.
-        </p>
-        <p className="landing-quote-caption">Reject sends it back with notes. Nothing schedules or posts on its own.</p>
+      <section className="landing-approval-band">
+        <div className="landing-section landing-approval-inner">
+          <span className="landing-approval-mark">✓</span>
+          <p className="landing-quote">A draft doesn't leave Review until someone taps Approve.</p>
+          <p className="landing-quote-caption">Reject sends it back with notes. Nothing schedules or posts on its own.</p>
+        </div>
       </section>
 
-      {/* PLATFORMS — dark band */}
       <section id="platforms" className="landing-dark-band">
-        <div className="landing-section">
-          <h2 className="landing-h2 landing-h2--dark">Don't duplicate the work. Integrate.</h2>
-          <p className="landing-subtext landing-subtext--dark">
-            Connect each account once. Every future post can publish to it from there.
-          </p>
-
+        <div className="landing-section landing-platforms-section">
+          <div>
+            <p className="landing-kicker landing-kicker--dark">Connect once</p>
+            <h2 className="landing-h2 landing-h2--dark">One workflow. Every account.</h2>
+            <p className="landing-subtext landing-subtext--dark">
+              Connect each account once. Every future post can publish to it from there.
+            </p>
+          </div>
           <div className="landing-integrations-grid">
             {PLATFORMS.map((p) => (
               <div key={p.key} className="landing-integration-tile">
@@ -223,14 +251,15 @@ export default function Landing({ onGetStarted }) {
               </div>
             ))}
           </div>
-          <p className="landing-platforms-note">More platforms are added as they're requested.</p>
+          <p className="landing-platforms-note">Currently available for LinkedIn, Facebook, Instagram, and Threads.</p>
         </div>
       </section>
 
-      {/* WHO IT'S FOR */}
-      <section className="landing-section">
-        <h2 className="landing-h2">Built for teams that need sign-off before anything posts</h2>
-
+      <section className="landing-section landing-whofor-section">
+        <div className="landing-section-intro">
+          <p className="landing-kicker">Made for the approval step</p>
+          <h2 className="landing-h2">Built for teams that need sign-off before anything posts.</h2>
+        </div>
         <div className="landing-whofor">
           <div className="landing-whofor-row">
             <span className="landing-whofor-label">Social teams</span>
@@ -247,10 +276,11 @@ export default function Landing({ onGetStarted }) {
         </div>
       </section>
 
-      {/* HONEST SCOPE — what's automated vs. what's still yours */}
-      <section className="landing-section">
-        <h2 className="landing-h2">What it does. What you still do.</h2>
-
+      <section className="landing-section landing-included-section">
+        <div className="landing-section-intro">
+          <p className="landing-kicker">No black box</p>
+          <h2 className="landing-h2">What it does. What you still do.</h2>
+        </div>
         <div className="landing-included">
           <div className="landing-included-col">
             <p className="eyebrow">Automated</p>
@@ -260,7 +290,7 @@ export default function Landing({ onGetStarted }) {
               <li>Formats the post for each platform</li>
             </ul>
           </div>
-          <div className="landing-included-col">
+          <div className="landing-included-col landing-included-col--human">
             <p className="eyebrow">Still yours</p>
             <ul>
               <li>Final review and approval before anything goes out</li>
@@ -269,17 +299,14 @@ export default function Landing({ onGetStarted }) {
             </ul>
           </div>
         </div>
-        <p className="landing-included-note">
-          Currently supports LinkedIn, Facebook, Instagram, and Threads.
-        </p>
       </section>
 
-      {/* CTA + FOOTER — dark band */}
       <section className="landing-dark-band landing-cta-band">
         <div className="landing-section landing-cta">
-          <h2 className="landing-h2 landing-h2--dark" style={{ margin: 0 }}>
-            Ready to review your first draft?
-          </h2>
+          <div>
+            <p className="landing-kicker landing-kicker--dark">Start with one workspace</p>
+            <h2 className="landing-h2 landing-h2--dark">Ready to review your first draft?</h2>
+          </div>
           <div className="landing-cta-buttons">
             <button className="primary" onClick={onGetStarted}>Create your first workspace</button>
             <button className="landing-btn-ghost-dark" onClick={onGetStarted}>Log in</button>
@@ -295,17 +322,14 @@ export default function Landing({ onGetStarted }) {
               </span>
               <p>Draft with AI. Publish with approval.</p>
             </div>
-
             <div className="landing-footer-nav">
               <div className="landing-footer-col">
-                <p className="eyebrow" style={{ color: "#6FA39A" }}>Product</p>
+                <p className="eyebrow">Product</p>
                 <button className="landing-footer-link" onClick={() => document.getElementById("workflow")?.scrollIntoView({ behavior: "smooth" })}>Workflow</button>
                 <button className="landing-footer-link" onClick={() => document.getElementById("platforms")?.scrollIntoView({ behavior: "smooth" })}>Platforms</button>
-                <span className="landing-footer-link landing-footer-link--soon">Pricing</span>
               </div>
-
               <div className="landing-footer-col">
-                <p className="eyebrow" style={{ color: "#6FA39A" }}>Account</p>
+                <p className="eyebrow">Account</p>
                 <button className="landing-footer-link" onClick={onGetStarted}>Log in</button>
                 <button className="landing-footer-link" onClick={onGetStarted}>Sign up</button>
               </div>
