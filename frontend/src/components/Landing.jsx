@@ -2,6 +2,25 @@
 import { useState, useRef, useEffect } from "react";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
+// A simple, custom geometric mark (an ascending line to a point) instead of
+// a Unicode glyph — used everywhere the brand appears: nav, footer, and
+// (via the matching favicon in index.html) the browser tab.
+function LogoMark({ size = 16 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className="landing-logo-mark"
+    >
+      <path d="M3.5 16.5l5.5-6.5 4 3.5L20.5 4.5" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="20.5" cy="4.5" r="2" fill="currentColor" />
+    </svg>
+  );
+}
+
 const STEPS = [
   {
     n: "01",
@@ -11,18 +30,35 @@ const STEPS = [
   {
     n: "02",
     label: "Review",
-    desc: "You read every draft before it goes anywhere. Approve it, or send it back with what to fix.",
+    desc: "Every draft — AI-written or your own — sits in Review until someone approves it. Reject sends it back with notes on what to fix.",
   },
   {
     n: "03",
     label: "Publish",
-    desc: "Pick which of your connected accounts it should go to. One click, live on all of them at once.",
+    desc: "Pick which connected accounts it should go out to. One click, live on all of them at once.",
   },
 ];
 
-// Fades + slides an element up into place the first time it scrolls into
-// view. Wrap any section/card in this instead of hand-rolling observers.
-function Reveal({ as: Tag = "div", delay = 0, className = "", children, ...rest }) {
+// Placeholder for the real screen recording of each step, until it's ready
+// to drop in. To swap step N's placeholder for the real clip, replace its
+// <div className="landing-screen landing-screen--video">...</div> with:
+//   <video className="landing-screen landing-screen--video" controls poster="/demo-<step>-poster.jpg">
+//     <source src="/demo-<step>.mp4" type="video/mp4" />
+//   </video>
+// e.g. /demo-generate.mp4, /demo-review.mp4, /demo-publish.mp4 in /public.
+function StepVideoPlaceholder({ label }) {
+  return (
+    <div className="landing-screen landing-screen--video" aria-hidden="true">
+      <span className="landing-video-play">▶</span>
+      <p className="landing-video-label">{label} — video coming soon</p>
+    </div>
+  );
+}
+
+// Fades a section up into place the first time it scrolls into view. Kept
+// for the hero only now — most of the page renders in place with no
+// scroll-triggered motion, so nothing delays access to the content.
+function Reveal({ as: Tag = "div", className = "", children, ...rest }) {
   const ref = useRef(null);
   const [visible, setVisible] = useState(false);
 
@@ -50,7 +86,6 @@ function Reveal({ as: Tag = "div", delay = 0, className = "", children, ...rest 
     <Tag
       ref={ref}
       className={`reveal${visible ? " reveal--visible" : ""}${className ? " " + className : ""}`}
-      style={{ transitionDelay: visible ? `${delay}ms` : "0ms" }}
       {...rest}
     >
       {children}
@@ -79,20 +114,20 @@ function LandingNav({ onGetStarted }) {
     <nav className="landing-nav">
       <div className="landing-nav-inner">
         <span className="landing-logo">
-          <span className="landing-logo-mark" aria-hidden="true">◆</span>
+          <LogoMark size={16} />
           startTrack
         </span>
 
         <div className="landing-nav-links">
           <button className="landing-nav-link" onClick={() => scrollTo("hero")}>Product</button>
-          <button className="landing-nav-link" onClick={() => scrollTo("features")}>Features</button>
+          <button className="landing-nav-link" onClick={() => scrollTo("workflow")}>Workflow</button>
           <span className="landing-nav-link landing-nav-link--soon">Pricing</span>
           <button className="landing-nav-link" onClick={() => scrollTo("platforms")}>Platforms</button>
         </div>
 
         <div className="landing-nav-actions">
           <button className="text-link landing-nav-login" onClick={onGetStarted}>Log in</button>
-          <button className="primary" onClick={onGetStarted}>Get started</button>
+          <button className="primary" onClick={onGetStarted}>Create workspace</button>
         </div>
 
         <div ref={ref} className="landing-nav-mobile">
@@ -102,11 +137,11 @@ function LandingNav({ onGetStarted }) {
           {open && (
             <div className="landing-nav-mobile-menu">
               <button className="landing-nav-link" onClick={() => scrollTo("hero")}>Product</button>
-              <button className="landing-nav-link" onClick={() => scrollTo("features")}>Features</button>
+              <button className="landing-nav-link" onClick={() => scrollTo("workflow")}>Workflow</button>
               <span className="landing-nav-link landing-nav-link--soon">Pricing</span>
               <button className="landing-nav-link" onClick={() => scrollTo("platforms")}>Platforms</button>
               <button className="text-link" onClick={onGetStarted}>Log in</button>
-              <button className="primary" onClick={onGetStarted}>Get started</button>
+              <button className="primary" onClick={onGetStarted}>Create workspace</button>
             </div>
           )}
         </div>
@@ -122,141 +157,140 @@ export default function Landing({ onGetStarted }) {
 
       {/* HERO */}
       <section id="hero" className="landing-section landing-hero">
-        {/* <span className="landing-pill">⚡ AI‑DRAFTED, HUMAN‑APPROVED</span> */}
-
-        <Reveal as="h1" className="landing-headline">
-          Draft it once. <span className="landing-underline">Review</span> it once.<br />
-          Publish everywhere.
-        </Reveal>
-
-        <Reveal as="p" delay={100} className="landing-subtext">
-          Give it a category and subtopic — it researches and writes a full post with
-          sourced images. You read it, approve it, or send it back with notes.
-          Nothing goes out until you say so.
-        </Reveal>
-
-        <Reveal delay={200} className="landing-hero-ctas">
-          <button className="primary" onClick={onGetStarted}>Get started</button>
-          <button onClick={() => document.getElementById("features")?.scrollIntoView({ behavior: "smooth" })}>
-            See how it works
-          </button>
-        </Reveal>
-
-        <Reveal delay={300} className="landing-logos-strip">
-          <p className="eyebrow" style={{ marginBottom: 14 }}>Publishes to</p>
-          <div className="landing-logos-row">
-            {PLATFORMS.map((p) => (
-              <span key={p.key} className="landing-logo-chip">
-                <PlatformLogo platform={p} size={18} />
-                {p.label}
-              </span>
-            ))}
+        <Reveal>
+          <h1 className="landing-headline">
+            Draft it once. <span className="landing-underline">Review</span> it once.<br />
+            Publish everywhere.
+          </h1>
+          <p className="landing-subtext">
+            Give your social team one place to draft, review, and approve posts
+            across LinkedIn, Facebook, Instagram, and Threads — before any of it
+            goes out.
+          </p>
+          <div className="landing-hero-ctas">
+            <button className="primary" onClick={onGetStarted}>Create your first workspace</button>
+            <button onClick={() => document.getElementById("workflow")?.scrollIntoView({ behavior: "smooth" })}>
+              See the workflow
+            </button>
           </div>
         </Reveal>
       </section>
 
-      {/* FEATURES — bento */}
-      <section id="features" className="landing-section">
-        {/* <Reveal as="span" className="landing-pill">☰ FEATURES</Reveal> */}
-        <Reveal as="h2" delay={80} className="landing-h2">You approve everything. It does the rest.</Reveal>
-        <Reveal as="p" delay={140} className="landing-subtext">
-          A researched draft or a post you wrote yourself — either way, nothing reaches
-          LinkedIn, Instagram, or anywhere else until you say so.
-        </Reveal>
+      {/* WORKFLOW — real workflow example, not three generic feature cards.
+          Each step below has a video placeholder — see StepVideoPlaceholder
+          above for how to swap in the real recordings. */}
+      <section id="workflow" className="landing-section">
+        <h2 className="landing-h2">A post, from idea to approval</h2>
+        <p className="landing-subtext">
+          Give it a topic and it researches, drafts, and sources images. Write it
+          yourself if you'd rather. Either way, someone on your team reviews it
+          before it reaches an audience.
+        </p>
 
-        <div className="landing-bento">
-          <Reveal delay={0} className="landing-bento-card landing-bento-card--large">
-            <span className="landing-card-step">{STEPS[0].n}</span>
-            <h3>{STEPS[0].label}</h3>
-            <p>{STEPS[0].desc}</p>
-            <div className="landing-mock-draft" aria-hidden="true">
-              <div className="landing-mock-draft-bar">
-                <span /><span /><span />
-              </div>
-              <div className="landing-mock-draft-line landing-mock-draft-line--title" />
-              <div className="landing-mock-draft-line" />
-              <div className="landing-mock-draft-line" />
-              <div className="landing-mock-draft-line" style={{ width: "60%" }} />
-              <div className="landing-mock-draft-thumb" />
+        <div className="landing-workflow">
+          {STEPS.map((step) => (
+            <div key={step.n} className="landing-workflow-col">
+              <span className="landing-card-step">{step.n}</span>
+              <h3>{step.label}</h3>
+              <p>{step.desc}</p>
+              <StepVideoPlaceholder label={step.label} />
             </div>
-          </Reveal>
-
-          <Reveal delay={120} className="landing-bento-card">
-            <span className="landing-card-step">{STEPS[1].n}</span>
-            <h3>{STEPS[1].label}</h3>
-            <p>{STEPS[1].desc}</p>
-            <div className="landing-mock-review" aria-hidden="true">
-              <span className="landing-mock-btn landing-mock-btn--reject">Send back</span>
-              <span className="landing-mock-btn landing-mock-btn--approve">Approve</span>
-            </div>
-          </Reveal>
-
-          <Reveal delay={240} className="landing-bento-card">
-            <span className="landing-card-step">{STEPS[2].n}</span>
-            <h3>{STEPS[2].label}</h3>
-            <p>{STEPS[2].desc}</p>
-            <div className="landing-mock-publish" aria-hidden="true">
-              {PLATFORMS.slice(0, 4).map((p) => (
-                <span key={p.key} className="landing-mock-publish-icon">
-                  <PlatformLogo platform={p} size={14} />
-                </span>
-              ))}
-            </div>
-          </Reveal>
+          ))}
         </div>
       </section>
 
-      {/* INTEGRATIONS — dark band */}
+      {/* APPROVAL PRINCIPLE — what "review" actually means, mechanically */}
+      <section className="landing-section landing-quote-section">
+        <p className="landing-quote">
+          A draft doesn't leave Review until someone taps Approve.
+        </p>
+        <p className="landing-quote-caption">Reject sends it back with notes. Nothing schedules or posts on its own.</p>
+      </section>
+
+      {/* PLATFORMS — dark band */}
       <section id="platforms" className="landing-dark-band">
         <div className="landing-section">
-          <Reveal as="span" className="landing-pill landing-pill--dark">⚙ PLATFORMS</Reveal>
-          <Reveal as="h2" delay={80} className="landing-h2 landing-h2--dark">Don't duplicate the work. Integrate.</Reveal>
-          <Reveal as="p" delay={140} className="landing-subtext landing-subtext--dark">
-            Connect each platform once. Posting to it happens from there.
-          </Reveal>
+          <h2 className="landing-h2 landing-h2--dark">Don't duplicate the work. Integrate.</h2>
+          <p className="landing-subtext landing-subtext--dark">
+            Connect each account once. Every future post can publish to it from there.
+          </p>
 
           <div className="landing-integrations-grid">
-            {PLATFORMS.map((p, i) => (
-              <Reveal key={p.key} delay={i * 60} className="landing-integration-tile">
+            {PLATFORMS.map((p) => (
+              <div key={p.key} className="landing-integration-tile">
                 <PlatformLogo platform={p} size={26} />
                 <span>{p.label}</span>
-              </Reveal>
+              </div>
             ))}
-            <Reveal delay={PLATFORMS.length * 60} className="landing-integration-tile landing-integration-tile--muted">
-              <span className="landing-integration-plus">+</span>
-              <span>More soon</span>
-            </Reveal>
+          </div>
+          <p className="landing-platforms-note">More platforms are added as they're requested.</p>
+        </div>
+      </section>
+
+      {/* WHO IT'S FOR */}
+      <section className="landing-section">
+        <h2 className="landing-h2">Built for teams that need sign-off before anything posts</h2>
+
+        <div className="landing-whofor">
+          <div className="landing-whofor-row">
+            <span className="landing-whofor-label">Social teams</span>
+            <p>Draft once, review together, and publish to every connected account without copy-pasting between five tabs.</p>
+          </div>
+          <div className="landing-whofor-row">
+            <span className="landing-whofor-label">Agencies</span>
+            <p>Generate the draft, send it to your client for approval, and publish the moment they say yes.</p>
+          </div>
+          <div className="landing-whofor-row">
+            <span className="landing-whofor-label">Founders &amp; solo operators</span>
+            <p>Keep a consistent posting schedule without spending your morning writing captions from scratch.</p>
           </div>
         </div>
       </section>
 
-      {/* PULL QUOTE */}
-      <section className="landing-section landing-quote-section">
-        <Reveal as="p" className="landing-quote">
-          “Nothing publishes without a human saying so.”
-        </Reveal>
-        <Reveal as="p" delay={100} className="landing-quote-caption">The one rule that never gets skipped.</Reveal>
+      {/* HONEST SCOPE — what's automated vs. what's still yours */}
+      <section className="landing-section">
+        <h2 className="landing-h2">What it does. What you still do.</h2>
+
+        <div className="landing-included">
+          <div className="landing-included-col">
+            <p className="eyebrow">Automated</p>
+            <ul>
+              <li>Researches the topic and drafts a full post</li>
+              <li>Finds and sources real images to match</li>
+              <li>Formats the post for each platform</li>
+            </ul>
+          </div>
+          <div className="landing-included-col">
+            <p className="eyebrow">Still yours</p>
+            <ul>
+              <li>Final review and approval before anything goes out</li>
+              <li>Brand voice and tone edits</li>
+              <li>Connecting each platform's account</li>
+            </ul>
+          </div>
+        </div>
+        <p className="landing-included-note">
+          Currently supports LinkedIn, Facebook, Instagram, and Threads.
+        </p>
       </section>
 
       {/* CTA + FOOTER — dark band */}
       <section className="landing-dark-band landing-cta-band">
         <div className="landing-section landing-cta">
-          <Reveal>
-            <h2 className="landing-h2 landing-h2--dark" style={{ margin: 0 }}>
-              Ready to put your content<br />on autopilot?
-            </h2>
-          </Reveal>
-          <Reveal delay={120} className="landing-cta-buttons">
-            <button className="primary" onClick={onGetStarted}>Get started</button>
+          <h2 className="landing-h2 landing-h2--dark" style={{ margin: 0 }}>
+            Ready to review your first draft?
+          </h2>
+          <div className="landing-cta-buttons">
+            <button className="primary" onClick={onGetStarted}>Create your first workspace</button>
             <button className="landing-btn-ghost-dark" onClick={onGetStarted}>Log in</button>
-          </Reveal>
+          </div>
         </div>
 
         <footer className="landing-footer">
           <div className="landing-section landing-footer-inner">
             <div className="landing-footer-brand">
               <span className="landing-logo landing-logo--dark">
-                <span className="landing-logo-mark" aria-hidden="true">◆</span>
+                <LogoMark size={16} />
                 startTrack
               </span>
               <p>Draft with AI. Publish with approval.</p>
@@ -265,7 +299,7 @@ export default function Landing({ onGetStarted }) {
             <div className="landing-footer-nav">
               <div className="landing-footer-col">
                 <p className="eyebrow" style={{ color: "#6FA39A" }}>Product</p>
-                <button className="landing-footer-link" onClick={() => document.getElementById("features")?.scrollIntoView({ behavior: "smooth" })}>Features</button>
+                <button className="landing-footer-link" onClick={() => document.getElementById("workflow")?.scrollIntoView({ behavior: "smooth" })}>Workflow</button>
                 <button className="landing-footer-link" onClick={() => document.getElementById("platforms")?.scrollIntoView({ behavior: "smooth" })}>Platforms</button>
                 <span className="landing-footer-link landing-footer-link--soon">Pricing</span>
               </div>

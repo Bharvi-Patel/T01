@@ -1051,15 +1051,12 @@ input[type="number"] { -moz-appearance: textfield; }
   background: var(--paper);
 }
 
-/* --- scroll reveal --- */
+/* --- scroll reveal (hero only — see Reveal in Landing.jsx) --- */
 .reveal {
   opacity: 0;
-  transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1), transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: opacity, transform;
+  transform: translateY(14px);
+  transition: opacity 0.5s cubic-bezier(0.22, 1, 0.36, 1), transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.reveal--up { transform: translateY(18px); }
-.reveal--left { transform: translateX(-56px); transition-duration: 0.75s; transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }
-.reveal--right { transform: translateX(56px); transition-duration: 0.75s; transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }
 .reveal--visible {
   opacity: 1;
   transform: translate(0, 0);
@@ -1111,7 +1108,7 @@ input[type="number"] { -moz-appearance: textfield; }
   white-space: nowrap;
 }
 .landing-logo--dark { color: #EDF3DC; }
-.landing-logo-mark { color: var(--accent); font-size: 14px; }
+.landing-logo-mark { color: var(--accent); flex-shrink: 0; }
 
 .landing-nav-links {
   display: flex;
@@ -1174,26 +1171,6 @@ input[type="number"] { -moz-appearance: textfield; }
   }
 }
 
-/* --- pill / eyebrow badge --- */
-.landing-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  color: var(--text-secondary);
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  padding: 6px 14px;
-  margin-bottom: 20px;
-}
-.landing-pill--dark {
-  color: #D7E6E2;
-  border-color: #93B6AC;
-}
-
 /* --- hero --- */
 .landing-hero {
   text-align: center;
@@ -1237,24 +1214,27 @@ input[type="number"] { -moz-appearance: textfield; }
   margin-bottom: 4rem;
 }
 
-.landing-logos-strip { width: 100%; }
-.landing-logos-row {
+/* --- per-step video placeholder (play glyph + label, sized by
+   .landing-screen--video above) — see StepVideoPlaceholder in Landing.jsx
+   for how to swap in each real recording --- */
+.landing-video-play {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 12px;
-}
-.landing-logo-chip {
-  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: var(--paper-raised);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 7px 14px 7px 10px;
+  justify-content: center;
+  color: var(--accent);
+  font-size: 15px;
+  padding-left: 3px; /* optically center the glyph inside the circle */
+}
+.landing-video-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0;
+  padding: 0 8px;
 }
 
 /* --- section heading --- */
@@ -1269,49 +1249,37 @@ input[type="number"] { -moz-appearance: textfield; }
 }
 .landing-h2--dark { color: #EDF3DC; }
 
-#how-it-works > .landing-pill,
-#how-it-works > .landing-h2,
-#how-it-works > .landing-subtext {
-  display: block;
-  text-align: center;
-  margin-left: auto;
-  margin-right: auto;
-}
-#how-it-works { text-align: center; }
-
-/* --- bento grid --- */
-.landing-bento {
+/* --- workflow: three columns divided by rules, not cards --- */
+.landing-workflow {
   display: grid;
-  grid-template-columns: 1.3fr 1fr;
-  grid-template-rows: auto auto;
-  gap: 20px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
   text-align: left;
+  margin-top: 2.5rem;
+  border-top: 1px solid var(--border);
 }
-.landing-bento-card {
-  background: var(--paper-raised);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 28px;
+.landing-workflow-col {
+  padding: 28px 24px 0 0;
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
 }
-.landing-bento-card--large {
-  grid-row: span 2;
-}
+.landing-workflow-col:last-child { border-right: none; padding-right: 0; }
+.landing-workflow-col:not(:first-child) { padding-left: 24px; }
 .landing-card-step {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--accent);
   margin-bottom: 10px;
 }
-.landing-bento-card h3 {
+.landing-workflow-col h3 {
   font-family: var(--font-display);
   font-weight: 600;
-  font-size: 20px;
+  font-size: 19px;
   margin: 0 0 8px;
   color: var(--ink);
 }
-.landing-bento-card p {
+.landing-workflow-col p {
   font-size: 14px;
   line-height: 1.6;
   color: var(--text-secondary);
@@ -1319,75 +1287,33 @@ input[type="number"] { -moz-appearance: textfield; }
 }
 
 @media (max-width: 768px) {
-  .landing-bento { grid-template-columns: 1fr; }
-  .landing-bento-card--large { grid-row: auto; }
+  .landing-workflow { grid-template-columns: 1fr; border-top: none; }
+  .landing-workflow-col {
+    border-right: none;
+    border-top: 1px solid var(--border);
+    padding: 24px 0 0 !important;
+  }
+  .landing-workflow-col:first-child { border-top: none; }
 }
 
-/* mini mocks inside bento cards */
-.landing-mock-draft {
+/* --- .landing-screen: box matching the real app's panel styling
+   (var(--paper-raised) surface, hairline border, var(--radius) corner) —
+   now used as the frame for each step's video placeholder below --- */
+.landing-screen {
   margin-top: auto;
-  background: var(--paper);
+  background: var(--paper-raised);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 16px;
 }
-.landing-mock-draft-bar { display: flex; gap: 5px; margin-bottom: 14px; }
-.landing-mock-draft-bar span {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--border-strong);
-}
-.landing-mock-draft-line {
-  height: 8px;
-  border-radius: 4px;
-  background: var(--border);
-  margin-bottom: 8px;
-}
-.landing-mock-draft-line--title {
-  width: 45%;
-  height: 12px;
-  background: var(--border-strong);
-}
-.landing-mock-draft-thumb {
-  margin-top: 12px;
-  width: 100%;
-  height: 60px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, var(--accent) 0%, var(--border) 100%);
-  opacity: 0.35;
-}
-
-.landing-mock-review {
-  margin-top: auto;
+.landing-screen--video {
+  aspect-ratio: 4 / 3;
   display: flex;
-  gap: 10px;
-}
-.landing-mock-btn {
-  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   text-align: center;
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: var(--radius);
-  padding: 10px 8px;
-  border: 1px solid var(--border-strong);
-  color: var(--text-secondary);
-}
-.landing-mock-btn--approve {
-  background: var(--accent);
-  color: var(--accent-ink);
-  border-color: var(--accent);
-}
-
-.landing-mock-publish {
-  margin-top: auto;
-  display: flex;
-  gap: 8px;
-}
-.landing-mock-publish-icon {
-  width: 32px; height: 32px;
-  border-radius: 50%;
-  background: var(--paper);
-  border: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: center;
 }
 
 /* --- dark band (integrations + CTA) --- */
@@ -1405,7 +1331,7 @@ input[type="number"] { -moz-appearance: textfield; }
 
 .landing-integrations-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 14px;
   max-width: 620px;
   margin: 2.5rem auto 0;
@@ -1424,15 +1350,12 @@ input[type="number"] { -moz-appearance: textfield; }
   padding: 20px 12px;
   font-size: 13px;
   font-weight: 500;
-  color: #163C44;
+  color: #D7E6E2;
 }
-.landing-integration-tile--muted {
-  color: #5E7D78;
-  border-style: dashed;
-}
-.landing-integration-plus {
-  font-size: 20px;
-  line-height: 1;
+.landing-platforms-note {
+  margin: 1.5rem auto 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
   color: #5E7D78;
 }
 
@@ -1535,6 +1458,65 @@ input[type="number"] { -moz-appearance: textfield; }
   color: #5E7D78;
   font-family: var(--font-mono);
 }
+
+/* --- who it's for: plain rows divided by hairlines, not cards --- */
+.landing-whofor {
+  margin-top: 2.5rem;
+  border-top: 1px solid var(--border);
+}
+.landing-whofor-row {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 24px;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.landing-whofor-label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--ink);
+}
+.landing-whofor-row p {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0;
+}
+@media (max-width: 640px) {
+  .landing-whofor-row { grid-template-columns: 1fr; gap: 6px; }
+}
+
+/* --- honest scope: two plain columns, no card chrome --- */
+.landing-included {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  margin-top: 2.5rem;
+  text-align: left;
+}
+.landing-included-col ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.landing-included-col li {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.landing-included-note {
+  margin: 1.75rem 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+@media (max-width: 640px) {
+  .landing-included { grid-template-columns: 1fr; gap: 20px; }
+}
+
 /* ============================================================
    COMPOSER — "Generate a new post" form
    A typed sheet, not a stacked pile of boxed inputs: fields sit on
