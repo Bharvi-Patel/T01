@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { PLATFORMS, PlatformLogo } from "./platforms";
 
-export default function DraftReview({ draft, connections, onApprove, onSchedule, onReject, onSaveAsDraft, loading, error }) {
+export default function DraftReview({ draft, connections, onApprove, onSchedule, onReject, onSaveAsDraft, onSaveEdits, onUploadImage, loading, error }) {
   const [activePlatform, setActivePlatform] = useState("finto");
   const [selected, setSelected] = useState(new Set());
   const [showReject, setShowReject] = useState(false);
@@ -13,6 +13,22 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("09:00");
   const [lightboxIndex, setLightboxIndex] = useState(null);
+
+  // Edit mode - lets the user rewrite the AI copy and change up the image
+  // set before approving/scheduling. Kept entirely local until "Save" so
+  // "Cancel" is just discarding this state, no server round-trip needed.
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editMetaDescription, setEditMetaDescription] = useState("");
+  const [editIntro, setEditIntro] = useState("");
+  const [editConclusion, setEditConclusion] = useState("");
+  const [editSections, setEditSections] = useState([]);
+  const [editPostText, setEditPostText] = useState({});
+  const [editImages, setEditImages] = useState([]);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [draggedImageIndex, setDraggedImageIndex] = useState(null);
+  const [dragOverImageIndex, setDragOverImageIndex] = useState(null);
 
   function closeSchedulePanel() {
     setClosingSchedule(true);
@@ -59,6 +75,91 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
         ...sections.map((s) => s.image).filter((img) => img?.url),
       ];
 
+  function startEditing() {
+    setEditTitle(title || "");
+    setEditMetaDescription(meta_description || "");
+    setEditIntro(intro || "");
+    setEditConclusion(conclusion || "");
+    setEditSections(sections.map((s) => ({ heading: s.heading || "", text: s.text || "" })));
+    setEditPostText({
+      linkedin_post: draft.linkedin_post || "",
+      facebook_post: draft.facebook_post || "",
+      instagram_caption: draft.instagram_caption || "",
+      threads_post: draft.threads_post || "",
+    });
+    setEditImages(publishImages.map((img) => ({ url: img.url, source: img.source || "" })));
+    setEditError("");
+    setEditing(true);
+  }
+
+  function cancelEditing() {
+    setEditing(false);
+    setEditError("");
+  }
+
+  function updateEditSection(i, field, value) {
+    setEditSections((prev) => prev.map((s, idx) => (idx === i ? { ...s, [field]: value } : s)));
+  }
+
+  function removeEditImage(i) {
+    setEditImages((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  function moveEditImage(i, dir) {
+    setEditImages((prev) => {
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  }
+
+  function reorderEditImages(from, to) {
+    if (from === to) return;
+    setEditImages((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  }
+
+  async function handleAddImageFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !onUploadImage) return;
+    setUploadingImage(true);
+    setEditError("");
+    try {
+      const hosted = await onUploadImage(file);
+      setEditImages((prev) => [...prev, { url: hosted.url, source: hosted.source || "user upload" }]);
+    } catch (err) {
+      setEditError(err.message || "That image couldn't be uploaded.");
+    } finally {
+      setUploadingImage(false);
+    }
+  }
+
+  async function handleSaveEdits() {
+    if (!onSaveEdits) return;
+    setEditError("");
+    try {
+      await onSaveEdits({
+        title: editTitle,
+        meta_description: editMetaDescription,
+        intro: editIntro,
+        conclusion: editConclusion,
+        sections: editSections,
+        images: editImages,
+        ...editPostText,
+      });
+      setEditing(false);
+    } catch (err) {
+      setEditError(err.message || "Those edits couldn't be saved.");
+    }
+  }
+
   function togglePlatform(key) {
     const next = new Set(selected);
     next.has(key) ? next.delete(key) : next.add(key);
@@ -75,24 +176,47 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
 
   const todayStr = new Date().toISOString().slice(0, 10);
 
+  const inputStyle = {
+    width: "100%", fontFamily: "inherit", fontSize: 15,
+    border: "1px solid var(--border-strong)", borderRadius: "var(--radius)",
+    padding: "8px 10px", background: "var(--paper-raised)", color: "inherit",
+  };
+  const fieldLabelStyle = { fontSize: 12, color: "var(--text-secondary)", margin: "0 0 4px" };
+
   return (
     <div>
-      <p className="eyebrow">Review</p>
-      <h1 className="masthead">{title || "(untitled)"}</h1>
-      <div className="masthead-rule" />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <p className="eyebrow">Review</p>
+        {onSaveEdits && !editing && (
+          <button onClick={startEditing} disabled={loading}>Edit</button>
+        )}
+      </div>
 
-      <p style={{ fontSize: 15, color: "var(--text-secondary)", margin: "0 0 1.5rem" }}>
-        {meta_description || intro}
-      </p>
+      {editing ? (
+        <>
+          <label style={fieldLabelStyle} htmlFor="edit-title">Title</label>
+          <input
+            id="edit-title" style={{ ...inputStyle, fontSize: 22, fontFamily: "var(--font-display)", marginBottom: 12 }}
+            value={editTitle} onChange={(e) => setEditTitle(e.target.value)}
+          />
 
-      {featured_image?.url && (
-        <img
-          src={featured_image.url} alt={title}
-          style={{ width: "100%", borderRadius: "var(--radius)", marginBottom: "1.5rem" }}
-        />
+          <label style={fieldLabelStyle} htmlFor="edit-meta">Subtitle / meta description</label>
+          <textarea
+            id="edit-meta" rows={2} style={{ ...inputStyle, marginBottom: 12 }}
+            value={editMetaDescription} onChange={(e) => setEditMetaDescription(e.target.value)}
+          />
+        </>
+      ) : (
+        <>
+          <h1 className="masthead">{title || "(untitled)"}</h1>
+          <div className="masthead-rule" />
+          <p style={{ fontSize: 15, color: "var(--text-secondary)", margin: "0 0 1.5rem" }}>
+            {meta_description || intro}
+          </p>
+        </>
       )}
 
-      {video?.url && (
+      {video?.url && !editing && (
         <div style={{ marginBottom: "1.5rem" }}>
           <video
             src={video.url} controls
@@ -105,20 +229,172 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
         </div>
       )}
 
-      <div style={{ fontFamily: "var(--font-display)", fontSize: 17, lineHeight: 1.7 }}>
-        {sections.map((s, i) => (
-          <div key={i} style={{ marginBottom: 20 }}>
-            <p style={{ fontWeight: 500, margin: "0 0 6px" }}>{s.heading}</p>
-            <p style={{ color: "var(--text-secondary)", margin: 0, fontFamily: "var(--font-sans)", fontSize: 15 }}>
-              {s.text}
-            </p>
+      {editing ? (
+        <div style={{ marginBottom: "1.5rem" }}>
+          <label style={fieldLabelStyle}>Images</label>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+            {editImages.map((img, i) => (
+              <div
+                key={img.url + i}
+                draggable
+                onDragStart={(e) => {
+                  setDraggedImageIndex(i);
+                  e.dataTransfer.effectAllowed = "move";
+                  // Firefox requires data to be set for drag to start at all.
+                  e.dataTransfer.setData("text/plain", String(i));
+                }}
+                onDragEnter={() => {
+                  if (draggedImageIndex !== null && draggedImageIndex !== i) setDragOverImageIndex(i);
+                }}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (draggedImageIndex !== null) reorderEditImages(draggedImageIndex, i);
+                  setDraggedImageIndex(null);
+                  setDragOverImageIndex(null);
+                }}
+                onDragEnd={() => {
+                  setDraggedImageIndex(null);
+                  setDragOverImageIndex(null);
+                }}
+                style={{
+                  position: "relative", width: 92, cursor: "grab",
+                  opacity: draggedImageIndex === i ? 0.4 : 1,
+                  outline: dragOverImageIndex === i && draggedImageIndex !== i ? "2px solid var(--accent)" : "none",
+                  outlineOffset: 2, borderRadius: 6, transition: "opacity 0.15s",
+                }}
+              >
+                <img
+                  src={img.url} alt="" draggable={false}
+                  style={{ width: 92, height: 92, objectFit: "cover", borderRadius: 6, display: "block", pointerEvents: "none" }}
+                />
+                <button
+                  type="button" onClick={() => removeEditImage(i)} aria-label="Remove image" title="Remove"
+                  style={{
+                    position: "absolute", top: -6, right: -6, width: 22, height: 22, padding: 0,
+                    borderRadius: "50%", border: "none", background: "var(--danger, #c0392b)",
+                    color: "#fff", fontSize: 12, lineHeight: "22px",
+                  }}
+                >
+                  ✕
+                </button>
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                  <button
+                    type="button" onClick={() => moveEditImage(i, -1)} disabled={i === 0}
+                    aria-label="Move earlier" title="Move earlier" style={{ padding: "2px 6px", fontSize: 11 }}
+                  >
+                    ‹
+                  </button>
+                  {i === 0 && <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>first</span>}
+                  <button
+                    type="button" onClick={() => moveEditImage(i, 1)} disabled={i === editImages.length - 1}
+                    aria-label="Move later" title="Move later" style={{ padding: "2px 6px", fontSize: 11 }}
+                  >
+                    ›
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            <label
+              style={{
+                width: 92, height: 92, display: "flex", alignItems: "center", justifyContent: "center",
+                border: "1px dashed var(--border-strong)", borderRadius: 6, cursor: uploadingImage ? "default" : "pointer",
+                fontSize: 12, color: "var(--text-secondary)", textAlign: "center",
+              }}
+            >
+              {uploadingImage ? "Uploading…" : "+ Add image"}
+              <input type="file" accept="image/*" onChange={handleAddImageFile} disabled={uploadingImage} style={{ display: "none" }} />
+            </label>
           </div>
-        ))}
-        <p style={{ fontFamily: "var(--font-sans)", fontSize: 15, color: "var(--text-secondary)" }}>
-          {conclusion}
-        </p>
+          <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: 0 }}>
+            Drag to reorder (or use ‹ ›). The first image is used where a platform only takes one. ✕ removes.
+          </p>
+        </div>
+      ) : (
+        featured_image?.url && (
+          <img
+            src={featured_image.url} alt={title}
+            style={{ width: "100%", borderRadius: "var(--radius)", marginBottom: "1.5rem" }}
+          />
+        )
+      )}
+
+      <div style={{ fontFamily: "var(--font-display)", fontSize: 17, lineHeight: 1.7 }}>
+        {editing ? (
+          <>
+            {editSections.map((s, i) => (
+              <div key={i} style={{ marginBottom: 16 }}>
+                <label style={fieldLabelStyle} htmlFor={`edit-section-heading-${i}`}>Section {i + 1} heading</label>
+                <input
+                  id={`edit-section-heading-${i}`} style={{ ...inputStyle, fontWeight: 500, marginBottom: 6 }}
+                  value={s.heading} onChange={(e) => updateEditSection(i, "heading", e.target.value)}
+                />
+                <textarea
+                  rows={4} style={{ ...inputStyle, fontFamily: "var(--font-sans)", fontSize: 15 }}
+                  value={s.text} onChange={(e) => updateEditSection(i, "text", e.target.value)}
+                />
+              </div>
+            ))}
+            <label style={fieldLabelStyle} htmlFor="edit-conclusion">Conclusion</label>
+            <textarea
+              id="edit-conclusion" rows={3} style={{ ...inputStyle, fontFamily: "var(--font-sans)", fontSize: 15, marginBottom: 16 }}
+              value={editConclusion} onChange={(e) => setEditConclusion(e.target.value)}
+            />
+
+            <label style={fieldLabelStyle} htmlFor="edit-intro">Finto post text</label>
+            <textarea
+              id="edit-intro" rows={3} style={{ ...inputStyle, fontFamily: "var(--font-sans)", fontSize: 15, marginBottom: 12 }}
+              value={editIntro} onChange={(e) => setEditIntro(e.target.value)}
+            />
+            {[
+              ["linkedin_post", "LinkedIn post"],
+              ["facebook_post", "Facebook post"],
+              ["instagram_caption", "Instagram caption"],
+              ["threads_post", "Threads post"],
+            ].map(([key, label]) => (
+              <div key={key} style={{ marginBottom: 12 }}>
+                <label style={fieldLabelStyle} htmlFor={`edit-${key}`}>{label}</label>
+                <textarea
+                  id={`edit-${key}`} rows={3} style={{ ...inputStyle, fontFamily: "var(--font-sans)", fontSize: 15 }}
+                  value={editPostText[key] || ""}
+                  onChange={(e) => setEditPostText((prev) => ({ ...prev, [key]: e.target.value }))}
+                />
+              </div>
+            ))}
+
+            {editError && (
+              <p style={{
+                fontSize: 13, color: "var(--danger)", background: "var(--danger-bg)",
+                borderRadius: "var(--radius)", padding: "8px 12px", margin: "0 0 1rem",
+              }}>{editError}</p>
+            )}
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={cancelEditing} disabled={loading}>Cancel</button>
+              <button className="primary" onClick={handleSaveEdits} disabled={loading || uploadingImage}>
+                {loading ? "Saving…" : "Save changes"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {sections.map((s, i) => (
+              <div key={i} style={{ marginBottom: 20 }}>
+                <p style={{ fontWeight: 500, margin: "0 0 6px" }}>{s.heading}</p>
+                <p style={{ color: "var(--text-secondary)", margin: 0, fontFamily: "var(--font-sans)", fontSize: 15 }}>
+                  {s.text}
+                </p>
+              </div>
+            ))}
+            <p style={{ fontFamily: "var(--font-sans)", fontSize: 15, color: "var(--text-secondary)" }}>
+              {conclusion}
+            </p>
+          </>
+        )}
       </div>
 
+      {!editing && (
       <div style={{ borderTop: "1px solid var(--border)", marginTop: "1.5rem", paddingTop: "1.5rem" }}>
         <p className="eyebrow" style={{ marginBottom: 10 }}>Publish to</p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
@@ -286,8 +562,9 @@ export default function DraftReview({ draft, connections, onApprove, onSchedule,
           </>
         )}
       </div>
+      )}
 
-      {lightboxIndex !== null && publishImages[lightboxIndex] && (
+      {!editing && lightboxIndex !== null && publishImages[lightboxIndex] && (
         <div
           onClick={() => setLightboxIndex(null)}
           style={{

@@ -677,6 +677,34 @@ class RescheduleRequest(BaseModel):
     scheduled_at: datetime
 
 
+class DraftSectionEdit(BaseModel):
+    heading: str = ""
+    text: str = ""
+
+
+class DraftImageEdit(BaseModel):
+    url: str
+    source: str = "user upload"
+
+
+class DraftUpdateRequest(BaseModel):
+    """All fields optional - only what's included gets touched, everything
+    else already in Draft.content is left as-is. Backs the review screen's
+    edit mode (rewrite copy, add/remove/reorder images) before approving.
+    """
+    title: str | None = None
+    meta_description: str | None = None
+    intro: str | None = None
+    conclusion: str | None = None
+    sections: list[DraftSectionEdit] | None = None
+    images: list[DraftImageEdit] | None = None
+    linkedin_post: str | None = None
+    facebook_post: str | None = None
+    instagram_caption: str | None = None
+    threads_post: str | None = None
+    twitter_post: str | None = None
+
+
 class NotificationPreferencesRequest(BaseModel):
     before_publish: bool
     needs_approval: bool
@@ -2783,6 +2811,97 @@ async def get_draft(draft_id: uuid.UUID, db: AsyncSession = Depends(get_db), use
     if draft is None:
         raise HTTPException(status_code=404, detail="Unknown draft_id")
     return {"draft_id": str(draft.id), "draft": draft.content, "status": draft.status.value}
+
+
+@app.post("/drafts/{draft_id}/images")
+async def upload_draft_image(
+    draft_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """Hosts one user-supplied image for the review screen's "add your own
+    image" button. Doesn't touch the draft row itself - the frontend keeps
+    its own ordered image list in local state (existing AI images plus
+    whatever this returns) and only persists the final set via
+    PATCH /drafts/{id} when the user saves, so an upload before saving
+    just gets dropped on reload instead of leaving a half-applied edit.
+    """
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.workspace_id == membership.workspace_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Unknown draft_id")
+    if draft.status != DraftStatus.PENDING_REVIEW:
+        raise HTTPException(status_code=400, detail=f"Draft is {draft.status.value}, not pending_review - can't add images")
+
+    image_bytes = await file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+    hosted_url = await run_in_threadpool(upload_to_imgbb, image_bytes, IMGBB_API_KEY)
+    if not hosted_url:
+        raise HTTPException(status_code=502, detail="Image upload failed")
+    return {"url": hosted_url, "source": "user upload"}
+
+
+@app.patch("/drafts/{draft_id}")
+async def update_draft(
+    draft_id: uuid.UUID,
+    req: DraftUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """Backs the review screen's edit mode: rewrite the AI-generated copy
+    and/or change the image set (add own uploads, drop ones the user
+    doesn't like, reorder - `images` arrives in its final desired order).
+    Only valid pre-publish, same as save-as-draft/schedule.
+
+    When `images` is included it becomes the single source of truth for
+    what gets published, mirroring Agent.build_carousel_images: we set
+    carousel_images to exactly that list, resync featured_image to its
+    first entry, and strip any leftover per-section images - otherwise an
+    empty `images` list (user removed every photo) would fail the
+    `if payload.get("carousel_images")` truthiness check there and fall
+    back to those leftover images, silently undoing the removal.
+    """
+    membership = await get_or_create_membership(db, user_id)
+    result = await db.execute(select(Draft).where(Draft.id == draft_id, Draft.workspace_id == membership.workspace_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Unknown draft_id")
+    if draft.status != DraftStatus.PENDING_REVIEW:
+        raise HTTPException(status_code=400, detail=f"Draft is {draft.status.value}, not pending_review - can't edit")
+
+    content = dict(draft.content or {})
+
+    for field in ("title", "meta_description", "intro", "conclusion",
+                  "linkedin_post", "facebook_post", "instagram_caption",
+                  "threads_post", "twitter_post"):
+        value = getattr(req, field)
+        if value is not None:
+            content[field] = value
+
+    if req.sections is not None:
+        existing = content.get("sections") or []
+        new_sections = []
+        for i, s in enumerate(req.sections):
+            merged = dict(existing[i]) if i < len(existing) else {}
+            merged["heading"] = s.heading
+            merged["text"] = s.text
+            new_sections.append(merged)
+        content["sections"] = new_sections
+
+    if req.images is not None:
+        images = [img.dict() for img in req.images]
+        content["carousel_images"] = images
+        content["featured_image"] = images[0] if images else {"url": "", "source": ""}
+        for s in content.get("sections", []):
+            s.pop("image", None)
+
+    draft.content = content
+    await db.commit()
+    await db.refresh(draft)
+    return {"draft_id": str(draft.id), "draft": draft.content}
 
 
 @app.post("/drafts/{draft_id}/save-as-draft")

@@ -25,7 +25,7 @@ import HelpCenter from "./components/HelpCenter";
 import Members from "./components/Members";
 import ChatWidget from "./components/ChatWidget";
 import { MODE_TABS } from "./components/Form";
-import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, forgotPassword as apiForgotPassword, resetPassword as apiResetPassword, generateDraft, createManualDraft, submitStory, reviewDraft, scheduleDraft, saveDraftAsDraft, getConnections, getDraft, getProfile, getWorkspace, getNotifications } from "./api";
+import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, forgotPassword as apiForgotPassword, resetPassword as apiResetPassword, generateDraft, createManualDraft, submitStory, reviewDraft, scheduleDraft, saveDraftAsDraft, updateDraft, uploadDraftImage, getConnections, getDraft, getProfile, getWorkspace, getNotifications } from "./api";
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem("auth_token"));
@@ -457,6 +457,36 @@ export default function App() {
 
 
 
+  // Backs the review screen's edit mode - saves rewritten copy and/or the
+  // final image set (adds/removals/reordering all collapse into just
+  // sending the new ordered list) and swaps the returned content back in.
+  async function handleSaveEdits(edits) {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await updateDraft({ token, draftId, edits });
+      setDraft(res.draft);
+    } catch (e) {
+      if (e.status === 401) return handleLogout();
+      setError(e.message || "Something went wrong saving your edits.");
+      throw e; // let DraftReview know the save failed so it keeps edit mode open
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Hosts one user-picked image for edit mode's "add your own" button.
+  // Doesn't touch draft state itself - DraftReview holds the working
+  // image list locally and it's only persisted via handleSaveEdits.
+  async function handleUploadDraftImage(file) {
+    try {
+      return await uploadDraftImage({ token, draftId, file });
+    } catch (e) {
+      if (e.status === 401) handleLogout();
+      throw e;
+    }
+  }
+
   async function handleSaveAsDraft() {
     // The draft row already exists (persisted at pending_review the
     // moment it was generated) — this just flips saved_as_draft so it's
@@ -686,6 +716,8 @@ export default function App() {
               onSchedule={handleSchedule}
               onReject={handleReject}
               onSaveAsDraft={handleSaveAsDraft}
+              onSaveEdits={handleSaveEdits}
+              onUploadImage={handleUploadDraftImage}
               loading={loading}
               error={error}
             />

@@ -635,6 +635,37 @@ export async function getDraft({ token, draftId }) {
 }
 
 /*
+  Host one user-picked image for the review screen's edit mode. Doesn't
+  touch the draft - just returns { url, source } to add to the local
+  image list; the edit is only persisted once updateDraft is called.
+ */
+export async function uploadDraftImage({ token, draftId, file }) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/drafts/${draftId}/images`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: form,
+  });
+  return handle(res);
+}
+
+/*
+  Save edits made in review mode: rewritten copy and/or the final ordered
+  image list (add-your-own, removals, and reordering all collapse into
+  just sending the list in its new order/composition).
+  Expected backend response: { draft_id, draft: {...updated draft...} }
+ */
+export async function updateDraft({ token, draftId, edits }) {
+  const res = await fetch(`${API_BASE}/drafts/${draftId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(edits),
+  });
+  return handle(res);
+}
+
+/*
   Queue a draft to auto-publish at a future date/time.
   scheduledAt should be an ISO 8601 string. Expected backend response:
   { draft_id, status, scheduled_at, scheduled_platforms }
