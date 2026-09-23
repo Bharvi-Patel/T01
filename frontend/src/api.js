@@ -276,6 +276,26 @@ export async function createManualDraft({ token, category, subtopic, title, body
   return handle(res);
 }
 
+/*
+  Submit a flattened Story (image, or video if music was attached) plus
+  any @mention tag from the Story composer. No category/subtopic/body -
+  see create_story_draft in main.py.
+  Expected backend response: { draft_id, draft: {...draft json...} }
+ */
+export async function submitStory({ token, image, video, userTags }) {
+  const form = new FormData();
+  if (image) form.append("image", image);
+  if (video) form.append("video", video);
+  form.append("user_tags", JSON.stringify(userTags || []));
+
+  const res = await fetch(`${API_BASE}/drafts/story`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: form,
+  });
+  return handle(res);
+}
+
 // Media library — backs the Publish page's "Media" tab. Photos/videos are
 // stored permanently on the backend under the user's account; text assets
 // are stored inline. Everything here persists across sessions.

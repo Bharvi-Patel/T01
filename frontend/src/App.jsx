@@ -25,7 +25,7 @@ import HelpCenter from "./components/HelpCenter";
 import Members from "./components/Members";
 import ChatWidget from "./components/ChatWidget";
 import { MODE_TABS } from "./components/Form";
-import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, forgotPassword as apiForgotPassword, resetPassword as apiResetPassword, generateDraft, createManualDraft, reviewDraft, scheduleDraft, saveDraftAsDraft, getConnections, getDraft, getProfile, getWorkspace, getNotifications } from "./api";
+import { login as apiLogin, logout as apiLogout, signup as apiSignup, verifyEmail as apiVerifyEmail, resendVerification as apiResendVerification, forgotPassword as apiForgotPassword, resetPassword as apiResetPassword, generateDraft, createManualDraft, submitStory, reviewDraft, scheduleDraft, saveDraftAsDraft, getConnections, getDraft, getProfile, getWorkspace, getNotifications } from "./api";
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem("auth_token"));
@@ -323,6 +323,7 @@ export default function App() {
   }
 
   async function handleGenerate(formValues) {
+    if (formValues.mode === "story") return handleStorySubmit(formValues);
     setLoading(true);
     setError("");
     try {
@@ -346,6 +347,66 @@ export default function App() {
     } catch (e) {
       if (e.status === 401) return handleLogout();
       setError(e.message || "Something went wrong creating the draft.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Stories are a different concept from a post - there's no caption to
+  // review, just media - so they never touch the DraftReview step. Each of
+  // the composer's three buttons (see Form.jsx submitStoryAction) creates
+  // the story draft and immediately does the corresponding action against
+  // it: publish now, tuck it away in Drafts, or put it on the calendar.
+  async function handleStorySubmit(formValues) {
+    setLoading(true);
+    setError("");
+    try {
+      const created = await submitStory({ token, ...formValues });
+      const draftId = created.draft_id;
+
+      if (formValues.action === "draft") {
+        await saveDraftAsDraft({ token, draftId });
+        setDraftId(null);
+        setDraft(null);
+        setResult(null);
+        setError("");
+        setPublishTab("drafts");
+        setStep("publish");
+        return;
+      }
+
+      if (formValues.action === "schedule") {
+        await scheduleDraft({
+          token, draftId, scheduledAt: formValues.scheduledAt, platforms: formValues.platforms, live: true,
+        });
+        setStep("calendar");
+        return;
+      }
+
+      // action === "post" - publish immediately. Stories skip the results
+      // card entirely (see Done.jsx) - "Generate another post" and a
+      // per-platform breakdown don't fit a Story, so a clean publish just
+      // drops the user back on the Dashboard with nothing to dismiss.
+      const res = await reviewDraft({ token, draftId, decision: "approve", live: true, platforms: formValues.platforms });
+      const anySuccess = Object.values(res.results || {}).some((r) => r?.success);
+      setDraftId(null);
+      setDraft(null);
+      setResult(null);
+      if (anySuccess) {
+        setError("");
+        setStep("dashboard");
+      } else {
+        // Every platform failed - there's no results screen to show this
+        // on for a Story, so surface it back on the composer instead.
+        const detail = Object.entries(res.results || {})
+          .map(([platform, r]) => `${platform}: ${r?.error || "failed"}`)
+          .join("; ");
+        setError(detail || "That story failed to post.");
+        setStep("generate");
+      }
+    } catch (e) {
+      if (e.status === 401) return handleLogout();
+      setError(e.message || "Something went wrong with that story.");
     } finally {
       setLoading(false);
     }
@@ -612,6 +673,7 @@ export default function App() {
                 onConsumeInitialAsset={() => setComposeHandoffAsset(null)}
                 mode={composeMode}
                 onModeChange={setComposeMode}
+                connections={connections}
               />
 
           )}

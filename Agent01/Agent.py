@@ -652,6 +652,50 @@ def publish_instagram_story(page_access_token: str, ig_user_id: str, image_url: 
         return {"success": False, "error": str(e)}
 
 
+def publish_facebook_story(page_access_token: str, page_id: str, image_url: str | None = None, video_url: str | None = None) -> dict:
+    """Publishes a single image/video to the connected Facebook Page's own
+    Story. Unlike a feed post, Facebook Stories are a two-call flow: upload
+    the media unpublished via /photos or /videos (published=false, so it
+    never hits the Page's feed), then attach that media id to the Story via
+    /photo_stories or /video_stories. No mentions parameter exists here -
+    the Story composer's @mention tag only applies to Instagram.
+    """
+    try:
+        if video_url:
+            upload_resp = requests.post(
+                f"https://graph.facebook.com/v21.0/{page_id}/videos",
+                data={"file_url": video_url, "published": "false", "access_token": page_access_token},
+                timeout=60,
+            )
+            _raise_with_api_detail(upload_resp)
+            video_id = upload_resp.json()["id"]
+            story_resp = requests.post(
+                f"https://graph.facebook.com/v21.0/{page_id}/video_stories",
+                data={"video_id": video_id, "access_token": page_access_token},
+                timeout=30,
+            )
+        elif image_url:
+            upload_resp = requests.post(
+                f"https://graph.facebook.com/v21.0/{page_id}/photos",
+                data={"url": image_url, "published": "false", "access_token": page_access_token},
+                timeout=30,
+            )
+            _raise_with_api_detail(upload_resp)
+            photo_id = upload_resp.json()["id"]
+            story_resp = requests.post(
+                f"https://graph.facebook.com/v21.0/{page_id}/photo_stories",
+                data={"photo_id": photo_id, "access_token": page_access_token},
+                timeout=15,
+            )
+        else:
+            return {"success": False, "error": "Story post requires an image or video."}
+
+        _raise_with_api_detail(story_resp)
+        return {"success": True, "post_id": story_resp.json().get("post_id") or story_resp.json().get("id")}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def download_video_bytes(url: str) -> bytes:
     """Download a video's raw bytes, unmodified. Unlike download_image()
     there's no re-encode step - LinkedIn is the only adapter that needs the

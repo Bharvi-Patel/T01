@@ -1523,3 +1523,11 @@ input[type="number"] { -moz-appearance: textfield; }
 }
 .composer-submit:hover { opacity: 0.88; }
 .composer-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.composer-story-actions .composer-submit { width: auto; flex: 1 1 auto; min-width: 140px; }
+.composer-submit-secondary {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--border);
+}
+.composer-submit-secondary:hover { opacity: 1; background: var(--bg-secondary, rgba(0,0,0,0.03)); }

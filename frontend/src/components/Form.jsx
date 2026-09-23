@@ -3,6 +3,9 @@ import { suggestHashtags } from "../api";
 import { EMOJI_CATEGORIES, EMOJI_RECENTS_KEY, DEFAULT_RECENT_EMOJIS } from "../emojiCategories";
 import GeneratingProgress from "./GeneratingProgress";
 import StoryComposer from "./StoryComposer";
+import { PLATFORMS, PlatformLogo } from "./platforms";
+
+const STORY_PLATFORMS = PLATFORMS.filter((p) => p.key === "facebook" || p.key === "instagram");
 
 const CATEGORIES = [
   "Technology",
@@ -174,7 +177,7 @@ function clearComposerAutosave() {
   }
 }
 
-export default function Form({ onSubmit, loading, error, token, initialManualAsset, onConsumeInitialAsset, mode: modeProp, onModeChange }) {
+export default function Form({ onSubmit, loading, error, token, initialManualAsset, onConsumeInitialAsset, mode: modeProp, onModeChange, connections }) {
   const [modeState, setModeState] = useState(() => readComposerAutosave().mode || "ai"); // "ai" | "manual" — used when mode isn't controlled from outside
   const mode = modeProp ?? modeState;
   const setMode = onModeChange ?? setModeState;
@@ -204,6 +207,29 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
   // pulled out via the ref's flatten()/getUserTags() on submit.
   const [storyImage, setStoryImage] = useState(null); // File | null
   const storyComposerRef = useRef(null);
+  const [storyScheduleOpen, setStoryScheduleOpen] = useState(false);
+  const [storyScheduleDate, setStoryScheduleDate] = useState("");
+  const [storyScheduleTime, setStoryScheduleTime] = useState("09:00");
+  const [storyPlatforms, setStoryPlatforms] = useState(() => new Set());
+
+  // Default the picker to whichever of Facebook/Instagram are connected,
+  // once connections load (or change) - don't fight a selection the user
+  // already made by hand.
+  useEffect(() => {
+    setStoryPlatforms((prev) => {
+      if (prev.size > 0) return prev;
+      const connectedKeys = STORY_PLATFORMS.filter((p) => connections?.[p.key]).map((p) => p.key);
+      return new Set(connectedKeys);
+    });
+  }, [connections]);
+
+  function toggleStoryPlatform(key) {
+    setStoryPlatforms((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
 
   const [customizePerNetwork, setCustomizePerNetwork] = useState(() => readComposerAutosave().customizePerNetwork || false);
   const [networkText, setNetworkText] = useState(() => readComposerAutosave().networkText || {}); // { [key]: string } — falls back to `body` when blank
@@ -417,21 +443,9 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
       setHasRestoredDraft(false);
       onSubmit({ mode: "ai", category, subtopic: subtopic.trim(), wordCount });
     } else if (mode === "story") {
-      if (!storyImage) return;
-      clearComposerAutosave();
-      setHasRestoredDraft(false);
-      // Flatten (and, if music was picked, server-side video render) happens
-      // here, right before submit, rather than live on every drag/pick -
-      // it's cheap enough per-call but no need to redo it constantly.
-      const exported = await storyComposerRef.current?.exportForPublish();
-      const userTags = storyComposerRef.current?.getUserTags() || [];
-      if (!exported) return;
-      onSubmit({
-        mode: "story",
-        image: exported.kind === "image" ? exported.file : undefined,
-        video: exported.kind === "video" ? exported.file : undefined,
-        userTags,
-      });
+      // Stories submit via their own three buttons (Post/Save/Schedule)
+      // below, not this generic submit - see submitStoryAction.
+      return;
     } else {
       const trimmedBody = body.trim();
       if (!trimmedBody) return;
@@ -457,6 +471,39 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
           : undefined,
       });
     }
+  }
+
+  // Stories skip the review page entirely - there's no caption to review,
+  // just media - so each of the three composer buttons below calls this
+  // directly with the action it wants, and App.jsx's handleGenerate does
+  // the whole create-and-publish (or create-and-schedule) round trip.
+  async function submitStoryAction(action) {
+    if (!storyImage) return;
+    if (storyPlatforms.size === 0) return;
+    if (action === "schedule" && (!storyScheduleDate || !storyScheduleTime)) return;
+    let scheduledAt = null;
+    if (action === "schedule") {
+      const local = new Date(`${storyScheduleDate}T${storyScheduleTime}`);
+      if (Number.isNaN(local.getTime())) return;
+      scheduledAt = local.toISOString();
+    }
+    clearComposerAutosave();
+    setHasRestoredDraft(false);
+    // Flatten (and, if music was picked, server-side video render) happens
+    // here, right before submit, rather than live on every drag/pick -
+    // it's cheap enough per-call but no need to redo it constantly.
+    const exported = await storyComposerRef.current?.exportForPublish();
+    const userTags = storyComposerRef.current?.getUserTags() || [];
+    if (!exported) return;
+    onSubmit({
+      mode: "story",
+      action, // "post" | "draft" | "schedule"
+      scheduledAt,
+      platforms: Array.from(storyPlatforms),
+      image: exported.kind === "image" ? exported.file : undefined,
+      video: exported.kind === "video" ? exported.file : undefined,
+      userTags,
+    });
   }
 
   return (
@@ -812,7 +859,99 @@ export default function Form({ onSubmit, loading, error, token, initialManualAss
         <GeneratingProgress loading={loading} onComplete={() => setShowGenerating(false)} />
       )}
 
-      {!showGenerating && (
+      {!showGenerating && mode === "story" && (
+        <div className="composer-story-actions">
+          <p className="eyebrow" style={{ marginBottom: 10 }}>Publish to</p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+            {STORY_PLATFORMS.map((p) => {
+              const connected = Boolean(connections?.[p.key]);
+              const on = storyPlatforms.has(p.key);
+              return (
+                <button
+                  key={p.key}
+                  type="button"
+                  disabled={!connected}
+                  onClick={() => toggleStoryPlatform(p.key)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8, height: 36,
+                    borderColor: "var(--border-strong)",
+                    background: on ? "var(--paper-raised)" : "transparent",
+                    opacity: connected ? (on ? 1 : 0.55) : 0.35,
+                    cursor: connected ? "pointer" : "not-allowed",
+                  }}
+                  title={connected ? undefined : `Connect ${p.label} to post Stories there`}
+                >
+                  <PlatformLogo platform={p} size={14} />
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {storyScheduleOpen && (
+            <div className="composer-fields" style={{ marginBottom: "0.75rem" }}>
+              <div className="composer-field">
+                <label htmlFor="story-schedule-date">Date</label>
+                <input
+                  id="story-schedule-date"
+                  type="date"
+                  min={new Date().toISOString().slice(0, 10)}
+                  value={storyScheduleDate}
+                  onChange={(e) => setStoryScheduleDate(e.target.value)}
+                />
+              </div>
+              <div className="composer-field">
+                <label htmlFor="story-schedule-time">Time</label>
+                <input
+                  id="story-schedule-time"
+                  type="time"
+                  value={storyScheduleTime}
+                  onChange={(e) => setStoryScheduleTime(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="composer-submit"
+              disabled={loading || !storyImage || storyPlatforms.size === 0}
+              onClick={() => submitStoryAction("post")}
+            >
+              {loading ? "Posting…" : "Post a story"}
+            </button>
+            <button
+              type="button"
+              className="composer-submit composer-submit-secondary"
+              disabled={loading || !storyImage || storyPlatforms.size === 0}
+              onClick={() => submitStoryAction("draft")}
+            >
+              {loading ? "Saving…" : "Save draft"}
+            </button>
+            {storyScheduleOpen ? (
+              <button
+                type="button"
+                className="composer-submit composer-submit-secondary"
+                disabled={loading || !storyImage || !storyScheduleDate || storyPlatforms.size === 0}
+                onClick={() => submitStoryAction("schedule")}
+              >
+                {loading ? "Scheduling…" : "Confirm schedule"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="composer-submit composer-submit-secondary"
+                disabled={loading || !storyImage || storyPlatforms.size === 0}
+                onClick={() => setStoryScheduleOpen(true)}
+              >
+                Schedule
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!showGenerating && mode !== "story" && (
         <button type="submit" className="composer-submit" disabled={loading}>
           {mode === "ai" ? "Generate" : loading ? "Creating draft…" : "Create draft"}
         </button>

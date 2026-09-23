@@ -102,7 +102,7 @@ def serialize_media_asset(asset: "MediaAsset") -> dict:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "Agent01"))
 
-from Agent import agent01, revise_draft, approve_and_publish, clean_json_string, VALID_CATEGORIES, upload_to_imgbb, IMGBB_API_KEY, suggest_hashtags, chat_reply, generate_conversation_title, prepare_story_repost_image, publish_instagram_story, render_story_video
+from Agent import agent01, revise_draft, approve_and_publish, clean_json_string, VALID_CATEGORIES, upload_to_imgbb, IMGBB_API_KEY, suggest_hashtags, chat_reply, generate_conversation_title, prepare_story_repost_image, publish_instagram_story, publish_facebook_story, render_story_video
 
 from db import (
     AccessLevel,
@@ -1967,6 +1967,91 @@ async def create_manual_draft(
     return {"draft_id": str(draft.id), "draft": draft.content}
 
 
+STORY_CATEGORY = "Business"  # Stories have no category picker in the UI - filed under the
+                              # same catch-all bucket as manual posts (see MANUAL_CATEGORY
+                              # in the frontend's Form.jsx) purely so the NOT NULL category
+                              # column on drafts is satisfied.
+
+
+@app.post("/drafts/story")
+async def create_story_draft(
+    image: UploadFile | None = File(default=None),
+    video: UploadFile | None = File(default=None),
+    user_tags: str | None = Form(default=None),  # JSON string: [{username, x, y}]
+    db: AsyncSession = Depends(get_db),
+    user_id: uuid.UUID = Depends(require_auth),
+):
+    """Creates a draft from the Story composer - flattened image or, if
+    music was attached, a rendered video (see /story/render-video). Unlike
+    /drafts/manual there's no body text or category picker: a Story is just
+    media plus an optional @mention tag. Enters the same PENDING_REVIEW
+    pipeline as every other draft type so it shows up in review/schedule;
+    the review UI is responsible for recognizing content.is_story and, at
+    approve time, routing to publish_instagram_story instead of a normal
+    feed post.
+    """
+    if image is None and video is None:
+        raise HTTPException(status_code=400, detail="image or video is required")
+
+    parsed_tags = []
+    if user_tags:
+        try:
+            parsed_tags = json.loads(user_tags)
+            if not isinstance(parsed_tags, list):
+                raise ValueError
+        except (json.JSONDecodeError, ValueError):
+            raise HTTPException(status_code=400, detail="user_tags must be a JSON array")
+
+    membership = await get_or_create_membership(db, user_id)
+
+    featured_image = None
+    if image is not None and image.filename:
+        image_bytes = await image.read()
+        if image_bytes:
+            hosted_url = await run_in_threadpool(upload_to_imgbb, image_bytes, IMGBB_API_KEY)
+            if hosted_url:
+                featured_image = {"url": hosted_url, "source": "user upload"}
+
+    video_field = None
+    if video is not None and video.filename:
+        video_bytes = await video.read()
+        if video_bytes:
+            ext = Path(video.filename).suffix or ".mp4"
+            stored_name = f"{uuid.uuid4()}{ext}"
+            (MEDIA_DIR / stored_name).write_bytes(video_bytes)
+            video_field = {
+                "url": f"{BACKEND_BASE_URL}/media-files/{stored_name}",
+                "filename": video.filename,
+            }
+
+    if featured_image is None and video_field is None:
+        raise HTTPException(status_code=400, detail="image or video is required")
+
+    draft_content = {
+        "is_story": True,
+        "title": "Story",
+        "featured_image": featured_image,
+        "video": video_field,
+        "user_tags": parsed_tags,
+    }
+
+    draft = Draft(
+        workspace_id=membership.workspace_id,
+        user_id=user_id,
+        category=STORY_CATEGORY,
+        subtopic=f"Story - {datetime.now(timezone.utc).strftime('%b %d, %Y %H:%M')}",
+        word_count=0,
+        content=draft_content,
+        messages=[],
+        status=DraftStatus.PENDING_REVIEW,
+    )
+    db.add(draft)
+    await db.commit()
+    await db.refresh(draft)
+
+    return {"draft_id": str(draft.id), "draft": draft.content}
+
+
 # Media library — backs the Publish page's "Media" tab. Photos/videos are
 # saved permanently to disk under MEDIA_DIR/<user_id>/ (see user_media_dir
 # above); text assets are stored inline. Unlike the AI draft pipeline's
@@ -2985,13 +3070,31 @@ async def _publish_to_platforms(db: AsyncSession, draft: Draft, platforms: list[
                 user_credentials[field] = decrypt_secret(user_credentials[field])
 
         try:
-            publish_result = await run_in_threadpool(
-                approve_and_publish,
-                draft_json_str=json.dumps(draft.content),
-                platform=platform.value,
-                user_credentials=user_credentials,
-                live=live,
-            )
+            if draft.content.get("is_story") and platform in (Platform.INSTAGRAM, Platform.FACEBOOK):
+                # Stories bypass the normal feed-post pipeline entirely -
+                # there's no caption/hashtags to assemble, just an
+                # image_url or video_url straight onto the Stories tray.
+                page_access_token = user_credentials.get("page_access_token")
+                image_url = (draft.content.get("featured_image") or {}).get("url") or None
+                video_url = (draft.content.get("video") or {}).get("url") or None
+                if platform == Platform.INSTAGRAM:
+                    ig_user_id = user_credentials.get("ig_page_id") or user_credentials.get("ig_user_id")
+                    publish_result = await run_in_threadpool(
+                        publish_instagram_story, page_access_token, ig_user_id, image_url, video_url,
+                    )
+                else:
+                    page_id = user_credentials.get("page_id")
+                    publish_result = await run_in_threadpool(
+                        publish_facebook_story, page_access_token, page_id, image_url, video_url,
+                    )
+            else:
+                publish_result = await run_in_threadpool(
+                    approve_and_publish,
+                    draft_json_str=json.dumps(draft.content),
+                    platform=platform.value,
+                    user_credentials=user_credentials,
+                    live=live,
+                )
             success = True
             detail = json.dumps(publish_result) if not isinstance(publish_result, str) else publish_result
         except Exception as e:
