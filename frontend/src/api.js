@@ -3,7 +3,20 @@ const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 async function handle(res) {
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    const message = body?.detail || `Request failed with status ${res.status}`;
+    // FastAPI's `detail` is a plain string for HTTPException(detail="...")
+    // but an array of {loc, msg, type} objects for its own automatic
+    // request-validation 422s (a required field missing/malformed before
+    // the route body even runs). Handle both, or new Error() silently
+    // stringifies the array to "[object Object],[object Object],..." and
+    // the real message is lost.
+    let message;
+    if (Array.isArray(body?.detail)) {
+      message = body.detail
+        .map((e) => `${(e.loc || []).filter((p) => p !== "body").join(".")}: ${e.msg}`)
+        .join("; ");
+    } else {
+      message = body?.detail || `Request failed with status ${res.status}`;
+    }
     const err = new Error(message);
     err.status = res.status; // callers should check e.status === 401, not string-match the message
     throw err;
