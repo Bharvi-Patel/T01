@@ -1008,10 +1008,11 @@ export async function searchGifs({ token, query, limit }) {
   the audio (e.g. a 3-minute song down to a 15s clip starting at 1:00)
   instead of using the whole track. Expected backend response: { video_url }.
 */
-export async function renderStoryVideo({ token, image, audio, startSeconds = 0, clipSeconds = 15 }) {
+export async function renderStoryVideo({ token, image, audio, overlays, startSeconds = 0, clipSeconds = 15 }) {
   const form = new FormData();
   form.append("image", image, "story.jpg");
-  form.append("audio", audio, audio.name || "audio.mp3");
+  if (audio) form.append("audio", audio, audio.name || "audio.mp3");
+  if (overlays?.length) form.append("overlays", JSON.stringify(overlays));
   form.append("start_seconds", String(startSeconds));
   form.append("clip_seconds", String(clipSeconds));
   const res = await fetch(`${API_BASE}/story/render-video`, {

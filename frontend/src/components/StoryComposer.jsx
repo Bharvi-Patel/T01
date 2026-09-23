@@ -170,21 +170,6 @@ function loadImageFromFile(file) {
   });
 }
 
-// Same as loadImageFromFile but for a remote URL (GIF stickers come from
-// Giphy's CDN, not a local File). crossOrigin is required for a cross-
-// origin image to be drawable into a canvas that's later read back via
-// toBlob/toDataURL — without it, flatten() would throw a tainted-canvas
-// SecurityError the first time a story with a GIF sticker is exported.
-function loadImageFromUrl(url) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = url;
-  });
-}
-
 // Confirms a font is actually loaded before canvas draws with it — canvas
 // silently falls back to a default font if you draw with one that hasn't
 // finished loading yet, with no error. Failures (offline, blocked
@@ -327,7 +312,11 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange, 
     // Renders the base image + every layer (in stacking order) onto an
     // offscreen canvas and exports one flattened JPEG — this is what
     // actually gets uploaded, since neither platform's Story API accepts
-    // separate text/sticker layers.
+    // separate text/sticker layers. Animated GIF stickers are the one
+    // exception: canvas can only ever draw a GIF's current still frame, so
+    // they're skipped here and instead collected into the returned
+    // `overlays` list (geometry only, in OUT_W/OUT_H pixel space) for
+    // exportForPublish() to composite server-side as real motion.
     async flatten() {
       if (!image) return null;
       const img = await loadImageFromFile(image);
@@ -340,6 +329,8 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange, 
       const w = img.width * scale;
       const h = img.height * scale;
       ctx.drawImage(img, (OUT_W - w) / 2, (OUT_H - h) / 2, w, h);
+
+      const overlays = [];
 
       for (const layer of layers) {
         const px = layer.x * OUT_W;
@@ -444,29 +435,20 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange, 
           ctx.fillText(layer.emoji, 0, 0);
           ctx.restore();
         } else if (layer.type === "sticker" && layer.sourceKind === "gif") {
-          // TODO(video export): this draws only the GIF's first frame, so
-          // a Story with a GIF sticker currently exports as a JPEG with
-          // that sticker frozen — it does NOT yet animate in the posted
-          // Story, even though layer.mp4Url (Giphy's transcoded MP4) is
-          // already captured and ready to use. Making it actually animate
-          // needs flatten() to branch into a server-side render job
-          // (composite every other layer once, overlay the MP4 frame-by-
-          // frame via ffmpeg, encode to MP4) instead of this single-canvas
-          // path, plus a new publish flow on the backend for video Story
-          // media. That's a separate piece of work — see the next step.
-          const gifImg = await loadImageFromUrl(layer.gifUrl);
+          // Skipped on canvas on purpose — see this method's doc comment.
+          // Rotation isn't carried through to the server-side composite
+          // (see render_story_video's docstring), so a rotated GIF sticker
+          // is dropped in unrotated; a reasonable v1 cut since most GIF
+          // stickers are placed unrotated anyway.
           const dw = layer.width * OUT_W;
           const dh = dw * layer.aspect;
-          ctx.save();
-          ctx.translate(px, py);
-          ctx.rotate(rad);
-          ctx.drawImage(gifImg, -dw / 2, -dh / 2, dw, dh);
-          ctx.restore();
+          overlays.push({ url: layer.gifUrl, x: Math.round(px - dw / 2), y: Math.round(py - dh / 2), width: Math.round(dw) });
         }
       }
 
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
-      return blob ? new File([blob], "story.jpg", { type: "image/jpeg" }) : null;
+      const file = blob ? new File([blob], "story.jpg", { type: "image/jpeg" }) : null;
+      return { file, overlays };
     },
     // Matches the user_tags shape the Instagram Graph API expects on a
     // Story media container: [{ username, x, y }], x/y as 0-1 fractions.
@@ -480,19 +462,22 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange, 
       return audioFile;
     },
     // One-stop export for the submit flow: flattens the canvas as usual,
-    // and — if a track was picked with "+ Music" — bakes it into an MP4
-    // server-side (see renderStoryVideo in api.js / render_story_video in
-    // Agent.py) instead of returning a plain image. This detour exists
-    // because Instagram's Stories publish endpoint has no audio parameter
-    // of its own; the only way to get music into a posted Story is to
-    // embed it in an actual video file first. Returns { kind: "image",
-    // file } normally, or { kind: "video", file } when audio is attached.
+    // and — if a track was picked with "+ Music" and/or an animated GIF
+    // sticker is on the canvas — bakes the motion in server-side as an MP4
+    // (see renderStoryVideo in api.js / render_story_video in Agent.py)
+    // instead of returning a plain image. This detour exists because
+    // Instagram's Stories publish endpoint has no audio parameter of its
+    // own, and canvas can only ever capture a GIF's current still frame —
+    // the only way to get either into a posted Story is to embed them in
+    // an actual video file first. Returns { kind: "image", file } when
+    // the Story is fully static, or { kind: "video", file } otherwise.
     async exportForPublish() {
-      const image = await this.flatten();
-      if (!image) return null;
-      if (!audioFile) return { kind: "image", file: image };
+      const flattened = await this.flatten();
+      if (!flattened) return null;
+      const { file: image, overlays } = flattened;
+      if (!audioFile && overlays.length === 0) return { kind: "image", file: image };
       const { video_url } = await renderStoryVideo({
-        token, image, audio: audioFile,
+        token, image, audio: audioFile, overlays,
         startSeconds: audioStart, clipSeconds: audioClipLength,
       });
       const videoResp = await fetch(video_url);

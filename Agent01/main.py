@@ -2103,19 +2103,32 @@ STORY_AUDIO_MAX_BYTES = 20 * 1024 * 1024  # 20 MB - a Story's audio track only n
 @app.post("/story/render-video")
 async def render_story_video_endpoint(
     image: UploadFile = File(...),
-    audio: UploadFile = File(...),
+    audio: UploadFile | None = File(default=None),
+    overlays: str | None = Form(default=None),  # JSON: [{url, x, y, width}] - pixel space
+                                                  # (1080x1920), top-left anchored, one entry
+                                                  # per animated GIF sticker on the canvas
     start_seconds: float = Form(default=0.0),
     clip_seconds: float = Form(default=15.0),
     user_id: uuid.UUID = Depends(require_auth),
 ):
-    """Bakes a flattened Story image + a (optionally trimmed) slice of a
-    picked audio clip into an MP4, so it can be published as an Instagram
-    Story through publish_instagram_story's video_url path — see
-    render_story_video's docstring (in Agent.py) for why this detour is
-    necessary: Stories have no audio parameter of their own to attach a
-    track to directly. start_seconds/clip_seconds let the frontend send
-    just a slice of a longer track (e.g. 15 seconds out of a 3-minute
-    song) rather than always rendering the whole thing.
+    """Bakes a flattened Story backdrop, plus optional motion on top, into
+    an MP4, so it can be published as an Instagram Story through
+    publish_instagram_story's video_url path — see render_story_video's
+    docstring (in Agent.py) for why this detour is necessary and what each
+    piece does. start_seconds/clip_seconds let the frontend send just a
+    slice of a longer audio track (e.g. 15 seconds out of a 3-minute song)
+    rather than always rendering the whole thing.
+
+    Either audio or at least one overlay is required — this endpoint only
+    exists to add motion beyond what a flat canvas export already gives
+    you, so a request with neither would just be re-encoding a still image
+    for no reason.
+
+    Overlays name their GIF by Giphy URL rather than uploading the bytes —
+    the frontend already has that URL from the sticker picker, so fetching
+    it here keeps the request small and mirrors how featured_image URLs
+    are handled elsewhere. A single unreachable/broken overlay is skipped
+    rather than failing the whole export.
 
     Returns a hosted URL the same way manual-draft video does, saved under
     this user's own media directory. Not added to the media library (no
@@ -2123,18 +2136,53 @@ async def render_story_video_endpoint(
     not a reusable asset someone would browse later.
     """
     image_bytes = await image.read()
-    audio_bytes = await audio.read()
-    if not image_bytes or not audio_bytes:
-        raise HTTPException(status_code=400, detail="Both image and audio are required")
-    if len(audio_bytes) > STORY_AUDIO_MAX_BYTES:
-        raise HTTPException(status_code=400, detail="Audio file exceeds 20MB limit")
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="image is required")
+
+    audio_bytes = None
+    audio_ext = ".mp3"
+    if audio is not None and audio.filename:
+        audio_bytes = await audio.read()
+        if audio_bytes and len(audio_bytes) > STORY_AUDIO_MAX_BYTES:
+            raise HTTPException(status_code=400, detail="Audio file exceeds 20MB limit")
+        audio_ext = Path(audio.filename or "").suffix or ".mp3"
+
+    parsed_overlays = []
+    if overlays:
+        try:
+            parsed_overlays = json.loads(overlays)
+            if not isinstance(parsed_overlays, list):
+                raise ValueError
+        except (json.JSONDecodeError, ValueError):
+            raise HTTPException(status_code=400, detail="overlays must be a JSON array")
+
+    if not audio_bytes and not parsed_overlays:
+        raise HTTPException(status_code=400, detail="At least audio or an overlay is required")
+
+    overlay_payload = []
+    for ov in parsed_overlays:
+        url = ov.get("url")
+        if not url:
+            continue
+        try:
+            resp = await run_in_threadpool(requests.get, url, timeout=15)
+            resp.raise_for_status()
+        except Exception:
+            continue  # a single bad/unreachable sticker shouldn't fail the whole export
+        overlay_payload.append({
+            "bytes": resp.content,
+            "ext": ".gif",
+            "x": ov.get("x", 0),
+            "y": ov.get("y", 0),
+            "width": ov.get("width", 200),
+        })
 
     image_ext = Path(image.filename or "").suffix or ".jpg"
-    audio_ext = Path(audio.filename or "").suffix or ".mp3"
 
     try:
         video_bytes = await run_in_threadpool(
-            render_story_video, image_bytes, audio_bytes, image_ext, audio_ext, start_seconds, clip_seconds,
+            render_story_video, image_bytes, image_ext, audio_bytes, audio_ext,
+            start_seconds, clip_seconds, overlay_payload,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=422, detail=f"Couldn't render video: {e}")

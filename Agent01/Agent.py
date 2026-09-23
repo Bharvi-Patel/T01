@@ -541,33 +541,53 @@ def prepare_story_repost_image(image_url: str, attribution_text: str) -> bytes |
 
 
 MAX_STORY_VIDEO_SECONDS = 60  # hard cap so one long audio file can't produce a runaway render
+DEFAULT_STORY_SECONDS = 5  # used only when there's no audio to derive a length from (e.g. an
+                            # image + an animated GIF sticker with no music) - long enough to
+                            # catch a couple of GIF loops without an unnecessarily long Story
 
 
 def render_story_video(
     image_bytes: bytes,
-    audio_bytes: bytes,
     image_ext: str = ".jpg",
+    audio_bytes: bytes | None = None,
     audio_ext: str = ".mp3",
     start_seconds: float = 0,
     clip_seconds: float = 15,
+    overlays: list[dict] | None = None,
 ) -> bytes:
-    """Composites a flattened Story image with a (optionally trimmed) slice
-    of a user-picked audio clip into an MP4. This exists because Instagram's
-    Stories publish endpoint (media_type=STORIES, see publish_instagram_story
-    below) only ever forwards an image_url or a video_url - there is no
-    audio/music parameter for Stories at all, unlike Reels' newer
-    audio_configuration field. So the only way to get music into a posted
-    Story through the API is to bake the audio into an actual video file
-    before upload; this is that step.
+    """Composites a flattened Story backdrop (every static layer already
+    baked in by the frontend's canvas export) with optional motion on top,
+    encoded into one MP4:
 
-    start_seconds/clip_seconds pick which slice of the audio to use (e.g. a
-    3-minute song trimmed down to the 15 seconds starting at 1:00), rather
-    than always using the whole track from the beginning - applied via
-    ffmpeg's -ss/-t on the audio input itself, so decoding starts right at
-    that slice instead of the whole file. clip_seconds is clamped to
+    - a trimmed slice of a user-picked audio track, and/or
+    - one or more animated GIF stickers.
+
+    This exists because Instagram's Stories publish endpoint
+    (media_type=STORIES, see publish_instagram_story below) only ever
+    forwards an image_url or a video_url - there is no audio parameter for
+    Stories at all, and canvas can only ever draw a GIF's current still
+    frame (see StoryComposer.jsx's flatten()), so both motion sources have
+    to be baked into a real video file here to actually play once posted.
+
+    `overlays` is a list of {"bytes", "ext", "x", "y", "width"} dicts, one
+    per animated sticker - x/y are TOP-LEFT pixel coordinates (the frontend
+    converts from its own center-anchored 0-1 layer fractions before
+    sending) and width is the target pixel width to scale that overlay to,
+    all in the 1080x1920 Story canvas' coordinate space. Each overlay is
+    decoded via ffmpeg's native GIF demuxer, which - unlike the Giphy MP4
+    rendition - preserves transparency, so a sticker's background doesn't
+    paint over the backdrop as an opaque box. Overlay rotation isn't
+    supported yet (dropped silently) - a reasonable v1 cut since most GIF
+    stickers are dropped in unrotated. Each overlay is looped
+    (-stream_loop -1) so a short GIF keeps animating for the whole output
+    instead of freezing partway through.
+
+    Duration: with audio, the backdrop is looped to match the (possibly
+    trimmed) audio clip, same as before - clip_seconds is clamped to
     MAX_STORY_VIDEO_SECONDS so one long request can't produce a runaway
-    render; the still frame is looped for exactly that trimmed length via
-    -shortest. Output is encoded H.264/AAC at the standard 1080x1920 Story
+    render. With no audio but at least one overlay, there's no natural
+    source of length, so the backdrop is held for DEFAULT_STORY_SECONDS
+    instead. Output is encoded H.264/AAC at the standard 1080x1920 Story
     canvas - scale+crop is applied defensively so this still produces a
     valid Story video even if the source image isn't already exactly that
     size.
@@ -575,26 +595,62 @@ def render_story_video(
     Raises RuntimeError (with ffmpeg's own stderr tail) on failure, so
     callers can surface something more useful than "it broke".
     """
+    overlays = overlays or []
     start_seconds = max(0.0, start_seconds)
     clip_seconds = min(max(1.0, clip_seconds), MAX_STORY_VIDEO_SECONDS)
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         image_path = tmp_path / f"in{image_ext}"
-        audio_path = tmp_path / f"in{audio_ext}"
-        out_path = tmp_path / "out.mp4"
         image_path.write_bytes(image_bytes)
-        audio_path.write_bytes(audio_bytes)
+        out_path = tmp_path / "out.mp4"
 
-        cmd = [
-            "ffmpeg", "-y",
-            "-loop", "1", "-i", str(image_path),
-            "-ss", str(start_seconds), "-t", str(clip_seconds), "-i", str(audio_path),
-            "-c:v", "libx264", "-tune", "stillimage",
-            "-c:a", "aac", "-b:a", "192k",
-            "-pix_fmt", "yuv420p",
-            "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
-            "-shortest",
+        cmd = ["ffmpeg", "-y", "-loop", "1", "-i", str(image_path)]
+        next_input_index = 1
+
+        audio_input_index = None
+        if audio_bytes:
+            audio_path = tmp_path / f"in{audio_ext}"
+            audio_path.write_bytes(audio_bytes)
+            cmd += ["-ss", str(start_seconds), "-t", str(clip_seconds), "-i", str(audio_path)]
+            audio_input_index = next_input_index
+            next_input_index += 1
+
+        overlay_indices = []
+        for i, ov in enumerate(overlays):
+            ov_path = tmp_path / f"ov{i}{ov.get('ext', '.gif')}"
+            ov_path.write_bytes(ov["bytes"])
+            cmd += ["-stream_loop", "-1", "-i", str(ov_path)]
+            overlay_indices.append(next_input_index)
+            next_input_index += 1
+
+        # Backdrop: scale+crop defensively to the standard Story canvas, in
+        # case the exported JPEG isn't already exactly 1080x1920.
+        filter_parts = ["[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[base]"]
+        last_label = "base"
+        for idx, ov in zip(overlay_indices, overlays):
+            scaled_label = f"ovs{idx}"
+            merged_label = f"tmp{idx}"
+            # -2 (not -1) keeps the scaled height even, which libx264's
+            # yuv420p output requires.
+            filter_parts.append(f"[{idx}:v]scale={int(ov['width'])}:-2[{scaled_label}]")
+            filter_parts.append(f"[{last_label}][{scaled_label}]overlay={int(ov['x'])}:{int(ov['y'])}[{merged_label}]")
+            last_label = merged_label
+
+        cmd += ["-filter_complex", ";".join(filter_parts), "-map", f"[{last_label}]"]
+
+        if audio_input_index is not None:
+            cmd += ["-map", f"{audio_input_index}:a", "-c:a", "aac", "-b:a", "192k", "-shortest"]
+        else:
+            cmd += ["-t", str(DEFAULT_STORY_SECONDS)]
+
+        # "stillimage" tuning only makes sense when the frame is genuinely
+        # static - skip it once an animated overlay is actually moving.
+        if not overlays:
+            cmd += ["-tune", "stillimage"]
+
+        cmd += [
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
             "-movflags", "+faststart",
             str(out_path),
         ]
@@ -714,19 +770,31 @@ def wait_for_media_container(status_url, access_token, field="status_code", max_
     is one synchronous call with no background job queue behind it, this
     blocks the request thread until Meta reports FINISHED (or times out).
     `field` differs by API: Instagram uses "status_code", Threads uses "status".
+
+    On Instagram specifically, an ERROR status_code comes with a second
+    field - confusingly also just called "status" - holding the actual
+    error subcode (see Meta's ig-container reference: "If status_code is
+    ERROR, this value will be an error subcode"). "status_code" alone never
+    says why it failed, so this always requests both status_code and
+    status and folds the subcode into the raised error when present -
+    without it, every video failure looks identical regardless of cause.
     """
+    detail_field = field if field == "status" else f"{field},status"
     for _ in range(max_attempts):
         resp = requests.get(
             status_url,
-            params={"fields": field, "access_token": access_token},
+            params={"fields": detail_field, "access_token": access_token},
             timeout=15,
         )
         _raise_with_api_detail(resp)
-        status = resp.json().get(field)
+        payload = resp.json()
+        status = payload.get(field)
         if status == "FINISHED":
             return
         if status in ("ERROR", "EXPIRED"):
-            raise RuntimeError(f"Video processing failed with status: {status}")
+            subcode = payload.get("status") if field != "status" else None
+            detail = f" (error subcode {subcode})" if subcode else ""
+            raise RuntimeError(f"Video processing failed with status: {status}{detail}")
         time.sleep(delay_seconds)
     raise RuntimeError("Timed out waiting for video to finish processing")
 
