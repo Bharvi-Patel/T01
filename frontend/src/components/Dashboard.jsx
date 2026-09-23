@@ -671,7 +671,14 @@ function RecentPostsSection({ token, onOpenDraft, onAuthError }) {
   useEffect(() => {
     let cancelled = false;
     getDrafts({ token, status: "published" })
-      .then((res) => { if (!cancelled) setState({ loading: false, error: null, drafts: (res.drafts || []).slice(0, 4) }); })
+      .then((res) => {
+        if (cancelled) return;
+        // Stories are a different concept from a post (see create_story_draft's
+        // content.is_story in main.py) - this section is titled "Your Recent
+        // Posts", so exclude them rather than mixing Story cards in here.
+        const posts = (res.drafts || []).filter((d) => !d.is_story);
+        setState({ loading: false, error: null, drafts: posts.slice(0, 4) });
+      })
       .catch((e) => {
         if (cancelled) return;
         if (e.status === 401) return onAuthError?.();

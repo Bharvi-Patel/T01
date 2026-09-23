@@ -476,13 +476,11 @@ const StoryComposer = forwardRef(function StoryComposer({ image, onImageChange, 
       if (!flattened) return null;
       const { file: image, overlays } = flattened;
       if (!audioFile && overlays.length === 0) return { kind: "image", file: image };
-      const { video_url } = await renderStoryVideo({
+      const { blob } = await renderStoryVideo({
         token, image, audio: audioFile, overlays,
         startSeconds: audioStart, clipSeconds: audioClipLength,
       });
-      const videoResp = await fetch(video_url);
-      const videoBlob = await videoResp.blob();
-      return { kind: "video", file: new File([videoBlob], "story.mp4", { type: "video/mp4" }) };
+      return { kind: "video", file: new File([blob], "story.mp4", { type: "video/mp4" }) };
     },
   }), [image, layers, audioFile, audioStart, audioClipLength, token]);
 

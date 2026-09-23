@@ -1006,7 +1006,13 @@ export async function searchGifs({ token, query, limit }) {
   reach a posted Story by being embedded in an actual video file first.
   `image` and `audio` are Files/Blobs. `startSeconds`/`clipSeconds` trim
   the audio (e.g. a 3-minute song down to a 15s clip starting at 1:00)
-  instead of using the whole track. Expected backend response: { video_url }.
+  instead of using the whole track. Backend returns the raw MP4 bytes
+  directly (not a JSON { video_url }) so the frontend never has to make a
+  second cross-origin fetch back to BACKEND_BASE_URL just to retrieve what
+  it already has - that second hop was the one hitting the ngrok free-tier
+  interstitial and failing CORS in dev. The hosted URL still exists (Meta's
+  own server needs one to publish the Story) and comes back on the
+  X-Video-Url response header for whoever needs it downstream.
 */
 export async function renderStoryVideo({ token, image, audio, overlays, startSeconds = 0, clipSeconds = 15 }) {
   const form = new FormData();
@@ -1020,5 +1026,8 @@ export async function renderStoryVideo({ token, image, audio, overlays, startSec
     headers: authHeaders(token),
     body: form,
   });
-  return handle(res);
+  if (!res.ok) return handle(res); // reuses handle()'s JSON error parsing
+  const video_url = res.headers.get("X-Video-Url");
+  const blob = await res.blob();
+  return { video_url, blob };
 }

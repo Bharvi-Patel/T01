@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 # provider.
 load_dotenv(override=True)
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
@@ -195,6 +195,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Video-Url"],
 )
 
 
@@ -2187,9 +2188,21 @@ async def render_story_video_endpoint(
     except RuntimeError as e:
         raise HTTPException(status_code=422, detail=f"Couldn't render video: {e}")
 
+    # Still saved to disk under a hosted URL - publish_instagram_story needs
+    # a public video_url for Meta's own server-side fetch (a separate call
+    # from the frontend's, so returning bytes below doesn't replace this).
     stored_name = f"{uuid.uuid4()}.mp4"
     (user_media_dir(user_id) / stored_name).write_bytes(video_bytes)
-    return {"video_url": f"{BACKEND_BASE_URL}/media-files/{user_id}/{stored_name}"}
+    video_url = f"{BACKEND_BASE_URL}/media-files/{user_id}/{stored_name}"
+    # Bytes go back in this same authenticated response instead of making
+    # the frontend re-fetch video_url itself - that second cross-tunnel
+    # hop is what was hitting ngrok's free-tier interstitial and failing
+    # CORS. Exposed as a header since the body here is the raw video.
+    return Response(
+        content=video_bytes,
+        media_type="video/mp4",
+        headers={"X-Video-Url": video_url},
+    )
 
 
 class MediaTextRequest(BaseModel):
@@ -2747,6 +2760,7 @@ async def list_drafts(
                 "title": (d.content or {}).get("title"),
                 "meta_description": (d.content or {}).get("meta_description"),
                 "featured_image": (d.content or {}).get("featured_image"),
+                "is_story": bool((d.content or {}).get("is_story")),
                 "status": d.status.value,
                 "created_at": d.created_at.isoformat(),
                 "updated_at": d.updated_at.isoformat(),
